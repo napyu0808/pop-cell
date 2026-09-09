@@ -90,6 +90,12 @@ namespace BlackholeGame
         float lastUiScale = -1f;
         Font uiFont;   // 번들된 한글 폰트 (Assets/Resources/PopCellKR.ttf) — 웹 빌드엔 OS 폰트 폴백이 없어서 필수
 
+        // 현미경 유리 팔레트 — 타이틀 화면과 게임 배경이 공유한다
+        static readonly Color Glass     = new Color(0.74f, 0.86f, 0.91f); // 뿌연 하늘색(유리)
+        static readonly Color GlassGrid = new Color(0.60f, 0.74f, 0.82f); // 그 위 격자(계수판)
+        static readonly Color InkDark   = new Color(0.09f, 0.11f, 0.13f); // 밝은 배경용 진한 텍스트
+        static readonly Color HudGold   = new Color(0.52f, 0.36f, 0.02f); // 밝은 배경용 달러색(노랑은 안 보임)
+
         static readonly Color Ink  = new Color(0.94f, 0.94f, 0.95f); // 기본 텍스트(흰색) — 회색 바탕용
         static readonly Color Gold = new Color(1f, 0.82f, 0.30f);    // 달러 관련 텍스트(노랑)
 
@@ -120,7 +126,7 @@ namespace BlackholeGame
             cam.orthographicSize = fieldSize.y * 0.5f + 0.5f;
             cam.transform.position = new Vector3(0f, 0f, -10f);
             cam.clearFlags = CameraClearFlags.SolidColor;
-            cam.backgroundColor = new Color(0.40f, 0.41f, 0.44f); // 회색 바탕 (흰 글씨·진한 세포색 둘 다 잘 보이게)
+            cam.backgroundColor = Glass;   // 현미경 유리 너머의 뿌연 하늘색
 
             spriteMat = new Material(FindSpriteShader());
             cellSprite = BuildCellSprite();
@@ -300,7 +306,7 @@ namespace BlackholeGame
             var sr = board.AddComponent<SpriteRenderer>();
             sr.sprite = gsprite;
             sr.sharedMaterial = spriteMat;
-            sr.color = new Color(0.30f, 0.31f, 0.34f, 1f); // 그리드 선 (배경 0.40보다 어둡게 = 보임)
+            sr.color = GlassGrid;   // 계수판 격자 — 유리색보다 살짝 진하게
             sr.sortingOrder = -60;
             board.transform.position = new Vector3(0f, 0f, 1f);
             board.transform.localScale = new Vector3(vw * 1.25f, vh * 1.25f, 1f);
@@ -312,7 +318,7 @@ namespace BlackholeGame
                 var ssr = sp.AddComponent<SpriteRenderer>();
                 ssr.sprite = discSprite;
                 ssr.sharedMaterial = spriteMat;
-                ssr.color = new Color(0.30f, 0.32f, 0.38f, Random.Range(0.03f, 0.08f));
+                ssr.color = new Color(1f, 1f, 1f, Random.Range(0.10f, 0.24f));   // 유리 위 기포/먼지
                 ssr.sortingOrder = -40;
                 sp.transform.localScale = Vector3.one * Random.Range(0.04f, 0.10f);
                 sp.transform.position = new Vector3(Random.Range(fr.xMin, fr.xMax), Random.Range(fr.yMin, fr.yMax), 0f);
@@ -325,7 +331,7 @@ namespace BlackholeGame
             var vsr = vig.AddComponent<SpriteRenderer>();
             vsr.sprite = BuildVignetteSprite();
             vsr.sharedMaterial = spriteMat;
-            vsr.color = new Color(0.05f, 0.06f, 0.08f, 0.50f);
+            vsr.color = new Color(0.06f, 0.16f, 0.24f, 0.55f);   // 경통 안을 들여다보는 푸른 어둠
             vsr.sortingOrder = -15;
             vig.transform.position = new Vector3(0f, 0f, 0.5f);
             vig.transform.localScale = new Vector3(vw * 1.2f, vh * 1.2f, 1f);
@@ -377,7 +383,8 @@ namespace BlackholeGame
             cursorSr = go.AddComponent<SpriteRenderer>();
             cursorSr.sprite = discSprite;
             cursorSr.sharedMaterial = spriteMat;
-            cursorSr.color = new Color(0.20f, 0.55f, 0.45f, 0.16f);
+            // 밝은 유리 배경에서도 보이도록 진한 청록 + 알파 상향 (항체 영역)
+            cursorSr.color = new Color(0.06f, 0.34f, 0.34f, 0.26f);
             cursorSr.sortingOrder = 40;
         }
 
@@ -585,6 +592,7 @@ namespace BlackholeGame
             UpdateBursts(dt);
             UpdateSplats(dt);
             if (sound != null) sound.Tick(dt);
+            UpdateTransition(dt);
 
             var kb = Keyboard.current;
 
@@ -827,6 +835,11 @@ namespace BlackholeGame
         // ============================================================
         void EnsureStyles()
         {
+            // 화면 높이에 비례한 UI 배율. 예전엔 1.5 고정이라 브라우저 창이 작으면 HUD·패널이
+            // 화면을 뒤덮었다. 760p 에서 1.0, 1080p 에서 ~1.42. 0.01 단위로 양자화해서
+            // 리사이즈 중 스타일이 매 프레임 재생성되지 않게 한다.
+            uiScale = Mathf.Round(Mathf.Clamp(Screen.height / 760f, 0.72f, 1.6f) * 100f) * 0.01f;
+
             if (sLabel != null && Mathf.Approximately(lastUiScale, uiScale)) return;
             lastUiScale = uiScale;
 
@@ -892,8 +905,22 @@ namespace BlackholeGame
         }
 
         // 트리 화면 좌측 능력치 패널. 반환값 = 패널이 차지한 폭(트리를 그 오른쪽에 배치하기 위해)
-        void DrawStatPanel(float panelW, float barH, UpgradeNode hovered)
+        // 패널 크기·위치를 한 곳에서 계산 — DrawTree 의 트리 배치와 DrawStatPanel 이 같은 값을 쓴다.
+        // 우측 상단 고정, 폭은 화면의 30% 이내, 높이는 하단 바 위 공간 안으로 클램프.
+        Rect StatPanelRect(float barH)
         {
+            int fs0 = Mathf.RoundToInt(14f * uiScale);
+            float w = Mathf.Min(300f * uiScale, Screen.width * 0.30f);
+            float rowH0 = Mathf.Max(fs0 * 1.7f, 26f * uiScale);
+            float pad0 = 14f * uiScale;
+            float h0 = pad0 + rowH0 * (StatLabels.Length + 2.2f) + pad0;
+            h0 = Mathf.Min(h0, Mathf.Max(80f, Screen.height - barH - 32f));
+            return new Rect(Screen.width - w - 20f, 16f, w, h0);
+        }
+
+        void DrawStatPanel(Rect area, UpgradeNode hovered)
+        {
+            float panelW = area.width;
             var labels = StatLabels;
             var cur = StatValues(stats);
             string[] nxt = null;
@@ -915,7 +942,19 @@ namespace BlackholeGame
             float rowH = Mathf.Max(fs * 1.7f, 26f * uiScale);
             float pad = 14f * uiScale;
             float h = pad + rowH * (labels.Length + 2.2f) + pad;
-            float x = 22f, y = Mathf.Max(20f, (Screen.height - barH) * 0.5f - h * 0.5f);
+
+            // StatPanelRect 가 높이를 잘라냈으면(작은 창) 행 높이·패딩도 같은 비율로 줄여
+            // 내용이 패널 밖으로 흘러넘치지 않게 한다. 폰트도 같이 축소.
+            if (h > area.height && h > 1f)
+            {
+                float k = area.height / h;
+                rowH *= k; pad *= k;
+                int fs2 = Mathf.Max(9, Mathf.RoundToInt(fs * k));
+                lab.fontSize = valS.fontSize = upS.fontSize = fs2;
+                head.fontSize = Mathf.Max(10, Mathf.RoundToInt(head.fontSize * k));
+            }
+            h = area.height;
+            float x = area.x, y = area.y;
 
             GUI.color = new Color(0.13f, 0.14f, 0.17f, 0.92f);
             GUI.DrawTexture(new Rect(x, y, panelW, h), Texture2D.whiteTexture);
@@ -962,6 +1001,7 @@ namespace BlackholeGame
         // 라벨 버튼 전부 이걸 통해 그린다 — 클릭음이 한 곳에서 붙도록
         bool UiBtn(Rect r, string label, GUIStyle st)
         {
+            if (transDir != 0) { GUI.Button(r, label, st); return false; }   // 전환 중 입력 차단
             if (!GUI.Button(r, label, st)) return false;
             if (sound != null) sound.Play(Sfx.Click, 0.7f);
             return true;
@@ -976,6 +1016,12 @@ namespace BlackholeGame
         }
 
         void OnGUI()
+        {
+            DrawScreens();
+            DrawTransition();   // 눈꺼풀은 항상 맨 위
+        }
+
+        void DrawScreens()
         {
             EnsureStyles();
 
@@ -1014,6 +1060,58 @@ namespace BlackholeGame
             DrawGameplayOverlays();
         }
 
+        // ---- 눈꺼풀 전환 (현미경에 눈을 가져다 대는 연출) ----
+        //   닫힘(위·아래 검은 눈꺼풀이 중앙으로) → 화면 전환 → 열림. 각 TransDur 초.
+        float transT;                 // 0..1 현재 구간 진행도
+        int transDir;                 // -1 닫히는 중, +1 열리는 중, 0 없음
+        System.Action transAction;    // 완전히 닫힌 순간 실행할 전환
+        const float TransDur = 0.34f;
+
+        public bool InTransition => transDir != 0;
+
+        void BeginTransition(System.Action onClosed)
+        {
+            if (transDir != 0) return;   // 이미 진행 중이면 무시
+            transAction = onClosed;
+            transDir = -1;
+            transT = 0f;
+        }
+
+        void UpdateTransition(float dt)
+        {
+            if (transDir == 0) return;
+            transT += dt / TransDur;
+            if (transT < 1f) return;
+            transT = 0f;
+            if (transDir < 0)
+            {
+                var a = transAction; transAction = null;
+                if (a != null) a();      // 눈을 감은 사이에 화면을 바꾼다
+                transDir = 1;
+            }
+            else transDir = 0;
+        }
+
+        void DrawTransition()
+        {
+            if (transDir == 0) return;
+            float cover = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(transDir < 0 ? transT : 1f - transT));
+            if (cover <= 0.001f) return;
+
+            float w = Screen.width, h = Screen.height;
+            float lid = h * 0.5f * cover;
+            var gc = GUI.color;
+            GUI.color = new Color(0.02f, 0.03f, 0.04f, 1f);
+            GUI.DrawTexture(new Rect(0f, 0f, w, lid), Texture2D.whiteTexture);          // 위 눈꺼풀
+            GUI.DrawTexture(new Rect(0f, h - lid, w, lid), Texture2D.whiteTexture);     // 아래 눈꺼풀
+            // 경계를 살짝 흐려 눈꺼풀처럼
+            float soft = 12f * uiScale;
+            GUI.color = new Color(0.02f, 0.03f, 0.04f, 0.45f);
+            GUI.DrawTexture(new Rect(0f, lid, w, soft), Texture2D.whiteTexture);
+            GUI.DrawTexture(new Rect(0f, h - lid - soft, w, soft), Texture2D.whiteTexture);
+            GUI.color = gc;
+        }
+
         void FillScreen(Color col)
         {
             var c = GUI.color;
@@ -1034,16 +1132,22 @@ namespace BlackholeGame
         {
             float s = uiScale;
             bool bossWave = boss != null;
-            GUI.Label(new Rect(14f * s, 10f * s, 520f * s, 32f * s), $"$ {gold:N0}", sGold);
+
+            // 배경이 밝은 유리색이라 HUD 글자는 전부 진한 색으로 (흰 글씨는 안 보임)
+            var hGold = new GUIStyle(sGold) { normal = { textColor = HudGold } }; FlatText(hGold);
+            var hCen  = new GUIStyle(sCenter) { normal = { textColor = InkDark } }; FlatText(hCen);
+
+            GUI.Label(new Rect(14f * s, 10f * s, 520f * s, 32f * s), $"$ {gold:N0}", hGold);
             GUI.Label(new Rect(0, 8f * s, Screen.width, 30f * s),
-                bossWave ? "── 보스 ──" : $"웨이브 {waveNum} / {wave.totalWaves}", sCenter);
+                bossWave ? "── 보스 ──" : $"웨이브 {waveNum} / {wave.totalWaves}", hCen);
 
             var tStyle = new GUIStyle(sBig)
-            { normal = { textColor = timeLeft <= 5f ? new Color(1f, 0.45f, 0.45f) : Ink } };
+            { normal = { textColor = timeLeft <= 5f ? new Color(0.72f, 0.06f, 0.08f) : InkDark } };
+            FlatText(tStyle);
             GUI.Label(new Rect(0, 30f * s, Screen.width, 44f * s), timeLeft.ToString("0.0"), tStyle);
 
             if (!bossWave)
-                GUI.Label(new Rect(0, 72f * s, Screen.width, 28f * s), $"{kills} / {quota}", sCenter);
+                GUI.Label(new Rect(0, 72f * s, Screen.width, 28f * s), $"{kills} / {quota}", hCen);
             else
             {
                 // 보스 체력 바 (화면 상단 가로)
@@ -1081,7 +1185,7 @@ namespace BlackholeGame
                     alignment = TextAnchor.MiddleCenter,
                     fontSize = Mathf.RoundToInt((f.crit ? 20f : 14f) * uiScale),
                     fontStyle = f.crit ? FontStyle.Bold : FontStyle.Normal,
-                    normal = { textColor = f.crit ? new Color(Gold.r, Gold.g, Gold.b, a) : new Color(0.97f, 0.97f, 0.98f, a) }
+                    normal = { textColor = f.crit ? new Color(0.60f, 0.20f, 0.02f, a) : new Color(0.10f, 0.13f, 0.16f, a) }
                 };
                 FlatText(fs);
                 GUI.Label(FitRect(fs, f.text, new Vector2(sp.x, Screen.height - sp.y - 14f * uiScale)), f.text, fs);
@@ -1113,7 +1217,7 @@ namespace BlackholeGame
                     alignment = TextAnchor.MiddleCenter,
                     fontSize = Mathf.RoundToInt(fsz * uiScale),
                     fontStyle = FontStyle.Bold,
-                    normal = { textColor = new Color(Gold.r, Gold.g, Gold.b, alpha) }
+                    normal = { textColor = new Color(HudGold.r, HudGold.g, HudGold.b, alpha) }
                 };
                 FlatText(gs);   // 마우스 오버해도 흰색으로 안 바뀜
                 string gtxt = $"+${gf.amount:N0}";
@@ -1186,20 +1290,27 @@ namespace BlackholeGame
 
         void DrawTitle()
         {
-            FillScreen(new Color(0.27f, 0.28f, 0.31f, 1f));
-            DrawGridOverlay(new Color(0.42f, 0.44f, 0.48f, 1f));
+            FillScreen(Glass);
+            DrawGridOverlay(GlassGrid);
             float w = Screen.width, h = Screen.height;
 
             var tt = new GUIStyle(sBig)
-            { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(64f * uiScale) };
+            { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(64f * uiScale),
+              normal = { textColor = InkDark } };
+            FlatText(tt);
             GUI.Label(new Rect(0, h * 0.13f, w, Mathf.RoundToInt(90f * uiScale)), "POP Cell", tt);
             var sub = new GUIStyle(sLabel)
-            { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(15f * uiScale), normal = { textColor = new Color(0.70f, 0.73f, 0.78f) } };
+            { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(15f * uiScale),
+              normal = { textColor = new Color(0.16f, 0.20f, 0.24f) } };
+            FlatText(sub);
             GUI.Label(new Rect(0, h * 0.13f + 92f * uiScale, w, 34f * uiScale), "세포 팝 — 인크리멘탈 클리커", sub);
 
-            float bw = 260f, bh = 54f, gap = 12f, by = h * 0.56f;
-            var bst = Btn(17);
-            if (UiBtn(new Rect(w * 0.5f - bw * 0.5f, by, bw, bh), "게임 시작", bst)) NewGame();
+            // 버튼: 기존 대비 1.2배 + 화면 비례(uiScale). 밝은 배경이라 글자는 검게.
+            float bw = 260f * 1.2f * uiScale, bh = 54f * 1.2f * uiScale, gap = 12f * uiScale, by = h * 0.56f;
+            var bst = Btn(Mathf.RoundToInt(17f * 1.2f * uiScale));
+            bst.normal.textColor = InkDark; FlatText(bst);
+            if (UiBtn(new Rect(w * 0.5f - bw * 0.5f, by, bw, bh), "게임 시작", bst))
+                BeginTransition(NewGame);   // 눈을 감았다 뜨면 현미경 안이다
             if (UiBtn(new Rect(w * 0.5f - bw * 0.5f, by + (bh + gap), bw, bh), "설정", bst)) { settingsReturn = State.Title; state = State.Settings; }
             if (UiBtn(new Rect(w * 0.5f - bw * 0.5f, by + (bh + gap) * 2f, bw, bh), "게임 종료", bst)) QuitGame();
         }
@@ -1306,7 +1417,7 @@ namespace BlackholeGame
             if (UiBtn(new Rect(cx - bw - gap * 0.5f, by, bw, bh), "업그레이드", bst))
             { state = State.Tree; treeZoom = 0f; treePan = Vector2.zero; }
             if (UiBtn(new Rect(cx + gap * 0.5f, by, bw, bh), $"계속 (웨이브 {Mathf.Max(1, stats.startWave)})", bst))
-            { StartRun(); }
+            { BeginTransition(StartRun); }
         }
 
         // 보스 처치 = 엔딩
@@ -1359,8 +1470,7 @@ namespace BlackholeGame
 
             // 하단 바 높이 + 좌측 능력치 패널 폭을 먼저 알아야 트리를 남는 공간 중앙에 맞출 수 있다
             float barH = 118f * uiScale;
-            float panelW = 300f * uiScale;
-            const float panelX = 22f, panelGap = 24f;
+            Rect statRect = StatPanelRect(barH);   // 우측 상단 능력치 패널
 
             // firstRing: 코어에서 첫 노드까지의 반경. 9갈래가 40° 간격이라 spacing을 그대로 쓰면
             //   현(chord) = 2·R·sin20° 이 노드 크기보다 작아져 가운데에서 칩이 서로 겹친다.
@@ -1379,9 +1489,15 @@ namespace BlackholeGame
             foreach (var kv in npos) { float d = (kv.Value - pivot).magnitude; if (d > maxR) maxR = d; }
             maxR += nodeSz * 0.5f;
             // 화면 중앙 정렬은 유지하고, 반경이 좌측 패널을 침범하지 않는 선까지만 키운다
-            float availW = Screen.width * 0.5f - (panelX + panelW + panelGap);
+            float availW = Screen.width * 0.5f - 16f;
             float availH = (Screen.height - barH) * 0.5f - 16f;
-            float fitZoom = Mathf.Clamp(Mathf.Min(availW, availH) / Mathf.Max(1f, maxR), 0.10f, 2.2f);
+            // 트리는 원형이라, 중심에서 패널 사각형까지의 거리보다 반경이 크면 겹친다.
+            float dx = Mathf.Max(0f, Mathf.Max(statRect.xMin - pivot.x, pivot.x - statRect.xMax));
+            float dy = Mathf.Max(0f, Mathf.Max(statRect.yMin - pivot.y, pivot.y - statRect.yMax));
+            float dPanel = Mathf.Sqrt(dx * dx + dy * dy) - 14f;
+            float lim = Mathf.Min(availW, availH);
+            if (dPanel > 40f) lim = Mathf.Min(lim, dPanel);   // 창이 아주 작아 중심이 패널에 닿으면 무시
+            float fitZoom = Mathf.Clamp(lim / Mathf.Max(1f, maxR), 0.10f, 2.2f);
             if (treeZoom <= 0f) treeZoom = fitZoom;   // 0 = "아직 안 정해짐 / 리셋됨"
 
             Event ev = Event.current;
@@ -1436,13 +1552,13 @@ namespace BlackholeGame
                 GUI.color = c0;
 
                 if (rect.Contains(Event.current.mousePosition)) hovered = n;
-                if (!bt && GUI.Button(rect, GUIContent.none, GUIStyle.none))
+                if (!bt && GUI.Button(rect, GUIContent.none, GUIStyle.none) && transDir == 0)
                     BuyPath(n);   // 앞의 안 산 노드들까지 살 수 있는 만큼 한 번에
             }
 
             GUI.matrix = saved;
 
-            DrawStatPanel(panelW, barH, hovered);
+            DrawStatPanel(statRect, hovered);
 
             // 마우스 오버 툴팁 (스크린 좌표)
             if (hovered != null)
@@ -1492,7 +1608,7 @@ namespace BlackholeGame
                 if (UiBtn(new Rect(Screen.width - startBtnW - resetBtnW - margin * 2f, btnY, resetBtnW, btnH), "화면 리셋", bst))
                 { treeZoom = 0f; treePan = Vector2.zero; }
                 if (UiBtn(new Rect(Screen.width - startBtnW - margin, btnY, startBtnW, btnH), $"웨이브 {Mathf.Max(1, stats.startWave)} 시작", bst))
-                { StartRun(); }
+                { BeginTransition(StartRun); }
             }
             GUI.EndGroup();
         }

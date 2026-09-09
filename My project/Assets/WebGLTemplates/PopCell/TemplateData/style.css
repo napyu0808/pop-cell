@@ -1,0 +1,29 @@
+/* POP Cell — 브라우저 창을 꽉 채우는 캔버스.
+   기본 템플릿은 #unity-container 를 고정 크기로 화면 중앙에 놓아서, 크게 보려면
+   전체화면 버튼을 눌러야 했다(그 상태에선 ESC가 설정이 아니라 전체화면 해제로 먹힘).
+   여기서는 캔버스가 항상 뷰포트 전체를 차지하므로 전체화면이 필요 없다. */
+
+html, body { padding: 0; margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000 }
+
+#unity-container { position: fixed; left: 0; top: 0; width: 100%; height: 100% }
+#unity-container.unity-desktop,
+#unity-container.unity-mobile { left: 0; top: 0; transform: none; width: 100%; height: 100% }
+
+/* width/height 속성(픽셀 버퍼)은 Unity가 matchWebGLToCanvasSize 로 CSS 크기에 맞춰 갱신한다 */
+#unity-canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  background: {{{ BACKGROUND_COLOR }}};
+  outline: none;
+}
+
+#unity-loading-bar { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); display: none; z-index: 10 }
+#unity-logo { width: 154px; height: 130px; background: url('unity-logo-{{{ SPLASH_SCREEN_STYLE.toLowerCase() }}}.png') no-repeat center }
+#unity-progress-bar-empty { width: 141px; height: 18px; margin-top: 10px; margin-left: 6.5px; background: url('progress-bar-empty-{{{ SPLASH_SCREEN_STYLE.toLowerCase() }}}.png') no-repeat center }
+#unity-progress-bar-full { width: 0%; height: 18px; margin-top: 10px; background: url('progress-bar-full-{{{ SPLASH_SCREEN_STYLE.toLowerCase() }}}.png') no-repeat center }
+
+/* 푸터(유니티 로고 / 전체화면 버튼 / 제목)는 전체화면 레이아웃에서 불필요 */
+#unity-footer { display: none }
+
+#unity-warning { position: fixed; left: 50%; top: 5%; transform: translate(-50%); background: white; padding: 10px; display: none; z-index: 20; font-family: arial; max-width: 80%; word-break: break-word }

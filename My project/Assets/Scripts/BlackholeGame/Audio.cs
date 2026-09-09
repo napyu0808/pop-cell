@@ -380,7 +380,9 @@ namespace BlackholeGame
         float bgmVol = 0.55f, sfxVol = 0.75f;
 
         // BGM은 29초짜리라 생성이 무거워 시작이 멈칫한다 → 백그라운드에서 만들고 준비되면 튼다.
+        // (WebGL 은 스레드가 없어 생성자에서 동기로 만든다 — 아래 #if 참고)
         System.Threading.Tasks.Task<float[]> bgmTask;
+        float bgmRetry;   // 브라우저 자동재생 차단 대비 재시도 쿨다운
 
         // 한 번의 타격 펄스로 20~30마리가 동시에 죽는다 → 그대로 재생하면 소리가 뭉개진다.
         // 토큰 버킷으로 초당 개수를 제한하고 피치를 흩어 "뽁뽁뽁"으로 들리게 한다.
@@ -430,12 +432,28 @@ namespace BlackholeGame
             clips[(int)Sfx.Win] = SynthClips.Win();
             clips[(int)Sfx.Timeout] = SynthClips.Timeout();
 
+#if UNITY_WEBGL && !UNITY_EDITOR
+            // WebGL 은 스레드가 없다 → Task.Run 이 돌지 않아 BGM 이 영영 안 만들어진다(브라우저 무음).
+            // 여기서는 그냥 동기로 만든다. 로딩 직후 ~0.4초 멈칫하지만 스플래시 구간이라 티가 안 난다.
+            bgmSrc.clip = SynthClips.FromBuffer("bgm_loop", SynthClips.BgmBuffer(), SynthClips.BgmRate);
+            bgmSrc.Play();
+#else
             bgmTask = System.Threading.Tasks.Task.Run(() => SynthClips.BgmBuffer());
+#endif
         }
 
         public void Tick(float dt)
         {
             popBudget = Mathf.Min(POP_BURST, popBudget + dt * POP_PER_SEC);
+
+            // 브라우저는 사용자 조작 전까지 AudioContext 를 정지시켜 둔다 → 로드 직후의 Play() 가
+            // 씹힐 수 있다. 클립이 있는데 멈춰 있으면(볼륨이 0이 아닌 한) 다시 틀어준다.
+            // 첫 클릭(타이틀의 게임 시작 등)으로 컨텍스트가 살아나면 이 시점에 재생이 붙는다.
+            if (bgmSrc != null && bgmSrc.clip != null && !bgmSrc.isPlaying && bgmVol > 0.0001f)
+            {
+                bgmRetry -= dt;
+                if (bgmRetry <= 0f) { bgmRetry = 0.5f; bgmSrc.Play(); }
+            }
 
             if (bgmTask != null && bgmTask.IsCompleted)
             {
