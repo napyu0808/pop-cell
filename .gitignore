@@ -1,0 +1,43 @@
+# Unity generated
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+[Rr]ecordings/
+.vs/
+.gradle/
+*.csproj
+*.sln
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+*.apk
+*.aab
+*.unitypackage
+*.app
+crashlog*.txt
+sysinfo.txt
+.DS_Store
+
+# Balance sim venv / caches
+balance_sim/__pycache__/
+*.pyc
+
+# Keep the WebGL build for GitHub Pages
+!docs/
+
+# Not part of the game
+unity-mcp-src/
+.claude/
+My project/Assets/_Recovery/
+My project/Assets/Screenshots/
