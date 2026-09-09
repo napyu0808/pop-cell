@@ -88,6 +88,7 @@ namespace BlackholeGame
 
         GUIStyle sLabel, sGold, sCenter, sBig, sSmall, sBtn;
         float lastUiScale = -1f;
+        Font uiFont;   // 번들된 한글 폰트 (Assets/Resources/PopCellKR.ttf) — 웹 빌드엔 OS 폰트 폴백이 없어서 필수
 
         static readonly Color Ink  = new Color(0.94f, 0.94f, 0.95f); // 기본 텍스트(흰색) — 회색 바탕용
         static readonly Color Gold = new Color(1f, 0.82f, 0.30f);    // 달러 관련 텍스트(노랑)
@@ -828,10 +829,16 @@ namespace BlackholeGame
         {
             if (sLabel != null && Mathf.Approximately(lastUiScale, uiScale)) return;
             lastUiScale = uiScale;
+
+            // 한글 폰트 — 에디터는 OS 폰트로 폴백되지만 WebGL 빌드엔 폴백이 없어 한글이 안 보인다.
+            if (uiFont == null) uiFont = Resources.Load<Font>("PopCellKR");
+            if (uiFont != null) GUI.skin.font = uiFont;
+
             int fBase  = Mathf.RoundToInt(16f * uiScale);
             int fBig   = Mathf.RoundToInt(26f * uiScale);
             int fSmall = Mathf.RoundToInt(12f * uiScale);
             sLabel  = new GUIStyle(GUI.skin.label) { fontSize = fBase };
+            if (uiFont != null) sLabel.font = uiFont;
             sLabel.normal.textColor = Ink;
             FlatText(sLabel);                                  // hover/active/focused 글자색도 노말과 동일
             sGold   = new GUIStyle(sLabel) { normal = { textColor = Gold } };
@@ -841,6 +848,7 @@ namespace BlackholeGame
             sSmall  = new GUIStyle(sLabel) { fontSize = fSmall };
 
             sBtn = new GUIStyle(GUI.skin.button) { fontSize = Mathf.RoundToInt(15f) };
+            if (uiFont != null) sBtn.font = uiFont;
             sBtn.normal.textColor = Ink;
             FlatText(sBtn);
         }
