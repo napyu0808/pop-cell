@@ -85,9 +85,9 @@ namespace BlackholeGame
             ["map.upgrade"]    = new[] { "업그레이드", "アップグレード", "Upgrades" },
             ["map.meta"]       = new[] { "메타 강화", "メタ強化", "Meta" },
             ["map.metaN"]      = new[] { "메타 강화 ({0})", "メタ強化 ({0})", "Meta ({0})" },
-            ["map.rebirth"]    = new[] { "환생 (+{0})", "転生 (+{0})", "Rebirth (+{0})" },
-            ["map.rebirthInfo"]= new[] { "환생 시 진행 초기화 · shard +{0} 획득 (누적 {1})", "転生で進行リセット · shard +{0} 獲得 (累計 {1})", "Rebirth resets progress · +{0} shards (total {1})" },
-            ["map.rebirthLock"]= new[] { "환생은 2지역 클리어부터", "転生は2エリアクリアから", "Rebirth unlocks after Area 2" },
+            ["map.rebirth"]    = new[] { "과거로 돌아가기 (+{0})", "過去へ戻る (+{0})", "Rewind Time (+{0})" },
+            ["map.rebirthInfo"]= new[] { "과거로 돌아가면 진행 초기화 · shard +{0} (누적 {1})", "過去へ戻ると進行リセット · shard +{0} (累計 {1})", "Rewinding resets progress · +{0} shards (total {1})" },
+            ["map.rebirthLock"]= new[] { "과거로 돌아가기는 2지역 클리어부터", "過去へ戻るは2エリアクリアから", "Rewind unlocks after Area 2" },
 
             // ---- 메타 화면 ----
             ["meta.title"]     = new[] { "미래의 지식 · 각성", "未来の知識 · 覚醒", "Knowledge of the Future" },
@@ -177,7 +177,7 @@ namespace BlackholeGame
             ["m.start"]  = new[] { "미래 지식 · 자금", "未来の知識 · 資金", "Foresight · Funds" },
             ["md.start"] = new[] { "런 시작 골드 +2,000 / 레벨", "開始ゴールド +2,000 / Lv", "Starting gold +2,000 / lv" },
             ["m.auto"]   = new[] { "미래 지식 · 자동", "未来の知識 · オート", "Foresight · Auto" },
-            ["md.auto"]  = new[] { "환생 후 자동 공격 즉시 해금", "転生後オート攻撃を即解放", "Auto-attack from the start after rebirth" },
+            ["md.auto"]  = new[] { "과거로 돌아간 뒤 자동 공격 즉시 해금", "過去へ戻った後オート攻撃を即解放", "Auto-attack from the start after rewinding" },
 
             // ---- 스테이지 이름 ----
             ["s.0"] = new[] { "감염 구역 · 실험실", "感染区域 · 研究所", "Infected Zone · Lab" },

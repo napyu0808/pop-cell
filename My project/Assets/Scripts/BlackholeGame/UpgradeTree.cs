@@ -45,9 +45,10 @@ namespace BlackholeGame
         static int   CN(int v)   => Mathf.Clamp(v, 2, 6); // 동시 소환 마릿수
 
         // tier별 노드 비용. balance_sim 으로 "tier T 풀강 → 스테이지 T 클리어" 곡선에 맞춰 재조정 예정.
+        // 2시간 풀클리어 목표 (balance_sim/stage_calc 검증: 시뮬 ~430분, 실측 배율 ÷3.8 ≈ 113분).
         static readonly int[] TierCost =
         {
-            45, 420, 1400, 5500, 20000, 75000, 200000, 520000
+            60, 700, 2300, 9000, 38000, 145000, 380000, 880000
         };
         static int Cost(int tier) =>
             tier >= 0 && tier < TierCost.Length ? TierCost[tier]
@@ -97,54 +98,68 @@ namespace BlackholeGame
             }
         }
 
-        struct Branch { public string prefix; public float angle; public T[] cycle; }
-
-        static readonly Branch[] Branches =
+        // 가지 하나가 뻗는 상태. 가운데 십자에서 시작해 몇 노드마다 2~3갈래로 갈라진다.
+        class Limb
         {
-            // 전투 클러스터 — 위쪽으로 부채꼴 (angle 0 = 정위). 타입이 섞여서 뻗는다.
-            new Branch { prefix = "ca", angle = -70f, cycle = new[] { T.Flat,  T.Mult,  T.Speed, T.CritC } },
-            new Branch { prefix = "cb", angle = -35f, cycle = new[] { T.Mult,  T.CritX, T.Flat,  T.Speed } },
-            new Branch { prefix = "cc", angle =   0f, cycle = new[] { T.Speed, T.Flat,  T.CritC, T.Range } },
-            new Branch { prefix = "cd", angle =  35f, cycle = new[] { T.Flat,  T.Range, T.CritX, T.Mult  } },
-            new Branch { prefix = "ce", angle =  70f, cycle = new[] { T.CritC, T.Mult,  T.Flat,  T.Speed } },
-            // 유틸 클러스터 — 아래쪽으로 부채꼴. ua0 = 자동 공격 해금 (제일 먼저 닿는 유틸 노드).
-            new Branch { prefix = "ua", angle = 135f, cycle = new[] { T.Auto,  T.Gold,  T.Time,  T.Range } },
-            new Branch { prefix = "ub", angle = 165f, cycle = new[] { T.Time,  T.Spawn, T.Gold,  T.CritC } },
-            new Branch { prefix = "uc", angle = 195f, cycle = new[] { T.Gold,  T.Time,  T.SCount,T.Range } },
-            new Branch { prefix = "ud", angle = 225f, cycle = new[] { T.Spawn, T.Gold,  T.Range, T.Time  } },
-        };
+            public Vector2 dir;    // 단위벡터 (DrawTree 가 spacing 을 곱한다)
+            public T[] cyc;        // 이 가지의 노드 타입 순환
+            public string parent;  // 직전 노드 id
+            public int depth;      // 이 가지 계통에서의 깊이
+            public int gen;        // 몇 번째 갈래치기인지 (0 = 십자 본가지)
+        }
 
+        static Vector2 Dir(float angleDeg) => Rot(new Vector2(0f, -1f), angleDeg).normalized;
+
+        // 가운데 3×3 십자(상·하·좌·우 4갈래)에서 시작 → 2~3갈래로 갈라지며 왕관처럼 퍼진다.
+        //   위·오른쪽 갈래 = 전투 위주, 아래·왼쪽 갈래 = 유틸 위주. 왼쪽 십자 첫 노드 = 자동공격 해금.
         public static List<UpgradeNode> BuildAll()
         {
             var L = new List<UpgradeNode>();
             L.Add(new UpgradeNode(RootId, null, Vector2.zero, "hex", "n.core", 0, 0, "nd.core", 0f, s => s.flatBonus += 8f));
 
             int total = NodesPerTier * Tiers;   // 160
-            var dir = new Vector2[Branches.Length];
-            var last = new string[Branches.Length];
-            for (int b = 0; b < Branches.Length; b++)
-            {
-                dir[b] = Rot(new Vector2(0f, -1f), Branches[b].angle).normalized;
-                last[b] = RootId;
-            }
 
-            int skipIdx = 0;
-            int added = 0;
-            // 너비 우선 — 깊이 0을 모든 갈래에 먼저, 그다음 깊이 1 … 그래서 tier 0 = 안쪽 링 전부
-            for (int depth = 0; added < total; depth++)
+            var limbs = new List<Limb>
             {
-                for (int b = 0; b < Branches.Length && added < total; b++)
+                new Limb { dir = Dir(0f),   cyc = new[]{ T.Flat, T.Mult,  T.Speed,  T.CritC }, parent = RootId },
+                new Limb { dir = Dir(90f),  cyc = new[]{ T.Mult, T.CritX, T.Flat,   T.Speed }, parent = RootId },
+                new Limb { dir = Dir(180f), cyc = new[]{ T.Gold, T.Time,  T.Spawn,  T.Range }, parent = RootId },
+                new Limb { dir = Dir(270f), cyc = new[]{ T.Auto, T.Gold,  T.SCount, T.Time  }, parent = RootId },
+            };
+
+            int added = 0, guard = 0, skipIdx = 0;
+            var next = new List<Limb>();
+            while (added < total && guard++ < 6000)
+            {
+                for (int li = 0; li < limbs.Count && added < total; li++)
                 {
-                    var br = Branches[b];
-                    T type = br.cycle[depth % br.cycle.Length];
-                    if (type == T.Auto && depth > 0) type = T.Range;   // 자동 해금은 ua 첫 노드 1개만
-                    var e = Effect(type, depth, ref skipIdx);
+                    var lm = limbs[li];
+                    T type = lm.cyc[lm.depth % lm.cyc.Length];
+                    if (type == T.Auto && (lm.depth > 0 || added > 6)) type = T.Range;   // 자동공격은 십자 첫 노드 하나뿐
+                    var e = Effect(type, lm.depth, ref skipIdx);
                     int tier = added / NodesPerTier;
-                    string id = br.prefix + depth;
-                    L.Add(new UpgradeNode(id, last[b], dir[b], e.icon, e.label, Cost(tier), tier, e.desc, e.descArg, e.apply));
-                    last[b] = id;
+                    string id = "u" + added;
+                    L.Add(new UpgradeNode(id, lm.parent, lm.dir, e.icon, e.label, Cost(tier), tier, e.desc, e.descArg, e.apply));
+                    lm.parent = id;
+                    lm.depth++;
                     added++;
+
+                    // 갈래치기: 십자 2노드 뒤 첫 분기, 그 뒤 3노드마다. gen0→2갈래, gen1→3갈래, 이후 2갈래.
+                    bool fork = lm.depth == 2 || (lm.depth > 2 && (lm.depth - 2) % 3 == 0);
+                    if (fork && lm.gen < 4)
+                    {
+                        int forks = lm.gen == 0 ? 2 : lm.gen == 1 ? 3 : 2;
+                        float spread = lm.gen == 0 ? 42f : lm.gen == 1 ? 56f : 38f;
+                        for (int f = 0; f < forks; f++)
+                        {
+                            float off = forks == 1 ? 0f : Mathf.Lerp(-spread, spread, f / (float)(forks - 1));
+                            next.Add(new Limb { dir = Rot(lm.dir, off).normalized, cyc = lm.cyc, parent = lm.parent, depth = lm.depth, gen = lm.gen + 1 });
+                        }
+                    }
+                    else next.Add(lm);
                 }
+                var swap = limbs; limbs = next; next = swap; next.Clear();
+                if (limbs.Count == 0) break;
             }
             return L;
         }

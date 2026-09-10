@@ -17,6 +17,7 @@ namespace BlackholeGame
         public int gold;
         public int retryCount;
         public int maxScore;          // 프레스티지 보상 기준 = stagesCleared*100 + 최고 도달 웨이브
+        public int bossSeenMask;      // 보스 웨이브까지 도달한 지역 비트마스크 (지도에서 보스 실루엣 → 실제 보스)
         public List<string> bought = new List<string>();
 
         // Phase 3 (환생) — 지금은 0/빈 값으로 저장만

@@ -35,7 +35,10 @@ namespace BlackholeGame
         int stagesCleared = 0;    // 클리어한 지역 수 = 해금된 tier
         int retryCount = 0;       // 부대 카운터(리트라이 횟수) — 표시용
         int maxScore = 0;         // 프레스티지 보상 기준 (stagesCleared*100 + 최고 웨이브)
+        int bossSeenMask = 0;     // 보스 웨이브까지 가본 지역 비트마스크 → 지도에서 그림자→실제 보스
         bool hasSave = false;     // 타이틀 '이어하기' 표시용
+        int mapIndex = 0;         // 지역 캐러셀에서 고른 칸
+        float mapScroll = -1f;    // 캐러셀 부드러운 이동 (음수 = 초기화 전)
         int metaCurrency = 0;     // 환생 재화 (shard)
         int bestScore = 0;        // 역대 최고 score
         readonly Dictionary<string, int> metaLv = new Dictionary<string, int>();
@@ -90,11 +93,14 @@ namespace BlackholeGame
 
         Camera cam;
         Sprite cellSprite, discSprite, splatSprite;
+        Sprite[] bossSprites;   // 지역별 보스 실루엣 (스테이지 오를수록 촉수↑, 마지막 = 살점 덩어리)
         Texture2D gridTile;
         Dictionary<string, Texture2D> iconTex;
         Material spriteMat;
         Transform cursorRing;
         SpriteRenderer cursorSr;
+        SpriteRenderer cursorBorderSr;
+        Sprite ringSprite;
         Vector3 cursorWorld;
 
         GUIStyle sLabel, sGold, sCenter, sBig, sSmall, sBtn;
@@ -146,6 +152,7 @@ namespace BlackholeGame
             splatSprite = BuildSplatSprite();
             gridTile = BuildGridTile();
             iconTex = NodeIcons.Build();
+            bossSprites = BuildBossSprites();
 
             BuildBackground();
             BuildCursor();
@@ -277,6 +284,117 @@ namespace BlackholeGame
             return Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), size, 0, SpriteMeshType.FullRect);
         }
 
+        // 커서 범위 테두리 — 속은 비고 가장자리만 굵게. 안쪽 옅은 채움은 discSprite가 담당.
+        Sprite BuildRingSprite()
+        {
+            const int size = 128;
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false) { filterMode = FilterMode.Bilinear };
+            float half = size * 0.5f;
+            float outer = half - 1f;
+            float inner = outer * 0.84f;   // 테두리 두께 = 반경의 약 16%
+            var c = new Vector2(half, half);
+            var px = new Color32[size * size];
+            for (int y = 0; y < size; y++)
+                for (int x = 0; x < size; x++)
+                {
+                    float d = Vector2.Distance(new Vector2(x + 0.5f, y + 0.5f), c);
+                    float a = Mathf.Clamp01(outer - d) * Mathf.Clamp01(d - inner);
+                    px[y * size + x] = new Color32(255, 255, 255, (byte)(Mathf.Clamp01(a) * 255f));
+                }
+            tex.SetPixels32(px); tex.Apply();
+            return Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), size, 0, SpriteMeshType.FullRect);
+        }
+
+        // ---- 지역별 보스 실루엣 ----
+        //   흰색(알파)으로 그려서 지도에서 검은 그림자로도, 색을 입혀 살아있는 보스로도 쓴다.
+        //   스테이지가 오를수록 세포에 촉수가 많아지고, 마지막 지역은 여러 로브가 뭉친 살점 덩어리.
+        Sprite[] BuildBossSprites()
+        {
+            int n = StageConfig.Stages.Length;
+            var arr = new Sprite[n];
+            for (int i = 0; i < n; i++) arr[i] = BuildBossSprite(i, n);
+            return arr;
+        }
+
+        static void StampBlob(float[] a, int size, float cx, float cy, float r)
+        {
+            if (r < 0.5f) return;
+            int x0 = Mathf.Max(0, Mathf.FloorToInt(cx - r)), x1 = Mathf.Min(size - 1, Mathf.CeilToInt(cx + r));
+            int y0 = Mathf.Max(0, Mathf.FloorToInt(cy - r)), y1 = Mathf.Min(size - 1, Mathf.CeilToInt(cy + r));
+            for (int y = y0; y <= y1; y++)
+                for (int x = x0; x <= x1; x++)
+                {
+                    float dx = x + 0.5f - cx, dy = y + 0.5f - cy;
+                    float d = Mathf.Sqrt(dx * dx + dy * dy);
+                    if (d > r) continue;
+                    float v = Mathf.SmoothStep(1f, 0f, d / r);
+                    int idx = y * size + x;
+                    if (v > a[idx]) a[idx] = v;
+                }
+        }
+
+        Sprite BuildBossSprite(int stage, int stageCount)
+        {
+            const int size = 192;
+            float half = size * 0.5f;
+            var a = new float[size * size];
+            var rnd = new System.Random(stage * 9173 + 41);
+            bool finalBoss = stage >= stageCount - 1;
+            float grow = stageCount > 1 ? stage / (float)(stageCount - 1) : 0f;   // 0..1
+
+            float bodyR = half * (finalBoss ? 0.50f : Mathf.Lerp(0.36f, 0.46f, grow));
+
+            if (finalBoss)
+            {
+                // 살점 덩어리 — 여러 로브가 겹쳐 뭉친 불규칙 몸통
+                for (int i = 0; i < 7; i++)
+                {
+                    float ang = (float)rnd.NextDouble() * 6.2832f;
+                    float dist = (0.06f + (float)rnd.NextDouble() * 0.30f) * half;
+                    float lr = (0.28f + (float)rnd.NextDouble() * 0.22f) * half;
+                    StampBlob(a, size, half + Mathf.Cos(ang) * dist, half + Mathf.Sin(ang) * dist, lr);
+                }
+            }
+            else
+            {
+                // 울퉁불퉁한 세포 몸통
+                for (int y = 0; y < size; y++)
+                    for (int x = 0; x < size; x++)
+                    {
+                        float dx = x + 0.5f - half, dy = y + 0.5f - half;
+                        float d = Mathf.Sqrt(dx * dx + dy * dy), th = Mathf.Atan2(dy, dx);
+                        float edge = bodyR * (1f + 0.10f * Mathf.Sin(3f * th + stage) + 0.05f * Mathf.Sin(5f * th + 1.3f));
+                        if (d <= edge) a[y * size + x] = 1f;
+                    }
+            }
+
+            // 촉수 — 스테이지가 오를수록 개수·길이 증가. 마지막은 살점 돌기.
+            int tent = finalBoss ? 12 : Mathf.RoundToInt(Mathf.Lerp(0f, 9f, grow));
+            for (int t = 0; t < tent; t++)
+            {
+                float baseAng = (t / (float)Mathf.Max(1, tent)) * 6.2832f + (float)rnd.NextDouble() * 0.6f;
+                float len = bodyR + half * (finalBoss ? 0.10f + (float)rnd.NextDouble() * 0.16f
+                                                      : Mathf.Lerp(0.10f, 0.34f, grow) * (0.6f + (float)rnd.NextDouble() * 0.8f));
+                float curl = (float)(rnd.NextDouble() - 0.5) * 2.6f;
+                int steps = 44;
+                for (int k = 0; k < steps; k++)
+                {
+                    float u = k / (float)(steps - 1);
+                    float rr = Mathf.Lerp(bodyR * 0.72f, len, u);
+                    float aa = baseAng + curl * u * u * 0.5f + 0.12f * Mathf.Sin(u * 8f + t);
+                    float tr = Mathf.Lerp(size * (finalBoss ? 0.070f : 0.052f), size * 0.010f, u);
+                    StampBlob(a, size, half + Mathf.Cos(aa) * rr, half + Mathf.Sin(aa) * rr, tr);
+                }
+            }
+
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false) { filterMode = FilterMode.Bilinear };
+            var px = new Color32[size * size];
+            for (int i = 0; i < a.Length; i++)
+                px[i] = new Color32(255, 255, 255, (byte)(Mathf.Clamp01(a[i]) * 255f));
+            tex.SetPixels32(px); tex.Apply();
+            return Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), size, 0, SpriteMeshType.FullRect);
+        }
+
         // 16×16 점선 그리드 타일 (IMGUI 타일링 + 월드 보드 공용)
         Texture2D BuildGridTile()
         {
@@ -394,14 +512,25 @@ namespace BlackholeGame
 
         void BuildCursor()
         {
+            if (ringSprite == null) ringSprite = BuildRingSprite();
+
             var go = new GameObject("CursorField");
             cursorRing = go.transform;
             cursorSr = go.AddComponent<SpriteRenderer>();
             cursorSr.sprite = discSprite;
             cursorSr.sharedMaterial = spriteMat;
-            // 밝은 유리 배경에서도 보이도록 진한 청록 + 알파 상향 (항체 영역)
-            cursorSr.color = new Color(0.06f, 0.34f, 0.34f, 0.26f);
+            // 안쪽은 아주 옅게만 채운다 — 범위는 테두리로 읽는다
+            cursorSr.color = new Color(1f, 1f, 1f, 0.10f);
             cursorSr.sortingOrder = 40;
+
+            // 검은 테두리 — 밝은 배경/어두운 세포 어디서든 범위가 또렷하게
+            var bd = new GameObject("CursorBorder");
+            bd.transform.SetParent(go.transform, false);
+            cursorBorderSr = bd.AddComponent<SpriteRenderer>();
+            cursorBorderSr.sprite = ringSprite;
+            cursorBorderSr.sharedMaterial = spriteMat;
+            cursorBorderSr.color = new Color(0f, 0f, 0f, 0.85f);
+            cursorBorderSr.sortingOrder = 41;
         }
 
         // ---- 게임 시작/라이프사이클 ----
@@ -429,7 +558,7 @@ namespace BlackholeGame
                 }
         }
 
-        int ShardReward(int score) => Mathf.FloorToInt(score / 8f);
+        int ShardReward(int score) => Mathf.FloorToInt(score / 30f);
 
         // 환생 — 시간여행. 진행 리셋, 메타는 유지, shard 획득.
         void Prestige()
@@ -442,6 +571,8 @@ namespace BlackholeGame
             currentStage = 0;
             retryCount = Mathf.Max(0, retryCount / 2);
             maxScore = 0;
+            bossSeenMask = 0;
+            mapScroll = -1f;
             RebuildBaseStats();
             stats = baseStats.Clone();
             GrabRoot();
@@ -479,6 +610,7 @@ namespace BlackholeGame
                 gold = gold,
                 retryCount = retryCount,
                 maxScore = maxScore,
+                bossSeenMask = bossSeenMask,
                 metaCurrency = metaCurrency,
             };
             foreach (var id in bought) d.bought.Add(id);
@@ -492,9 +624,11 @@ namespace BlackholeGame
             hasSave = d != null && d.HasProgress;
             metaLv.Clear();
             metaCurrency = 0;
+            bossSeenMask = 0;
             if (d != null)
             {
                 metaCurrency = d.metaCurrency;
+                bossSeenMask = d.bossSeenMask;
                 foreach (var e in d.metaBought)
                 {
                     var pp = e.Split(':');
@@ -545,6 +679,8 @@ namespace BlackholeGame
             currentStage = 0;
             stagesCleared = 0;
             retryCount = 0;
+            bossSeenMask = 0;
+            mapScroll = -1f;
             wave.LoadStage(currentStage);
             state = State.Map;
         }
@@ -706,6 +842,13 @@ namespace BlackholeGame
 
             enemies.Add(boss); // 이동·피격·타격 로직을 그대로 태움
             if (sound != null) sound.Play(Sfx.Boss, 0.9f);
+
+            // 이 지역 보스 웨이브에 도달 — 지도에서 그림자 대신 실제 보스가 꿈틀거린다
+            if (currentStage >= 0 && currentStage < 32)
+            {
+                int bit = 1 << currentStage;
+                if ((bossSeenMask & bit) == 0) { bossSeenMask |= bit; SaveProgress(); }
+            }
         }
 
         void SpawnBurst(Vector3 pos, Color col, float r)
@@ -749,7 +892,7 @@ namespace BlackholeGame
                 else if (state == State.Map)     { state = State.Title; }
                 else if (state == State.Meta)    { state = State.Map; }
                 else if (state == State.Result)  { state = State.Map; }
-                else if (state == State.Tree)    { pauseReturn = state; state = State.Paused; }
+                else if (state == State.Tree)    { state = State.Map; }
             }
 
             // F12 — 치트: 모든 업그레이드 즉시 해금
@@ -822,7 +965,7 @@ namespace BlackholeGame
                 var ms = Mouse.current;
                 if (ms != null && ms.leftButton.wasPressedThisFrame && manualClickCd <= 0f)
                 {
-                    manualClickCd = Mathf.Max(0.34f, stats.attackInterval * 1.12f);   // 자동보다 항상 느림
+                    manualClickCd = Mathf.Max(0.28f, stats.attackInterval * 1.08f);   // 자동보다 살짝만 느리게
                     AttackPulse();
                 }
             }
@@ -876,7 +1019,7 @@ namespace BlackholeGame
                 var e = enemies[i];
                 float dx = e.tr.position.x - cursorWorld.x;
                 float dy = e.tr.position.y - cursorWorld.y;
-                float rr = R + e.r;
+                float rr = R + e.r + 0.05f;   // 테두리에 닿아 보이면 반드시 맞도록 살짝 여유
                 if (dx * dx + dy * dy > rr * rr) continue;
 
                 // 펄스당 1번만 — 공격 간격이 곧 리듬이 된다 (적 수와 무관하게 일정)
@@ -919,6 +1062,7 @@ namespace BlackholeGame
                         stagesCleared = Mathf.Max(stagesCleared, currentStage + 1);
                         maxScore = Mathf.Max(maxScore, stagesCleared * 100);
                         SaveProgress();
+                        mapScroll = -1f;   // 지도 캐러셀을 새로 해금된 지역으로
                         if (currentStage >= StageConfig.Stages.Length - 1) state = State.Win;  // 마지막 지역 = 엔딩
                         else state = State.Map;
                         return;
@@ -937,9 +1081,10 @@ namespace BlackholeGame
             w.z = 0f;
             cursorWorld = w;
             cursorRing.position = w;
-            float pulse = 1f + 0.04f * Mathf.Sin(Time.time * 4f);
-            cursorRing.localScale = Vector3.one * (stats.cursorRadius * 2f * pulse);
+            // 보이는 반경 = 실제 타격 반경. (예전엔 맥동으로 살짝 커 보여 "범위 안인데 안 맞음"이 났다)
+            cursorRing.localScale = Vector3.one * (stats.cursorRadius * 2f);
             cursorSr.enabled = state == State.Playing;
+            if (cursorBorderSr != null) cursorBorderSr.enabled = state == State.Playing;
         }
 
         // ---- 스킬트리 로직 ----
@@ -1196,6 +1341,7 @@ namespace BlackholeGame
             if (cam == null) cam = Camera.main;
             if (nodes == null) nodes = UpgradeTree.BuildAll();
             if (iconTex == null) iconTex = NodeIcons.Build();
+            if (bossSprites == null) bossSprites = BuildBossSprites();
             if (spriteMat == null) spriteMat = new Material(FindSpriteShader());
             if (gridTile == null) gridTile = BuildGridTile();
             if (bought == null) bought = new HashSet<string>();          // 직렬화 안 됨
@@ -1457,90 +1603,174 @@ namespace BlackholeGame
                 Loc.T("common.toTitle"), bst)) state = State.Title;
         }
 
-        // ---- 지역(스테이지) 선택 맵 ----
+        // ---- 지역(스테이지) 선택 — 좌우 캐러셀. 가운데 카드에 그 지역 보스 그림자. ----
         void DrawMap()
         {
             FillScreen(Glass);
             DrawGridOverlay(GlassGrid);
             float w = Screen.width, h = Screen.height, s = uiScale;
+            int n = StageConfig.Stages.Length;
+
+            if (mapScroll < 0f)
+            { mapIndex = Mathf.Clamp(Mathf.Min(stagesCleared, n - 1), 0, n - 1); mapScroll = mapIndex; }
+            mapIndex = Mathf.Clamp(mapIndex, 0, n - 1);
 
             var tt = new GUIStyle(sBig) { alignment = TextAnchor.MiddleCenter,
-                fontSize = Mathf.RoundToInt(34f * s), normal = { textColor = InkDark } };
+                fontSize = Mathf.RoundToInt(32f * s), normal = { textColor = InkDark } };
             FlatText(tt);
-            GUI.Label(new Rect(0, h * 0.06f, w, 60f * s), Loc.T("map.title"), tt);
+            GUI.Label(new Rect(0, h * 0.045f, w, 50f * s), Loc.T("map.title"), tt);
 
             var sub = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleCenter,
-                fontSize = Mathf.RoundToInt(13f * s), normal = { textColor = new Color(0.20f,0.24f,0.28f) } };
+                fontSize = Mathf.RoundToInt(13f * s), normal = { textColor = new Color(0.20f, 0.24f, 0.28f) } };
             FlatText(sub);
-            GUI.Label(new Rect(0, h * 0.06f + 44f * s, w, 26f * s),
-                Loc.F("map.info", gold.ToString("N0"), retryCount, stagesCleared, StageConfig.Stages.Length), sub);
+            GUI.Label(new Rect(0, h * 0.045f + 38f * s, w, 24f * s),
+                Loc.F("map.info", gold.ToString("N0"), retryCount, stagesCleared, n), sub);
 
-            // 8개 타일 2행 × 4열
-            int cols = 4;
-            float gap = 18f * s;
-            float gw = Mathf.Min(220f * s, (w * 0.94f - (cols - 1) * gap) / cols);   // 작은 창에서도 안 넘치게
-            float gh = gw * 0.44f;
-            float gridW = cols * gw + (cols - 1) * gap;
-            float x0 = (w - gridW) * 0.5f, y0 = h * 0.26f;
-            var name = new GUIStyle(sBtn) { fontSize = Mathf.RoundToInt(14f * s), wordWrap = true };
-            var meta = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleCenter,
-                fontSize = Mathf.RoundToInt(11f * s), normal = { textColor = new Color(0.30f,0.33f,0.37f) } };
-            FlatText(meta);
+            // ---- 캐러셀 ----
+            float cardW = Mathf.Min(300f * s, w * 0.40f);
+            float cardH = Mathf.Min(cardW * 1.15f, h * 0.46f);
+            float slot = cardW * 1.16f;
+            float cyMid = h * 0.50f;
+            float cxMid = w * 0.5f;
 
-            for (int i = 0; i < StageConfig.Stages.Length; i++)
+            var ev = Event.current;
+            if (ev.type == EventType.ScrollWheel)
+            { mapIndex = Mathf.Clamp(mapIndex + (ev.delta.y > 0f ? 1 : -1), 0, n - 1); ev.Use(); }
+
+            if (!Mathf.Approximately(mapScroll, mapIndex))
+                mapScroll = Mathf.MoveTowards(mapScroll, mapIndex, Mathf.Max(0.05f, Time.deltaTime * 9f));
+
+            // 먼 카드부터 그려서 가운데 카드가 위에 오도록
+            var order = new List<int>();
+            for (int i = 0; i < n; i++) if (Mathf.Abs(i - mapScroll) <= 2.3f) order.Add(i);
+            order.Sort((x, y2) => Mathf.Abs(y2 - mapScroll).CompareTo(Mathf.Abs(x - mapScroll)));
+
+            foreach (int i in order)
             {
-                var st = StageConfig.Stages[i];
-                int col = i % cols, row = i / cols;
-                var r = new Rect(x0 + col * (gw + gap), y0 + row * (gh + gap + 22f * s), gw, gh);
-                bool unlocked = i <= stagesCleared;
-                bool cleared = i < stagesCleared;
-
-                var gc = GUI.color;
-                GUI.color = unlocked ? new Color(st.theme.r, st.theme.g, st.theme.b, cleared ? 0.55f : 0.95f)
-                                     : new Color(0.55f, 0.57f, 0.60f, 0.5f);
-                GUI.DrawTexture(r, Texture2D.whiteTexture);
-                GUI.color = new Color(0f, 0f, 0f, 0.28f);
-                GUI.DrawTexture(new Rect(r.x, r.yMax - 3f, r.width, 3f), Texture2D.whiteTexture);
-                GUI.color = gc;
-
-                var lab = new GUIStyle(name) { normal = { textColor = unlocked ? Color.white : new Color(0.85f,0.86f,0.88f) } };
-                FlatText(lab);
-                if (unlocked)
+                float rel = i - mapScroll;
+                float k = Mathf.Clamp01(1f - Mathf.Abs(rel) * 0.34f);
+                float cw = cardW * (0.62f + 0.38f * k), ch = cardH * (0.62f + 0.38f * k);
+                var r = new Rect(cxMid + rel * slot - cw * 0.5f, cyMid - ch * 0.5f, cw, ch);
+                bool center = Mathf.Abs(rel) < 0.5f;
+                DrawStageCard(r, i, center, k);
+                if (GUI.Button(r, GUIContent.none, GUIStyle.none) && transDir == 0)
                 {
-                    if (UiBtn(r, i + 1 + ". " + Loc.T(st.name), lab))
-                    { currentStage = i; BeginTransition(StartRun); }
+                    if (center && i <= stagesCleared)
+                    { currentStage = i; if (sound != null) sound.Play(Sfx.Click, 0.7f); BeginTransition(StartRun); }
+                    else { mapIndex = i; if (sound != null) sound.Play(Sfx.Click, 0.55f); }
                 }
-                else
-                {
-                    GUI.Label(r, (i + 1) + ". ???", lab);
-                    GUI.Label(new Rect(r.x, r.yMax + 2f, r.width, 20f * s), Loc.T("map.locked"), meta);
-                }
-                if (unlocked)
-                    GUI.Label(new Rect(r.x, r.yMax + 2f, r.width, 20f * s),
-                        cleared ? Loc.T("map.cleared") : Loc.F("map.wavesBoss", st.waves), meta);
             }
 
+            // 좌우 화살표
+            var arrow = new GUIStyle(sBig) { alignment = TextAnchor.MiddleCenter,
+                fontSize = Mathf.RoundToInt(34f * s), normal = { textColor = InkDark } };
+            FlatText(arrow);
+            float aw = 54f * s, ah = 66f * s;
+            if (mapIndex > 0 && UiBtn(new Rect(Mathf.Max(6f, w * 0.02f), cyMid - ah * 0.5f, aw, ah), "<", arrow))
+                mapIndex--;
+            if (mapIndex < n - 1 && UiBtn(new Rect(Mathf.Min(w - aw - 6f, w * 0.98f - aw), cyMid - ah * 0.5f, aw, ah), ">", arrow))
+                mapIndex++;
+
+            // 페이지 점
+            float dotY = Mathf.Min(cyMid + cardH * 0.60f, h * 0.80f);
+            float dgap = 16f * s, dtot = (n - 1) * dgap;
+            for (int i = 0; i < n; i++)
+            {
+                var dc = GUI.color;
+                bool on = i == mapIndex;
+                GUI.color = on ? InkDark : new Color(0.40f, 0.44f, 0.48f, 0.5f);
+                float dd = (on ? 9f : 6f) * s;
+                GUI.DrawTexture(new Rect(cxMid - dtot * 0.5f + i * dgap - dd * 0.5f, dotY, dd, dd), Texture2D.whiteTexture);
+                GUI.color = dc;
+            }
+
+            // ---- 하단 버튼 ----
             var bst = Btn(Mathf.RoundToInt(13f * s));
             bst.normal.textColor = InkDark; FlatText(bst);
-            float bw = 176f * s, bh = 44f * s, bgap = 12f * s;
+            float bw = Mathf.Min(180f * s, w * 0.28f), bh = 44f * s, bgap = 12f * s;
             bool canRebirth = stagesCleared >= 2;
             int nbtn = canRebirth ? 3 : 2;
             float totw = nbtn * bw + (nbtn - 1) * bgap;
-            float bx = (w - totw) * 0.5f, byy = h * 0.87f;
+            float bx = (w - totw) * 0.5f;
+            float byy = Mathf.Min(h * 0.87f, h - bh - 34f * s);
             if (UiBtn(new Rect(bx, byy, bw, bh), Loc.T("map.upgrade"), bst))
             { state = State.Tree; treeZoom = 0f; treePan = Vector2.zero; }
             bx += bw + bgap;
             if (UiBtn(new Rect(bx, byy, bw, bh), metaCurrency > 0 ? Loc.F("map.metaN", metaCurrency) : Loc.T("map.meta"), bst))
                 state = State.Meta;
             bx += bw + bgap;
+            if (canRebirth && UiBtn(new Rect(bx, byy, bw, bh), Loc.F("map.rebirth", ShardReward(maxScore)), bst))
+                BeginTransition(Prestige);
             if (canRebirth)
+                GUI.Label(new Rect(0, byy + bh + 3f * s, w, 18f * s),
+                    Loc.F("map.rebirthInfo", ShardReward(maxScore), metaCurrency), sub);
+        }
+
+        void DrawStageCard(Rect r, int i, bool center, float k)
+        {
+            var st = StageConfig.Stages[i];
+            float s = uiScale;
+            bool unlocked = i <= stagesCleared;
+            bool cleared = i < stagesCleared;
+            bool bossSeen = unlocked && (bossSeenMask & (1 << i)) != 0;
+            var gc = GUI.color;
+
+            GUI.color = unlocked ? new Color(st.theme.r, st.theme.g, st.theme.b, cleared ? 0.55f : 0.92f)
+                                 : new Color(0.50f, 0.52f, 0.55f, 0.5f);
+            GUI.DrawTexture(r, Texture2D.whiteTexture);
+
+            GUI.color = center ? new Color(1f, 1f, 1f, 0.95f) : new Color(0f, 0f, 0f, 0.22f);
+            float bt = center ? 4f : 2f;
+            GUI.DrawTexture(new Rect(r.x, r.y, r.width, bt), Texture2D.whiteTexture);
+            GUI.DrawTexture(new Rect(r.x, r.yMax - bt, r.width, bt), Texture2D.whiteTexture);
+            GUI.DrawTexture(new Rect(r.x, r.y, bt, r.height), Texture2D.whiteTexture);
+            GUI.DrawTexture(new Rect(r.xMax - bt, r.y, bt, r.height), Texture2D.whiteTexture);
+            GUI.color = gc;
+
+            // 보스 그림자 / 살아있는 보스
+            if (bossSprites != null && i < bossSprites.Length && bossSprites[i] != null && bossSprites[i].texture != null)
             {
-                if (UiBtn(new Rect(bx, byy, bw, bh), Loc.F("map.rebirth", ShardReward(maxScore)), bst))
-                    BeginTransition(Prestige);
+                var texB = bossSprites[i].texture;
+                float img = Mathf.Min(r.width, r.height) * 0.60f;
+                var ir = new Rect(r.center.x - img * 0.5f, r.center.y - img * 0.42f, img, img);
+                if (bossSeen)
+                {
+                    Matrix4x4 m0 = GUI.matrix;
+                    float wob = Mathf.Sin(Time.time * 2.2f + i * 1.3f) * 4.5f;
+                    GUIUtility.RotateAroundPivot(wob, ir.center);
+                    float sc = 1f + 0.05f * Mathf.Sin(Time.time * 3.3f + i * 2f);
+                    var ir2 = new Rect(ir.center.x - ir.width * sc * 0.5f, ir.center.y - ir.height * sc * 0.5f,
+                                       ir.width * sc, ir.height * sc);
+                    GUI.color = new Color(Mathf.Min(1f, st.theme.r * 1.15f + 0.12f), st.theme.g * 0.45f, st.theme.b * 0.45f, 0.96f);
+                    GUI.DrawTexture(ir2, texB, ScaleMode.ScaleToFit, true);
+                    GUI.matrix = m0;
+                }
+                else
+                {
+                    GUI.color = new Color(0f, 0f, 0f, unlocked ? 0.48f : 0.30f);
+                    GUI.DrawTexture(ir, texB, ScaleMode.ScaleToFit, true);
+                }
+                GUI.color = gc;
             }
-            GUI.Label(new Rect(0, byy + bh + 4f * s, w, 20f * s),
-                canRebirth ? Loc.F("map.rebirthInfo", ShardReward(maxScore), metaCurrency)
-                           : Loc.T("map.rebirthLock"), sub);
+
+            // 이름 (클립 방지: CalcHeight 로 필요한 높이 확보)
+            var nm = new GUIStyle(sLabel) { alignment = TextAnchor.UpperCenter, wordWrap = true,
+                fontSize = Mathf.RoundToInt((center ? 15f : 12f) * s), fontStyle = FontStyle.Bold,
+                normal = { textColor = unlocked ? Color.white : new Color(0.86f, 0.87f, 0.89f) } };
+            FlatText(nm);
+            string nmTxt = (i + 1) + ". " + (unlocked ? Loc.T(st.name) : "???");
+            float innerW = r.width - 12f * s;
+            float nmH = nm.CalcHeight(new GUIContent(nmTxt), innerW);
+            GUI.Label(new Rect(r.x + 6f * s, r.y + 7f * s, innerW, Mathf.Min(nmH + 2f, r.height * 0.5f)), nmTxt, nm);
+
+            var meta = new GUIStyle(sLabel) { alignment = TextAnchor.LowerCenter, wordWrap = true,
+                fontSize = Mathf.RoundToInt(11f * s),
+                normal = { textColor = unlocked ? new Color(0.96f, 0.97f, 0.99f) : new Color(0.80f, 0.82f, 0.85f) } };
+            FlatText(meta);
+            string mTxt = !unlocked ? Loc.T("map.locked")
+                        : cleared ? Loc.T("map.cleared")
+                        : Loc.F("map.wavesBoss", st.waves);
+            GUI.Label(new Rect(r.x + 6f * s, r.yMax - 32f * s, innerW, 28f * s), mTxt, meta);
         }
 
         // ---- 메타(환생) 강화 화면 ----
@@ -1704,10 +1934,6 @@ namespace BlackholeGame
                     Loc.SetLang((Lang)li);
             }
 
-            GUI.Label(new Rect(0, ylang + rowH + 30f * uiScale, w, 40f * uiScale),
-                      Loc.T("set.res"),
-                      new GUIStyle(row) { alignment = TextAnchor.MiddleCenter });
-
             if (UiBtn(new Rect(w * 0.5f - 110f, h * 0.66f, 220f, 50f), Loc.T("common.back"), Btn(16)))
             {
                 if (audioDirty && sound != null) { sound.Save(); audioDirty = false; }
@@ -1810,7 +2036,7 @@ namespace BlackholeGame
             // firstRing: 코어에서 첫 노드까지의 반경. 9갈래가 40° 간격이라 spacing을 그대로 쓰면
             //   현(chord) = 2·R·sin20° 이 노드 크기보다 작아져 가운데에서 칩이 서로 겹친다.
             //   R=104 → 현 ≈ 71px, 노드 40px → 좌우 31px 여유.
-            const float nodeSz = 40f, spacing = 56f, firstRing = 120f;   // 5/4 클러스터라 첫 링을 넓게
+            const float nodeSz = 40f, spacing = 74f, firstRing = 132f;   // 십자+갈래 구조라 간격을 넓게
 
             Vector2 pivot = new Vector2(Screen.width * 0.5f, (Screen.height - barH) * 0.5f);
 
@@ -1961,8 +2187,8 @@ namespace BlackholeGame
                 float btnY = barH - btnH - margin;
                 if (UiBtn(new Rect(Screen.width - startBtnW - resetBtnW - margin * 2f, btnY, resetBtnW, btnH), Loc.T("tree.reset"), bst))
                 { treeZoom = 0f; treePan = Vector2.zero; }
-                if (UiBtn(new Rect(Screen.width - startBtnW - margin, btnY, startBtnW, btnH), Loc.F("tree.startWaveN", Mathf.Max(1, stats.startWave)), bst))
-                { BeginTransition(StartRun); }
+                if (UiBtn(new Rect(Screen.width - startBtnW - margin, btnY, startBtnW, btnH), Loc.T("common.toMap"), bst))
+                { state = State.Map; }
             }
             GUI.EndGroup();
         }

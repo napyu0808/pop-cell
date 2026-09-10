@@ -151,17 +151,18 @@ namespace BlackholeGame
             bossHp = boss; quota0 = q0; startEnemies = se; goldRate = gr; theme = th;
         }
 
-        // 1차 밸런스 (플레이테스트로 조정). 목표 클리어타임 S1=15 S2=30 S3~ 40~65분.
+        // 목표: 마지막 지역까지 풀클리어 ≈ 2시간 (플레이테스트로 계속 조정).
+        //   i, name, waves, timeLimit, enemyHp0, hpGrowth, bossHp, quota0, startEnemies, goldRate, theme
         public static readonly StageConfig[] Stages =
         {
-            new StageConfig(0, "s.0",  4, 26f,  34f, 1.130f,     1500,  4,  8, 0.50f, new Color(0.42f,0.72f,0.46f)),
-            new StageConfig(1, "s.1",         5, 32f,  70f, 1.136f,     6000,  5,  9, 0.72f, new Color(0.36f,0.62f,0.70f)),
-            new StageConfig(2, "s.2",         6, 40f, 118f, 1.142f,    18600,  6, 10, 0.85f, new Color(0.60f,0.54f,0.36f)),
-            new StageConfig(3, "s.3",         8, 48f, 134f, 1.148f,    46000,  7, 11, 1.00f, new Color(0.40f,0.46f,0.60f)),
-            new StageConfig(4, "s.4",          10, 56f, 157f, 1.154f,   112000,  8, 12, 1.10f, new Color(0.30f,0.58f,0.62f)),
-            new StageConfig(5, "s.5",          12, 64f, 177f, 1.160f,   273000,  9, 13, 1.20f, new Color(0.34f,0.56f,0.34f)),
-            new StageConfig(6, "s.6",       14, 72f, 162f, 1.166f,   563000, 10, 14, 1.40f, new Color(0.62f,0.66f,0.72f)),
-            new StageConfig(7, "s.7",       18, 84f, 116f, 1.172f,  1115000, 11, 15, 1.70f, new Color(0.66f,0.30f,0.34f)),
+            new StageConfig(0, "s.0",  4,  28f,  38f, 1.130f,      2000,  4,  8, 0.50f, new Color(0.42f,0.72f,0.46f)),
+            new StageConfig(1, "s.1",  5,  34f,  82f, 1.136f,      8000,  5,  9, 0.70f, new Color(0.36f,0.62f,0.70f)),
+            new StageConfig(2, "s.2",  7,  44f, 140f, 1.142f,     25000,  6, 10, 0.82f, new Color(0.60f,0.54f,0.36f)),
+            new StageConfig(3, "s.3",  9,  54f, 172f, 1.148f,     68000,  7, 11, 0.95f, new Color(0.40f,0.46f,0.60f)),
+            new StageConfig(4, "s.4", 11,  64f, 205f, 1.153f,    175000,  8, 12, 1.05f, new Color(0.30f,0.58f,0.62f)),
+            new StageConfig(5, "s.5", 13,  74f, 240f, 1.158f,    410000,  9, 13, 1.15f, new Color(0.34f,0.56f,0.34f)),
+            new StageConfig(6, "s.6", 15,  88f, 235f, 1.163f,    850000, 10, 14, 1.30f, new Color(0.62f,0.66f,0.72f)),
+            new StageConfig(7, "s.7", 18, 108f, 200f, 1.168f,   1800000, 11, 15, 1.55f, new Color(0.66f,0.30f,0.34f)),
         };
     }
 }
