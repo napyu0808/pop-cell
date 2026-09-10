@@ -22,7 +22,8 @@ namespace BlackholeGame
         public float bonusTimeSec = 0f;        // 제한시간 +초
         public float spawnIntervalMult = 1f;   // 소환 가속 노드가 낮춘다 (하한 0.25). 낮을수록 적이 더 자주 등장
         public int spawnCount = 2;             // 소환 1회당 적 마릿수 (기본 2, 노드로 +1, 최대 5)
-        public int startWave = 1;              // 스킵 노드로 시작 웨이브 상승 (5,10,15,20,25)
+        public int startWave = 1;              // 스킵 노드로 시작 웨이브 상승 (5,10,15,20)
+        public bool autoAttack = false;        // 자동 공격 해금 여부. false면 좌클릭으로만 타격(초반 수동 구간)
 
         public float GetHitDamage()
             => (baseAttack + flatBonus) * (1f + multBucketPercent / 100f);
@@ -33,7 +34,7 @@ namespace BlackholeGame
             critChance = critChance, critMult = critMult, attackInterval = attackInterval,
             goldMultPercent = goldMultPercent, cursorRadius = cursorRadius,
             bonusTimeSec = bonusTimeSec, spawnIntervalMult = spawnIntervalMult,
-            spawnCount = spawnCount, startWave = startWave,
+            spawnCount = spawnCount, startWave = startWave, autoAttack = autoAttack,
         };
 
         // 치명타는 타격 시점에 공식 바깥에서 롤

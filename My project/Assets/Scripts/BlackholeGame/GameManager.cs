@@ -75,6 +75,7 @@ namespace BlackholeGame
 
         GameAudio sound;     // 절차 생성 효과음 + BGM (Audio.cs)
         bool audioDirty;             // 설정에서 볼륨을 건드렸으면 나갈 때 PlayerPrefs 저장
+        float manualClickCd;        // 수동 공격 쿨다운 — 오토마우스/연타로 이득 못 보게
         float lastSfxPreview;        // 효과음 슬라이더 미리듣기 쿨다운
 
         Camera cam;
@@ -665,10 +666,24 @@ namespace BlackholeGame
 
             attackTimer += dt;
             guard = 0;
-            while (attackTimer >= stats.attackInterval && state == State.Playing && guard++ < 10)
+            if (stats.autoAttack)
             {
-                attackTimer -= stats.attackInterval;
-                AttackPulse();
+                while (attackTimer >= stats.attackInterval && state == State.Playing && guard++ < 10)
+                {
+                    attackTimer -= stats.attackInterval;
+                    AttackPulse();
+                }
+            }
+            else
+            {
+                // 자동 해금 전 — 좌클릭마다 커서 위치에 1회 타격(약물 투하). 쿨다운으로 연타 방지.
+                manualClickCd -= dt;
+                var ms = Mouse.current;
+                if (ms != null && ms.leftButton.wasPressedThisFrame && manualClickCd <= 0f)
+                {
+                    manualClickCd = 0.18f;
+                    AttackPulse();
+                }
             }
 
             for (int i = floaters.Count - 1; i >= 0; i--)
@@ -1475,7 +1490,7 @@ namespace BlackholeGame
             // firstRing: 코어에서 첫 노드까지의 반경. 9갈래가 40° 간격이라 spacing을 그대로 쓰면
             //   현(chord) = 2·R·sin20° 이 노드 크기보다 작아져 가운데에서 칩이 서로 겹친다.
             //   R=104 → 현 ≈ 71px, 노드 40px → 좌우 31px 여유.
-            const float nodeSz = 40f, spacing = 56f, firstRing = 104f;
+            const float nodeSz = 40f, spacing = 56f, firstRing = 120f;   // 5/4 클러스터라 첫 링을 넓게
 
             Vector2 pivot = new Vector2(Screen.width * 0.5f, (Screen.height - barH) * 0.5f);
 
@@ -1498,7 +1513,18 @@ namespace BlackholeGame
             float lim = Mathf.Min(availW, availH);
             if (dPanel > 40f) lim = Mathf.Min(lim, dPanel);   // 창이 아주 작아 중심이 패널에 닿으면 무시
             float fitZoom = Mathf.Clamp(lim / Mathf.Max(1f, maxR), 0.10f, 2.2f);
-            if (treeZoom <= 0f) treeZoom = fitZoom;   // 0 = "아직 안 정해짐 / 리셋됨"
+            if (treeZoom <= 0f)
+            {
+                // 열 때는 '작업 중인 최전선'(코어+구매+구매가능 노드)에 확대해서 보여준다. fit-all 아님.
+                Vector2 c = pivot; int cnt = 0;
+                foreach (var n in nodes)
+                {
+                    if (n.IsRoot || IsBought(n.id) || IsBuyable(n)) { c += npos[n.id]; cnt++; }
+                }
+                if (cnt > 0) c = (c - pivot) / cnt; else c = pivot;
+                treeZoom = Mathf.Clamp(Mathf.Max(fitZoom * 2.3f, 0.62f), fitZoom, 1.05f);
+                treePan = -(c - pivot) * treeZoom;
+            }
 
             Event ev = Event.current;
             if (ev.type == EventType.ScrollWheel)

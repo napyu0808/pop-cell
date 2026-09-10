@@ -129,3 +129,143 @@ def full_stats(cfg):
 
 def tree_total(cfg):
     return sum(n.cost for n in build(cfg))
+
+
+# ============================================================
+# POP Cell 2.0 — 새 트리(클러스터 + 혼합형 갈래, 160노드, tier별 20).
+#   C# UpgradeTree.BuildAll() 을 그대로 복제. 비용은 tier_cost[tier].
+# ============================================================
+_BRANCHES_V2 = [
+    ("ca", ["Flat", "Mult", "Speed", "CritC"]),
+    ("cb", ["Mult", "CritX", "Flat", "Speed"]),
+    ("cc", ["Speed", "Flat", "CritC", "Range"]),
+    ("cd", ["Flat", "Range", "CritX", "Mult"]),
+    ("ce", ["CritC", "Mult", "Flat", "Speed"]),
+    ("ua", ["Auto", "Gold", "Time", "Range"]),
+    ("ub", ["Time", "Spawn", "Gold", "Skip"]),
+    ("uc", ["Gold", "Time", "SCount", "Range"]),
+    ("ud", ["Spawn", "Gold", "Range", "Time"]),
+]
+NODES_PER_TIER = 20
+TIERS = 8
+
+
+class CfgV2:
+    def __init__(self, **kw):
+        self.tier_cost = [40, 240, 1300, 5200, 18000, 58000, 160000, 420000]
+        self.root_flat = 8.0
+        # per-node effect magnitudes (match UpgradeTree.cs Effect())
+        self.flat = lambda d: 12 + d * 5
+        self.mult_pp = 11.0
+        self.interval_mul = 0.94
+        self.crit_pp = 0.04
+        self.critmult_add = 0.25
+        self.cursor_add = 0.12
+        self.gold_pp = 8.0
+        self.time_add = 4.0
+        self.time_cap = 60.0
+        self.spawn_mul = 0.93
+        self.spawn_floor = 0.22
+        self.mult_cap = 240.0
+        # wave config (Phase 1 still ends at the 40-wave boss)
+        self.baseTimeLimit = 40.0
+        self.hpGrowth = 1.17
+        self.baseEnemyHp = 10.0
+        self.totalWaves = 40
+        self.bossHp = 1_000_000
+        self.baseQuota = 8
+        self.quotaSlope = 2
+        self.goldCurve = [1, 2, 5, 10, 12, 15, 20,
+                          21, 23, 24, 26, 27, 29, 31, 33, 35, 38, 40, 43,
+                          45, 48, 51, 55, 58, 62, 66, 70, 75, 80, 85,
+                          90, 96, 102, 109, 116, 123, 131, 140, 149, 158]
+        self.goldMultApplies = True
+        for k, v in kw.items():
+            setattr(self, k, v)
+
+    def wavecfg(self):
+        return WaveCfg(baseTimeLimit=self.baseTimeLimit, hpGrowth=self.hpGrowth,
+                       baseEnemyHp=self.baseEnemyHp, totalWaves=self.totalWaves,
+                       bossHp=self.bossHp, baseQuota=self.baseQuota,
+                       quotaSlope=self.quotaSlope, goldCurve=list(self.goldCurve))
+
+    def cost(self, tier):
+        if 0 <= tier < len(self.tier_cost):
+            return self.tier_cost[tier]
+        return round(self.tier_cost[-1] * 2.6 ** (tier - len(self.tier_cost) + 1))
+
+    def _effect(self, t, d):
+        c = self
+        if t == "Flat":
+            v = c.flat(d); return (f"공격력 +{v}", lambda s: setattr(s, "flatBonus", s.flatBonus + v))
+        if t == "Mult":
+            return ("배수", lambda s: setattr(s, "multBucketPercent", min(c.mult_cap, s.multBucketPercent + c.mult_pp)))
+        if t == "Speed":
+            return ("공속", lambda s: setattr(s, "attackInterval", max(0.15, s.attackInterval * c.interval_mul)))
+        if t == "CritC":
+            return ("치확", lambda s: setattr(s, "critChance", min(0.75, s.critChance + c.crit_pp)))
+        if t == "CritX":
+            return ("치배", lambda s: setattr(s, "critMult", s.critMult + c.critmult_add))
+        if t == "Range":
+            return ("범위", lambda s: setattr(s, "cursorRadius", s.cursorRadius + c.cursor_add))
+        if t == "Gold":
+            return ("골드", lambda s: setattr(s, "goldMultPercent", s.goldMultPercent + c.gold_pp))
+        if t == "Time":
+            return ("시간", lambda s: setattr(s, "bonusTimeSec", min(c.time_cap, s.bonusTimeSec + c.time_add)))
+        if t == "Spawn":
+            return ("소환가속", lambda s: setattr(s, "spawnIntervalMult", max(c.spawn_floor, s.spawnIntervalMult * c.spawn_mul)))
+        if t == "SCount":
+            return ("소환수", lambda s: setattr(s, "spawnCount", min(6, s.spawnCount + 1)))
+        if t == "Skip":
+            return ("스킵", lambda s: None)   # startWave: 아래 build_v2 에서 인덱스로 처리
+        return ("auto", lambda s: setattr(s, "autoAttack", True))
+
+
+class NodeV2(Node):
+    __slots__ = ("tier", "parent")
+
+
+def build_v2(cfg):
+    L = [NodeV2("root", "root", -1, 0,
+              (lambda v: lambda s: setattr(s, "flatBonus", s.flatBonus + v))(cfg.root_flat), "코어")]
+    last = {b[0]: "root" for b in _BRANCHES_V2}
+    added = 0
+    skip_i = 0
+    total = NODES_PER_TIER * TIERS
+    depth = 0
+    while added < total:
+        for prefix, cycle in _BRANCHES_V2:
+            if added >= total:
+                break
+            t = cycle[depth % len(cycle)]
+            if t == "Auto" and depth > 0:
+                t = "Range"
+            desc, apply = cfg._effect(t, depth)
+            if t == "Skip":
+                skip_i += 1
+                w = skip_i * 5
+                apply = (lambda w: lambda s: setattr(s, "startWave", max(s.startWave, w)))(w)
+                desc = f"웨이브 {w}부터"
+            tier = added // NODES_PER_TIER
+            nid = f"{prefix}{depth}"
+            n = NodeV2(nid, prefix, depth, cfg.cost(tier), apply, desc)
+            n.tier = tier
+            n.parent = last[prefix]
+            L.append(n)
+            last[prefix] = nid
+            added += 1
+        depth += 1
+    return L
+
+
+def full_stats_v2(cfg):
+    s = Stats()
+    for n in build_v2(cfg):
+        n.apply(s)
+    if not cfg.goldMultApplies:
+        s.goldMultPercent = 0.0
+    return s
+
+
+def tree_total_v2(cfg):
+    return sum(n.cost for n in build_v2(cfg))
