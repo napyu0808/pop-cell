@@ -16,7 +16,7 @@ namespace BlackholeGame
         public float multBucketPercent = 0f;   // 배수 버킷(합산). 상한 200 => ×3.0
         [Range(0f, 0.75f)] public float critChance = 0f;
         public float critMult = 2.0f;
-        public float attackInterval = 1.0f;    // 타격 간격(초). 하한 0.15
+        public float attackInterval = 0.72f;   // 타격 간격(초). 하한 0.15. 수동 클릭은 이보다 항상 느림
         public float goldMultPercent = 0f;
         public float cursorRadius = 0.45f;     // 커서 타격 범위(월드 단위). 초반은 좁게. 커서 범위 노드는 맨 마지막
         public float bonusTimeSec = 0f;        // 제한시간 +초
@@ -108,5 +108,60 @@ namespace BlackholeGame
         }
         // 누적 스폰 간격: 잡아도 리스폰 없음. 후반에 더 자주 나오게 (플레이타임 벽 완화)
         public float SpawnIntervalAt(int w) => Mathf.Max(0.16f, 0.50f - (w - 1) * 0.013f);
+
+        // ---- Phase 2: 스테이지(지역) 파라미터를 이 WaveConfig 에 채워 넣는다 ----
+        //   기존 wave.XXX 호출부는 그대로 두고, 스테이지 선택 시 이 메서드로 값만 교체.
+        public void LoadStage(int idx)
+        {
+            var st = StageConfig.Stages[Mathf.Clamp(idx, 0, StageConfig.Stages.Length - 1)];
+            totalWaves    = st.waves;          // 마지막 웨이브 = 보스
+            baseTimeLimit = st.timeLimit;
+            baseEnemyHp   = st.enemyHp0;
+            hpGrowth      = st.hpGrowth;
+            bossHp        = st.bossHp;
+            baseQuota     = st.quota0;
+            startEnemies  = st.startEnemies;
+            goldRate      = st.goldRate;
+        }
+    }
+
+    // ============================================================
+    // 스테이지(지역) 데이터 — 8개. 냥코대전쟁식 세계 맵.
+    //   각 지역은 tier(=idx) 노드를 풀강해야 보스를 잡을 수 있는 DPS 체크.
+    //   지역 N 클리어 -> tier N 노드 해금. 값은 시뮬 1차 + 플레이테스트로 조정.
+    // ============================================================
+    public class StageConfig
+    {
+        public readonly int index;
+        public readonly string name;
+        public readonly int waves;
+        public readonly float timeLimit;
+        public readonly float enemyHp0;
+        public readonly float hpGrowth;
+        public readonly int bossHp;
+        public readonly int quota0;
+        public readonly int startEnemies;
+        public readonly float goldRate;
+        public readonly Color theme;
+
+        StageConfig(int i, string n, int w, float t, float hp0, float hpg, int boss,
+                    int q0, int se, float gr, Color th)
+        {
+            index = i; name = n; waves = w; timeLimit = t; enemyHp0 = hp0; hpGrowth = hpg;
+            bossHp = boss; quota0 = q0; startEnemies = se; goldRate = gr; theme = th;
+        }
+
+        // 1차 밸런스 (플레이테스트로 조정). 목표 클리어타임 S1=15 S2=30 S3~ 40~65분.
+        public static readonly StageConfig[] Stages =
+        {
+            new StageConfig(0, "s.0",  4, 26f,  34f, 1.130f,     1500,  4,  8, 0.50f, new Color(0.42f,0.72f,0.46f)),
+            new StageConfig(1, "s.1",         5, 32f,  70f, 1.136f,     6000,  5,  9, 0.72f, new Color(0.36f,0.62f,0.70f)),
+            new StageConfig(2, "s.2",         6, 40f, 118f, 1.142f,    18600,  6, 10, 0.85f, new Color(0.60f,0.54f,0.36f)),
+            new StageConfig(3, "s.3",         8, 48f, 134f, 1.148f,    46000,  7, 11, 1.00f, new Color(0.40f,0.46f,0.60f)),
+            new StageConfig(4, "s.4",          10, 56f, 157f, 1.154f,   112000,  8, 12, 1.10f, new Color(0.30f,0.58f,0.62f)),
+            new StageConfig(5, "s.5",          12, 64f, 177f, 1.160f,   273000,  9, 13, 1.20f, new Color(0.34f,0.56f,0.34f)),
+            new StageConfig(6, "s.6",       14, 72f, 162f, 1.166f,   563000, 10, 14, 1.40f, new Color(0.62f,0.66f,0.72f)),
+            new StageConfig(7, "s.7",       18, 84f, 116f, 1.172f,  1115000, 11, 15, 1.70f, new Color(0.66f,0.30f,0.34f)),
+        };
     }
 }

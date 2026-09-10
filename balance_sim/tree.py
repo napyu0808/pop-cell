@@ -142,7 +142,7 @@ _BRANCHES_V2 = [
     ("cd", ["Flat", "Range", "CritX", "Mult"]),
     ("ce", ["CritC", "Mult", "Flat", "Speed"]),
     ("ua", ["Auto", "Gold", "Time", "Range"]),
-    ("ub", ["Time", "Spawn", "Gold", "Skip"]),
+    ("ub", ["Time", "Spawn", "Gold", "CritC"]),
     ("uc", ["Gold", "Time", "SCount", "Range"]),
     ("ud", ["Spawn", "Gold", "Range", "Time"]),
 ]
@@ -152,7 +152,7 @@ TIERS = 8
 
 class CfgV2:
     def __init__(self, **kw):
-        self.tier_cost = [40, 240, 1300, 5200, 18000, 58000, 160000, 420000]
+        self.tier_cost = [45, 420, 1400, 5500, 20000, 75000, 200000, 520000]
         self.root_flat = 8.0
         # per-node effect magnitudes (match UpgradeTree.cs Effect())
         self.flat = lambda d: 12 + d * 5

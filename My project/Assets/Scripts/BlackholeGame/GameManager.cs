@@ -24,13 +24,23 @@ namespace BlackholeGame
         [Tooltip("HUD·텍스트 전체 배율 — Awake에서 항상 코드 기본값으로 리셋(씬 직렬화 무시)")]
         [HideInInspector] public float uiScale = 1.5f;
 
-        enum State { Title, Playing, Paused, Result, Tree, Settings, Win }
+        enum State { Title, Map, Playing, Paused, Result, Tree, Settings, Meta, Win }
         State state = State.Title;
         State settingsReturn = State.Title;
         State pauseReturn = State.Playing;   // 일시정지에서 "계속/돌아가기" 시 복귀할 화면
 
         int gold, waveNum = 1, kills, quota;
         int cycleKills, cycleGold;
+        int currentStage = 0;     // 지금 플레이 중인 지역 (0~7)
+        int stagesCleared = 0;    // 클리어한 지역 수 = 해금된 tier
+        int retryCount = 0;       // 부대 카운터(리트라이 횟수) — 표시용
+        int maxScore = 0;         // 프레스티지 보상 기준 (stagesCleared*100 + 최고 웨이브)
+        bool hasSave = false;     // 타이틀 '이어하기' 표시용
+        int metaCurrency = 0;     // 환생 재화 (shard)
+        int bestScore = 0;        // 역대 최고 score
+        readonly Dictionary<string, int> metaLv = new Dictionary<string, int>();
+        List<UpgradeTree.MetaNode> metaNodes;
+        Stats pristineStats;      // 메타 적용 전의 순정 기본값
         float timeLeft, attackTimer, spawnTimer, spawnInterval;
 
         Stats baseStats;
@@ -115,6 +125,7 @@ namespace BlackholeGame
 
         void Awake()
         {
+            Loc.LoadPref();
             stats = new Stats();       // 직렬화된 옛 값 무시, 항상 코드 기본값
             wave = new WaveConfig();
             fieldSize = new Vector2(16f, 10f);
@@ -140,7 +151,11 @@ namespace BlackholeGame
             BuildCursor();
 
             nodes = UpgradeTree.BuildAll();
+            metaNodes = UpgradeTree.BuildMeta();
+            pristineStats = stats.Clone();
             baseStats = stats.Clone();
+            LoadProgress();
+            RebuildBaseStats();
 
             if (FindAnyObjectByType<AudioListener>() == null) cam.gameObject.AddComponent<AudioListener>();
             sound = new GameAudio(transform);
@@ -400,6 +415,119 @@ namespace BlackholeGame
             return s;
         }
 
+        int MetaLv(string id) => metaLv.TryGetValue(id, out var v) ? v : 0;
+
+        // baseStats = 순정 + 구매한 메타 효과. 메타가 바뀌거나 로드 직후 호출.
+        void RebuildBaseStats()
+        {
+            baseStats = (pristineStats ?? new Stats()).Clone();
+            if (metaNodes != null)
+                foreach (var m in metaNodes)
+                {
+                    int lv = MetaLv(m.id);
+                    if (lv > 0) m.apply(baseStats, lv);
+                }
+        }
+
+        int ShardReward(int score) => Mathf.FloorToInt(score / 8f);
+
+        // 환생 — 시간여행. 진행 리셋, 메타는 유지, shard 획득.
+        void Prestige()
+        {
+            metaCurrency += ShardReward(maxScore);
+            bestScore = Mathf.Max(bestScore, maxScore);
+            gold = 2000 * MetaLv("m_start");
+            bought.Clear();
+            stagesCleared = 0;
+            currentStage = 0;
+            retryCount = Mathf.Max(0, retryCount / 2);
+            maxScore = 0;
+            RebuildBaseStats();
+            stats = baseStats.Clone();
+            GrabRoot();
+            wave.LoadStage(0);
+            SaveProgress();
+            state = State.Map;
+        }
+
+        void BuyMeta(UpgradeTree.MetaNode m)
+        {
+            int lv = MetaLv(m.id);
+            if (lv >= m.maxLv || metaCurrency < m.cost) return;
+            metaCurrency -= m.cost;
+            metaLv[m.id] = lv + 1;
+            RebuildBaseStats();
+            if (sound != null) sound.Play(Sfx.Buy, 0.8f);
+            SaveProgress();
+        }
+
+        // 코어(root) 는 항상 자동 보유 — 이게 있어야 depth-0 노드가 구매 가능해진다
+        void GrabRoot()
+        {
+            if (nodes == null) return;
+            var r = nodes.Find(n => n.IsRoot);
+            if (r != null && bought.Add(r.id)) r.apply(stats);
+        }
+
+        // ---- 저장/불러오기 ----
+        void SaveProgress()
+        {
+            var d = new SaveData
+            {
+                stagesCleared = stagesCleared,
+                currentStage = currentStage,
+                gold = gold,
+                retryCount = retryCount,
+                maxScore = maxScore,
+                metaCurrency = metaCurrency,
+            };
+            foreach (var id in bought) d.bought.Add(id);
+            foreach (var kv in metaLv) if (kv.Value > 0) d.metaBought.Add(kv.Key + ":" + kv.Value);
+            SaveSystem.Save(d);
+        }
+
+        void LoadProgress()
+        {
+            var d = SaveSystem.Load();
+            hasSave = d != null && d.HasProgress;
+            metaLv.Clear();
+            metaCurrency = 0;
+            if (d != null)
+            {
+                metaCurrency = d.metaCurrency;
+                foreach (var e in d.metaBought)
+                {
+                    var pp = e.Split(':');
+                    if (pp.Length == 2 && int.TryParse(pp[1], out var lv)) metaLv[pp[0]] = lv;
+                }
+            }
+        }
+
+        // '이어하기' — 세이브를 stats/진행에 적용
+        void ContinueGame()
+        {
+            PurgeSpawnedObjects();
+            var d = SaveSystem.Load();
+            if (d == null) { NewGame(); return; }
+            LoadProgress();
+            RebuildBaseStats();
+            stats = baseStats.Clone();
+            bought.Clear();
+            GrabRoot();
+            gold = d.gold;
+            stagesCleared = d.stagesCleared;
+            currentStage = Mathf.Clamp(d.currentStage, 0, StageConfig.Stages.Length - 1);
+            retryCount = d.retryCount;
+            maxScore = d.maxScore;
+            foreach (var id in d.bought)
+            {
+                var n = NodeById(id);
+                if (n != null && bought.Add(id)) n.apply(stats);
+            }
+            wave.LoadStage(currentStage);
+            state = State.Map;
+        }
+
         void NewGame()
         {
             // 무식하게: 이전 세션·디버그·스테일 어셈블리가 남긴 적/연출 오브젝트를 씬에서 싹 제거
@@ -412,7 +540,13 @@ namespace BlackholeGame
             gold = 0;
             bought.Clear();
             stats = baseStats != null ? baseStats.Clone() : stats;
-            StartRun();
+            GrabRoot();
+            gold = 2000 * MetaLv("m_start");
+            currentStage = 0;
+            stagesCleared = 0;
+            retryCount = 0;
+            wave.LoadStage(currentStage);
+            state = State.Map;
         }
 
         void PurgeSpawnedObjects()
@@ -439,6 +573,7 @@ namespace BlackholeGame
 
         void StartRun()
         {
+            wave.LoadStage(currentStage);   // 지역 파라미터 적용
             foreach (var e in enemies) if (e.go) Destroy(e.go);
             enemies.Clear();
             boss = null;
@@ -453,7 +588,7 @@ namespace BlackholeGame
             cycleKills = 0;
             cycleGold = 0;
             bossesKilled = 0;
-            waveNum = Mathf.Clamp(stats.startWave, 1, wave.totalWaves);  // 스킵 노드 반영
+            waveNum = Mathf.Clamp(stats.startWave, 1, Mathf.Max(1, wave.totalWaves - 1));  // 보스 웨이브로는 시작 안 함
             timeLeft = wave.TimeAt(waveNum) + stats.bonusTimeSec;
             ApplyWaveParams();
             if (waveNum >= wave.totalWaves) SpawnBoss();
@@ -478,6 +613,9 @@ namespace BlackholeGame
         void OnTimeout()
         {
             if (sound != null) sound.Play(Sfx.Timeout, 0.8f);
+            retryCount++;
+            maxScore = Mathf.Max(maxScore, stagesCleared * 100 + waveNum);
+            SaveProgress();
             state = State.Result;
         }
 
@@ -608,7 +746,10 @@ namespace BlackholeGame
                     state = settingsReturn;
                 }
                 else if (state == State.Win)     { state = State.Title; }
-                else if (state == State.Tree || state == State.Result) { pauseReturn = state; state = State.Paused; }
+                else if (state == State.Map)     { state = State.Title; }
+                else if (state == State.Meta)    { state = State.Map; }
+                else if (state == State.Result)  { state = State.Map; }
+                else if (state == State.Tree)    { pauseReturn = state; state = State.Paused; }
             }
 
             // F12 — 치트: 모든 업그레이드 즉시 해금
@@ -681,7 +822,7 @@ namespace BlackholeGame
                 var ms = Mouse.current;
                 if (ms != null && ms.leftButton.wasPressedThisFrame && manualClickCd <= 0f)
                 {
-                    manualClickCd = 0.18f;
+                    manualClickCd = Mathf.Max(0.34f, stats.attackInterval * 1.12f);   // 자동보다 항상 느림
                     AttackPulse();
                 }
             }
@@ -775,7 +916,12 @@ namespace BlackholeGame
                     {
                         boss = null; bossesKilled++;
                         if (sound != null) sound.Play(Sfx.Win, 1f);
-                        state = State.Win; return;
+                        stagesCleared = Mathf.Max(stagesCleared, currentStage + 1);
+                        maxScore = Mathf.Max(maxScore, stagesCleared * 100);
+                        SaveProgress();
+                        if (currentStage >= StageConfig.Stages.Length - 1) state = State.Win;  // 마지막 지역 = 엔딩
+                        else state = State.Map;
+                        return;
                     }
                     if (sound != null) sound.PlayKill(crit);
                     if (kills >= quota) { OnWaveClear(); return; }
@@ -802,6 +948,7 @@ namespace BlackholeGame
         bool IsBuyable(UpgradeNode n)
         {
             if (IsBought(n.id)) return false;
+            if (n.tier > stagesCleared) return false;   // 지역 N 클리어 전엔 tier N 잠김
             if (n.IsRoot) return true;
             return IsBought(n.parentId);
         }
@@ -835,14 +982,18 @@ namespace BlackholeGame
             int boughtNow = 0;
             foreach (var n in path)
             {
+                if (n.tier > stagesCleared) break;   // 잠긴 지역 tier 는 못 삼
                 if (gold < n.cost) break;
                 gold -= n.cost;
                 bought.Add(n.id);
                 n.apply(stats);
                 boughtNow++;
             }
-            if (boughtNow > 0 && sound != null)
-                sound.Play(Sfx.Buy, 0.75f, boughtNow > 1 ? 1.12f : 1f);   // 여러 개 한 번에 = 살짝 높게
+            if (boughtNow > 0)
+            {
+                if (sound != null) sound.Play(Sfx.Buy, 0.75f, boughtNow > 1 ? 1.12f : 1f);
+                SaveProgress();
+            }
         }
 
         // ============================================================
@@ -901,7 +1052,8 @@ namespace BlackholeGame
         static readonly Color Up = new Color(0.49f, 0.92f, 0.62f);   // 상승 표시(초록)
 
         string[] StatLabels => new[]
-        { "공격력", "치명타", "공격 속도", "공격 범위", "골드 획득", "소환", "제한 시간", "시작 웨이브" };
+        { Loc.T("stat.dmg"), Loc.T("stat.crit"), Loc.T("stat.aspd"), Loc.T("stat.range"),
+          Loc.T("stat.gold"), Loc.T("stat.spawn"), Loc.T("stat.time"), Loc.T("stat.startWave") };
 
         string[] StatValues(Stats s)
         {
@@ -910,11 +1062,11 @@ namespace BlackholeGame
             {
                 s.GetHitDamage().ToString("N0"),
                 $"{s.critChance * 100f:0}% × {s.critMult:0.0}",
-                $"초당 {aps:0.0}회",
+                Loc.F("stat.aspdVal", aps.ToString("0.0")),
                 $"{s.cursorRadius:0.00}",
                 $"+{s.goldMultPercent:0}%",
-                $"×{s.spawnIntervalMult:0.00} · {s.spawnCount}마리",
-                $"{wave.baseTimeLimit + s.bonusTimeSec:0}초",
+                Loc.F("stat.spawnVal", s.spawnIntervalMult.ToString("0.00"), s.spawnCount),
+                Loc.F("stat.timeVal", (wave.baseTimeLimit + s.bonusTimeSec).ToString("0")),
                 $"{Mathf.Max(1, s.startWave)}",
             };
         }
@@ -978,7 +1130,7 @@ namespace BlackholeGame
             GUI.color = Color.white;
 
             float ix = x + pad, iw = panelW - pad * 2f, iy = y + pad;
-            GUI.Label(new Rect(ix, iy, iw, rowH), "현재 능력치", head);
+            GUI.Label(new Rect(ix, iy, iw, rowH), Loc.T("stat.cur"), head);
             iy += rowH * 1.2f;
 
             for (int i = 0; i < labels.Length; i++)
@@ -1008,7 +1160,7 @@ namespace BlackholeGame
             var nodeS = new GUIStyle(lab) { alignment = TextAnchor.MiddleRight };
             nodeS.normal.textColor = new Color(0.62f, 0.64f, 0.68f);
             FlatText(nodeS);
-            GUI.Label(new Rect(ix, iy, iw * 0.46f, rowH), "해금 노드", lab);
+            GUI.Label(new Rect(ix, iy, iw * 0.46f, rowH), Loc.T("stat.nodes"), lab);
             GUI.Label(new Rect(ix + iw * 0.46f, iy, iw * 0.54f, rowH),
                       $"{(bought != null ? bought.Count : 0)} / {(nodes != null ? nodes.Count : 0)}", nodeS);
         }
@@ -1055,6 +1207,8 @@ namespace BlackholeGame
             switch (state)
             {
                 case State.Title:    DrawTitle();    return;
+                case State.Map:      DrawMap();      return;
+                case State.Meta:     DrawMeta();     return;
                 case State.Settings: DrawSettings(); return;
                 case State.Result:   DrawResult();   return;
                 case State.Tree:     DrawTree();     return;
@@ -1154,7 +1308,7 @@ namespace BlackholeGame
 
             GUI.Label(new Rect(14f * s, 10f * s, 520f * s, 32f * s), $"$ {gold:N0}", hGold);
             GUI.Label(new Rect(0, 8f * s, Screen.width, 30f * s),
-                bossWave ? "── 보스 ──" : $"웨이브 {waveNum} / {wave.totalWaves}", hCen);
+                bossWave ? Loc.T("hud.boss") : Loc.F("hud.wave", waveNum, wave.totalWaves), hCen);
 
             var tStyle = new GUIStyle(sBig)
             { normal = { textColor = timeLeft <= 5f ? new Color(0.72f, 0.06f, 0.08f) : InkDark } };
@@ -1288,19 +1442,157 @@ namespace BlackholeGame
             bool fromPlay = pauseReturn == State.Playing;
 
             var title = new GUIStyle(sBig) { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(28f * uiScale) };
-            GUI.Label(new Rect(0, h * 0.20f, w, 72f), fromPlay ? "일시정지" : "메뉴", title);
+            GUI.Label(new Rect(0, h * 0.20f, w, 72f), fromPlay ? Loc.T("pause.title") : Loc.T("pause.menu"), title);
 
             float bw = 260f, bh = 52f, gap = 12f, by = h * 0.40f;
             var bst = Btn(16);
             int row = 0;
             if (UiBtn(new Rect(w * 0.5f - bw * 0.5f, by + (bh + gap) * row++, bw, bh),
-                fromPlay ? "계속하기" : "돌아가기", bst)) state = pauseReturn;
+                fromPlay ? Loc.T("pause.resume") : Loc.T("pause.return"), bst)) state = pauseReturn;
             if (fromPlay && UiBtn(new Rect(w * 0.5f - bw * 0.5f, by + (bh + gap) * row++, bw, bh),
-                "웨이브 종료 (상점으로)", bst)) state = State.Result;
+                Loc.T("pause.endWave"), bst)) state = State.Result;
             if (UiBtn(new Rect(w * 0.5f - bw * 0.5f, by + (bh + gap) * row++, bw, bh),
-                "설정", bst)) { settingsReturn = State.Paused; state = State.Settings; }
+                Loc.T("title.settings"), bst)) { settingsReturn = State.Paused; state = State.Settings; }
             if (UiBtn(new Rect(w * 0.5f - bw * 0.5f, by + (bh + gap) * row++, bw, bh),
-                "타이틀로", bst)) state = State.Title;
+                Loc.T("common.toTitle"), bst)) state = State.Title;
+        }
+
+        // ---- 지역(스테이지) 선택 맵 ----
+        void DrawMap()
+        {
+            FillScreen(Glass);
+            DrawGridOverlay(GlassGrid);
+            float w = Screen.width, h = Screen.height, s = uiScale;
+
+            var tt = new GUIStyle(sBig) { alignment = TextAnchor.MiddleCenter,
+                fontSize = Mathf.RoundToInt(34f * s), normal = { textColor = InkDark } };
+            FlatText(tt);
+            GUI.Label(new Rect(0, h * 0.06f, w, 60f * s), Loc.T("map.title"), tt);
+
+            var sub = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleCenter,
+                fontSize = Mathf.RoundToInt(13f * s), normal = { textColor = new Color(0.20f,0.24f,0.28f) } };
+            FlatText(sub);
+            GUI.Label(new Rect(0, h * 0.06f + 44f * s, w, 26f * s),
+                Loc.F("map.info", gold.ToString("N0"), retryCount, stagesCleared, StageConfig.Stages.Length), sub);
+
+            // 8개 타일 2행 × 4열
+            int cols = 4;
+            float gap = 18f * s;
+            float gw = Mathf.Min(220f * s, (w * 0.94f - (cols - 1) * gap) / cols);   // 작은 창에서도 안 넘치게
+            float gh = gw * 0.44f;
+            float gridW = cols * gw + (cols - 1) * gap;
+            float x0 = (w - gridW) * 0.5f, y0 = h * 0.26f;
+            var name = new GUIStyle(sBtn) { fontSize = Mathf.RoundToInt(14f * s), wordWrap = true };
+            var meta = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleCenter,
+                fontSize = Mathf.RoundToInt(11f * s), normal = { textColor = new Color(0.30f,0.33f,0.37f) } };
+            FlatText(meta);
+
+            for (int i = 0; i < StageConfig.Stages.Length; i++)
+            {
+                var st = StageConfig.Stages[i];
+                int col = i % cols, row = i / cols;
+                var r = new Rect(x0 + col * (gw + gap), y0 + row * (gh + gap + 22f * s), gw, gh);
+                bool unlocked = i <= stagesCleared;
+                bool cleared = i < stagesCleared;
+
+                var gc = GUI.color;
+                GUI.color = unlocked ? new Color(st.theme.r, st.theme.g, st.theme.b, cleared ? 0.55f : 0.95f)
+                                     : new Color(0.55f, 0.57f, 0.60f, 0.5f);
+                GUI.DrawTexture(r, Texture2D.whiteTexture);
+                GUI.color = new Color(0f, 0f, 0f, 0.28f);
+                GUI.DrawTexture(new Rect(r.x, r.yMax - 3f, r.width, 3f), Texture2D.whiteTexture);
+                GUI.color = gc;
+
+                var lab = new GUIStyle(name) { normal = { textColor = unlocked ? Color.white : new Color(0.85f,0.86f,0.88f) } };
+                FlatText(lab);
+                if (unlocked)
+                {
+                    if (UiBtn(r, i + 1 + ". " + Loc.T(st.name), lab))
+                    { currentStage = i; BeginTransition(StartRun); }
+                }
+                else
+                {
+                    GUI.Label(r, (i + 1) + ". ???", lab);
+                    GUI.Label(new Rect(r.x, r.yMax + 2f, r.width, 20f * s), Loc.T("map.locked"), meta);
+                }
+                if (unlocked)
+                    GUI.Label(new Rect(r.x, r.yMax + 2f, r.width, 20f * s),
+                        cleared ? Loc.T("map.cleared") : Loc.F("map.wavesBoss", st.waves), meta);
+            }
+
+            var bst = Btn(Mathf.RoundToInt(13f * s));
+            bst.normal.textColor = InkDark; FlatText(bst);
+            float bw = 176f * s, bh = 44f * s, bgap = 12f * s;
+            bool canRebirth = stagesCleared >= 2;
+            int nbtn = canRebirth ? 3 : 2;
+            float totw = nbtn * bw + (nbtn - 1) * bgap;
+            float bx = (w - totw) * 0.5f, byy = h * 0.87f;
+            if (UiBtn(new Rect(bx, byy, bw, bh), Loc.T("map.upgrade"), bst))
+            { state = State.Tree; treeZoom = 0f; treePan = Vector2.zero; }
+            bx += bw + bgap;
+            if (UiBtn(new Rect(bx, byy, bw, bh), metaCurrency > 0 ? Loc.F("map.metaN", metaCurrency) : Loc.T("map.meta"), bst))
+                state = State.Meta;
+            bx += bw + bgap;
+            if (canRebirth)
+            {
+                if (UiBtn(new Rect(bx, byy, bw, bh), Loc.F("map.rebirth", ShardReward(maxScore)), bst))
+                    BeginTransition(Prestige);
+            }
+            GUI.Label(new Rect(0, byy + bh + 4f * s, w, 20f * s),
+                canRebirth ? Loc.F("map.rebirthInfo", ShardReward(maxScore), metaCurrency)
+                           : Loc.T("map.rebirthLock"), sub);
+        }
+
+        // ---- 메타(환생) 강화 화면 ----
+        void DrawMeta()
+        {
+            FillScreen(new Color(0.18f, 0.16f, 0.22f, 1f));
+            DrawGridOverlay(new Color(0.30f, 0.26f, 0.36f, 1f));
+            float w = Screen.width, h = Screen.height, s = uiScale;
+
+            var tt = new GUIStyle(sBig) { alignment = TextAnchor.MiddleCenter,
+                fontSize = Mathf.RoundToInt(30f * s) };
+            FlatText(tt);
+            GUI.Label(new Rect(0, h * 0.06f, w, 52f * s), Loc.T("meta.title"), tt);
+            var sub2 = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleCenter,
+                fontSize = Mathf.RoundToInt(13f * s), normal = { textColor = Gold } };
+            FlatText(sub2);
+            GUI.Label(new Rect(0, h * 0.06f + 42f * s, w, 24f * s), Loc.F("meta.shard", metaCurrency), sub2);
+
+            float rowH = 56f * s, listW = Mathf.Min(620f * s, w * 0.9f);
+            float lx = (w - listW) * 0.5f, ly = h * 0.20f;
+            var name = new GUIStyle(sLabel) { fontSize = Mathf.RoundToInt(15f * s), fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft };
+            var desc = new GUIStyle(sLabel) { fontSize = Mathf.RoundToInt(12f * s), normal = { textColor = new Color(0.72f,0.70f,0.78f) }, alignment = TextAnchor.MiddleLeft };
+            FlatText(name); FlatText(desc);
+            var bst = Btn(Mathf.RoundToInt(12f * s));
+            for (int i = 0; i < metaNodes.Count; i++)
+            {
+                var m = metaNodes[i];
+                int lv = MetaLv(m.id);
+                var r = new Rect(lx, ly + i * (rowH + 8f * s), listW, rowH);
+                var gc = GUI.color;
+                GUI.color = new Color(0.24f, 0.22f, 0.30f, 0.92f);
+                GUI.DrawTexture(r, Texture2D.whiteTexture);
+                GUI.color = gc;
+                GUI.Label(new Rect(r.x + 14f * s, r.y + 6f * s, listW * 0.62f, 22f * s), Loc.F("meta.lv", Loc.T(m.label), lv, m.maxLv), name);
+                GUI.Label(new Rect(r.x + 14f * s, r.y + 28f * s, listW * 0.62f, 20f * s), Loc.T(m.desc), desc);
+                bool maxed = lv >= m.maxLv;
+                bool afford = metaCurrency >= m.cost;
+                string btxt = maxed ? Loc.T("meta.max") : Loc.F("meta.cost", m.cost);
+                var br = new Rect(r.xMax - 130f * s, r.y + 8f * s, 116f * s, rowH - 16f * s);
+                if (!maxed && afford)
+                {
+                    if (UiBtn(br, btxt, bst)) BuyMeta(m);
+                }
+                else
+                {
+                    var gc2 = GUI.color; GUI.color = new Color(1f,1f,1f,0.4f);
+                    GUI.Box(br, btxt); GUI.color = gc2;
+                }
+            }
+            var back = Btn(Mathf.RoundToInt(14f * s));
+            if (UiBtn(new Rect(w * 0.5f - 110f * s, h * 0.90f, 220f * s, 44f * s), Loc.T("pause.return"), back))
+                state = State.Map;
         }
 
         void DrawTitle()
@@ -1318,16 +1610,27 @@ namespace BlackholeGame
             { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(15f * uiScale),
               normal = { textColor = new Color(0.16f, 0.20f, 0.24f) } };
             FlatText(sub);
-            GUI.Label(new Rect(0, h * 0.13f + 92f * uiScale, w, 34f * uiScale), "세포 팝 — 인크리멘탈 클리커", sub);
+            GUI.Label(new Rect(0, h * 0.13f + 92f * uiScale, w, 34f * uiScale), Loc.T("title.sub"), sub);
 
             // 버튼: 기존 대비 1.2배 + 화면 비례(uiScale). 밝은 배경이라 글자는 검게.
             float bw = 260f * 1.2f * uiScale, bh = 54f * 1.2f * uiScale, gap = 12f * uiScale, by = h * 0.56f;
             var bst = Btn(Mathf.RoundToInt(17f * 1.2f * uiScale));
             bst.normal.textColor = InkDark; FlatText(bst);
-            if (UiBtn(new Rect(w * 0.5f - bw * 0.5f, by, bw, bh), "게임 시작", bst))
-                BeginTransition(NewGame);   // 눈을 감았다 뜨면 현미경 안이다
-            if (UiBtn(new Rect(w * 0.5f - bw * 0.5f, by + (bh + gap), bw, bh), "설정", bst)) { settingsReturn = State.Title; state = State.Settings; }
-            if (UiBtn(new Rect(w * 0.5f - bw * 0.5f, by + (bh + gap) * 2f, bw, bh), "게임 종료", bst)) QuitGame();
+            int rowN = 0;
+            if (hasSave)
+            {
+                if (UiBtn(new Rect(w * 0.5f - bw * 0.5f, by + (bh + gap) * rowN++, bw, bh), Loc.T("title.continue"), bst))
+                    BeginTransition(ContinueGame);
+                if (UiBtn(new Rect(w * 0.5f - bw * 0.5f, by + (bh + gap) * rowN++, bw, bh), Loc.T("title.new"), bst))
+                    BeginTransition(() => { SaveSystem.Wipe(); NewGame(); });
+            }
+            else
+            {
+                if (UiBtn(new Rect(w * 0.5f - bw * 0.5f, by + (bh + gap) * rowN++, bw, bh), Loc.T("title.start"), bst))
+                    BeginTransition(NewGame);
+            }
+            if (UiBtn(new Rect(w * 0.5f - bw * 0.5f, by + (bh + gap) * rowN++, bw, bh), Loc.T("title.settings"), bst)) { settingsReturn = State.Title; state = State.Settings; }
+            if (UiBtn(new Rect(w * 0.5f - bw * 0.5f, by + (bh + gap) * rowN++, bw, bh), Loc.T("title.quit"), bst)) QuitGame();
         }
 
         void DrawSettings()
@@ -1338,7 +1641,7 @@ namespace BlackholeGame
 
             var title = new GUIStyle(sBig)
             { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(30f * uiScale) };
-            GUI.Label(new Rect(0, h * 0.16f, w, Mathf.RoundToInt(48f * uiScale)), "설정", title);
+            GUI.Label(new Rect(0, h * 0.16f, w, Mathf.RoundToInt(48f * uiScale)), Loc.T("title.settings"), title);
 
             var row = new GUIStyle(sLabel)
             { alignment = TextAnchor.MiddleLeft, fontSize = Mathf.RoundToInt(17f * uiScale) };
@@ -1359,7 +1662,7 @@ namespace BlackholeGame
                 float before;
 
                 // BGM
-                GUI.Label(new Rect(x0, y0, labelW, rowH), "배경음악", row);
+                GUI.Label(new Rect(x0, y0, labelW, rowH), Loc.T("set.bgm"), row);
                 before = sound.BgmVolume;
                 float bv = GUI.HorizontalSlider(
                     new Rect(x0 + labelW + 14f, y0 + rowH * 0.5f - 9f, sliderW, 18f),
@@ -1370,7 +1673,7 @@ namespace BlackholeGame
 
                 // 효과음
                 float y1 = y0 + rowH + 18f * uiScale;
-                GUI.Label(new Rect(x0, y1, labelW, rowH), "효과음", row);
+                GUI.Label(new Rect(x0, y1, labelW, rowH), Loc.T("set.sfx"), row);
                 before = sound.SfxVolume;
                 float sv = GUI.HorizontalSlider(
                     new Rect(x0 + labelW + 14f, y1 + rowH * 0.5f - 9f, sliderW, 18f),
@@ -1387,11 +1690,25 @@ namespace BlackholeGame
                           Mathf.RoundToInt(sound.SfxVolume * 100f) + "%", val);
             }
 
-            GUI.Label(new Rect(0, h * 0.34f + rowH * 2f + 46f * uiScale, w, 40f * uiScale),
-                      "해상도      1920 × 1080            (준비 중)",
+            // 언어 선택
+            float ylang = y0 + rowH * 2f + 24f * uiScale;
+            GUI.Label(new Rect(x0, ylang, labelW, rowH), Loc.T("set.lang"), row);
+            float lbw = 118f * uiScale, lbg = 8f * uiScale, lbx = x0 + labelW + 14f;
+            for (int li = 0; li < 3; li++)
+            {
+                var lb = Btn(Mathf.RoundToInt(13f * uiScale));
+                bool sel = (int)Loc.Cur == li;
+                if (sel) { lb.normal.textColor = new Color(0.49f, 0.92f, 0.62f); FlatText(lb); }
+                if (UiBtn(new Rect(lbx + li * (lbw + lbg), ylang + 4f * uiScale, lbw, rowH - 8f * uiScale),
+                          (sel ? "▸ " : "") + Loc.LangNames[li], lb))
+                    Loc.SetLang((Lang)li);
+            }
+
+            GUI.Label(new Rect(0, ylang + rowH + 30f * uiScale, w, 40f * uiScale),
+                      Loc.T("set.res"),
                       new GUIStyle(row) { alignment = TextAnchor.MiddleCenter });
 
-            if (UiBtn(new Rect(w * 0.5f - 110f, h * 0.66f, 220f, 50f), "뒤로", Btn(16)))
+            if (UiBtn(new Rect(w * 0.5f - 110f, h * 0.66f, 220f, 50f), Loc.T("common.back"), Btn(16)))
             {
                 if (audioDirty && sound != null) { sound.Save(); audioDirty = false; }
                 state = settingsReturn;
@@ -1414,25 +1731,28 @@ namespace BlackholeGame
 
             float cx = panel.center.x;
             var title = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleCenter, fontSize = 22, fontStyle = FontStyle.Bold };
-            GUI.Label(new Rect(panel.x, panel.y + 24f, pw, 40f), $"— 웨이브 {waveNum} 종료 —", title);
+            GUI.Label(new Rect(panel.x, panel.y + 24f, pw, 40f),
+                Loc.F("res.title", currentStage + 1, waveNum), title);
 
             var head  = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleCenter, fontSize = 13, normal = { textColor = new Color(0.68f, 0.72f, 0.70f) } };
             var big   = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleCenter, fontSize = 19, fontStyle = FontStyle.Bold };
             var bigY  = new GUIStyle(big)  { normal = { textColor = Gold } };
             var headY = new GUIStyle(head) { normal = { textColor = Gold } };
             float ly = panel.y + 94f, lh = 33f;
-            GUI.Label(new Rect(panel.x, ly, pw, lh), "이번 싸이클", head);
-            GUI.Label(new Rect(panel.x, ly + lh, pw, lh), $"처치  {cycleKills}", big);
-            GUI.Label(new Rect(panel.x, ly + lh * 2f, pw, lh), $"획득  +${cycleGold:N0}", bigY);
-            GUI.Label(new Rect(panel.x, ly + lh * 3f + 6f, pw, lh), $"보유  ${gold:N0}", headY);
+            GUI.Label(new Rect(panel.x, ly, pw, lh), Loc.T("res.cycle"), head);
+            GUI.Label(new Rect(panel.x, ly + lh, pw, lh), Loc.F("res.kills", cycleKills), big);
+            GUI.Label(new Rect(panel.x, ly + lh * 2f, pw, lh), Loc.F("res.gain", cycleGold.ToString("N0")), bigY);
+            GUI.Label(new Rect(panel.x, ly + lh * 3f + 6f, pw, lh), Loc.F("res.have", gold.ToString("N0")), headY);
 
-            const float bw = 220f, bh = 46f, gap = 20f;
+            const float bw = 200f, bh = 46f, gap = 16f;
             float by = panel.yMax - bh - 26f;
-            var bst = Btn(15);
-            if (UiBtn(new Rect(cx - bw - gap * 0.5f, by, bw, bh), "업그레이드", bst))
+            var bst = Btn(14);
+            if (UiBtn(new Rect(cx - bw * 1.5f - gap, by, bw, bh), Loc.T("map.upgrade"), bst))
             { state = State.Tree; treeZoom = 0f; treePan = Vector2.zero; }
-            if (UiBtn(new Rect(cx + gap * 0.5f, by, bw, bh), $"계속 (웨이브 {Mathf.Max(1, stats.startWave)})", bst))
+            if (UiBtn(new Rect(cx - bw * 0.5f, by, bw, bh), Loc.T("res.retry"), bst))
             { BeginTransition(StartRun); }
+            if (UiBtn(new Rect(cx + bw * 0.5f + gap, by, bw, bh), Loc.T("common.toMap"), bst))
+            { state = State.Map; }
         }
 
         // 보스 처치 = 엔딩
@@ -1450,19 +1770,19 @@ namespace BlackholeGame
 
             float cx = panel.center.x;
             var title = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleCenter, fontSize = 30, fontStyle = FontStyle.Bold, normal = { textColor = new Color(0.55f, 0.95f, 0.62f) } };
-            GUI.Label(new Rect(panel.x, panel.y + 34f, pw, 48f), "감염원 제거 완료 — CLEAR", title);
+            GUI.Label(new Rect(panel.x, panel.y + 34f, pw, 48f), Loc.T("win.title"), title);
 
             var head = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleCenter, fontSize = 15 };
             var goldL = new GUIStyle(head) { fontStyle = FontStyle.Bold, normal = { textColor = Gold } };
             float ly = panel.y + 118f, lh = 34f;
-            GUI.Label(new Rect(panel.x, ly, pw, lh), $"이번 판  ·  처치 {cycleKills}", head);
-            GUI.Label(new Rect(panel.x, ly + lh, pw, lh), $"획득  +${cycleGold:N0}      보유  ${gold:N0}", goldL);
+            GUI.Label(new Rect(panel.x, ly, pw, lh), Loc.F("win.line1", cycleKills), head);
+            GUI.Label(new Rect(panel.x, ly + lh, pw, lh), Loc.F("win.line2", cycleGold.ToString("N0"), gold.ToString("N0")), goldL);
 
             const float bw = 240f, bh = 50f, gap = 20f;
             float by = panel.yMax - bh - 28f;
             var bst = Btn(16);
-            if (UiBtn(new Rect(cx - bw - gap * 0.5f, by, bw, bh), "타이틀로", bst)) state = State.Title;
-            if (UiBtn(new Rect(cx + gap * 0.5f, by, bw, bh), "계속 (무한)", bst))
+            if (UiBtn(new Rect(cx - bw - gap * 0.5f, by, bw, bh), Loc.T("common.toTitle"), bst)) state = State.Title;
+            if (UiBtn(new Rect(cx + gap * 0.5f, by, bw, bh), Loc.T("win.endless"), bst))
             { waveNum = wave.totalWaves - 1; timeLeft = 0f; AdvanceWave(); state = State.Playing; }
         }
 
@@ -1552,33 +1872,40 @@ namespace BlackholeGame
                 bool by = IsBuyable(n);                    // 부모가 뚫려 바로 살 수 있음
                 bool pathAfford = !bt && gold >= PathCost(n).cost;  // 경로까지 계산해 한 번에 살 수 있음
 
-                GUI.color = bt ? new Color(0.15f, 0.35f, 0.30f, 1f)
-                         : pathAfford ? new Color(0.17f, 0.42f, 0.26f, 1f)
-                         : by ? new Color(0.36f, 0.26f, 0.16f, 1f)
+                bool locked = n.tier > stagesCleared;
+                //  구매함 = 파란색(가득 채움+테두리)  ·  지금 살 수 있음 = 초록  ·  살 순 있으나 골드 부족 = 갈색  ·  잠김 = 어두움
+                GUI.color = locked ? new Color(0.10f, 0.10f, 0.12f, 0.9f)
+                         : bt ? new Color(0.16f, 0.40f, 0.66f, 1f)
+                         : pathAfford ? new Color(0.16f, 0.44f, 0.24f, 1f)
+                         : by ? new Color(0.40f, 0.30f, 0.14f, 1f)
                          : new Color(0.13f, 0.14f, 0.16f, 1f);
                 GUI.DrawTexture(rect, Texture2D.whiteTexture);
-                if (!bt)
                 {
-                    GUI.color = pathAfford ? new Color(0.49f, 0.92f, 0.62f)
-                              : by ? new Color(0.95f, 0.68f, 0.42f)
-                              : new Color(0.40f, 0.42f, 0.46f);
-                    GUI.DrawTexture(new Rect(rect.x, rect.y, rect.width, 2f), Texture2D.whiteTexture);
-                    GUI.DrawTexture(new Rect(rect.x, rect.yMax - 2f, rect.width, 2f), Texture2D.whiteTexture);
-                    GUI.DrawTexture(new Rect(rect.x, rect.y, 2f, rect.height), Texture2D.whiteTexture);
-                    GUI.DrawTexture(new Rect(rect.xMax - 2f, rect.y, 2f, rect.height), Texture2D.whiteTexture);
+                    Color border = bt ? new Color(0.60f, 0.82f, 1f)          // 구매함 = 밝은 하늘색 테두리
+                                 : pathAfford ? new Color(0.49f, 0.92f, 0.62f)
+                                 : by ? new Color(0.95f, 0.68f, 0.42f)
+                                 : new Color(0.34f, 0.36f, 0.40f);
+                    float bt2 = bt ? 3f : 2f;                                 // 구매함은 더 굵게
+                    GUI.color = border;
+                    GUI.DrawTexture(new Rect(rect.x, rect.y, rect.width, bt2), Texture2D.whiteTexture);
+                    GUI.DrawTexture(new Rect(rect.x, rect.yMax - bt2, rect.width, bt2), Texture2D.whiteTexture);
+                    GUI.DrawTexture(new Rect(rect.x, rect.y, bt2, rect.height), Texture2D.whiteTexture);
+                    GUI.DrawTexture(new Rect(rect.xMax - bt2, rect.y, bt2, rect.height), Texture2D.whiteTexture);
                 }
 
                 var tex = (iconTex != null && iconTex.TryGetValue(n.icon, out var it)) ? it : (iconTex != null ? iconTex["dot"] : null);
                 if (tex != null)
                 {
-                    GUI.color = bt ? new Color(1f, 1f, 1f, 0.55f) : (pathAfford || by) ? Color.white : new Color(1f, 1f, 1f, 0.4f);
+                    GUI.color = locked ? new Color(1f, 1f, 1f, 0.13f)
+                              : bt ? Color.white
+                              : (pathAfford || by) ? Color.white : new Color(1f, 1f, 1f, 0.4f);
                     float pad = nodeSz * 0.18f;
                     GUI.DrawTexture(new Rect(rect.x + pad, rect.y + pad, rect.width - pad * 2f, rect.height - pad * 2f), tex, ScaleMode.ScaleToFit);
                 }
                 GUI.color = c0;
 
                 if (rect.Contains(Event.current.mousePosition)) hovered = n;
-                if (!bt && GUI.Button(rect, GUIContent.none, GUIStyle.none) && transDir == 0)
+                if (!bt && !locked && GUI.Button(rect, GUIContent.none, GUIStyle.none) && transDir == 0)
                     BuyPath(n);   // 앞의 안 산 노드들까지 살 수 있는 만큼 한 번에
             }
 
@@ -1591,11 +1918,12 @@ namespace BlackholeGame
             {
                 bool bt = IsBought(hovered.id);
                 string status;
-                if (bt) status = "보유 중";
-                else if (hovered.IsRoot) status = "무료";
+                if (bt) status = Loc.T("tree.owned");
+                else if (hovered.IsRoot) status = Loc.T("tree.free");
                 else if (IsBuyable(hovered)) status = $"${hovered.cost:N0}";
-                else { var pc = PathCost(hovered); status = $"{pc.steps}개 한번에  ·  ${pc.cost:N0}"; }
-                string top = $"{hovered.label}\n{hovered.desc}";
+                else if (hovered.tier > stagesCleared) status = Loc.F("tree.lockTier", hovered.tier);
+                else { var pc = PathCost(hovered); status = Loc.F("tree.pathBuy", pc.steps, pc.cost.ToString("N0")); }
+                string top = Loc.T(hovered.label) + "\n" + (hovered.descArg != 0f ? Loc.F(hovered.desc, hovered.descArg) : Loc.T(hovered.desc));
                 var ts  = new GUIStyle(sLabel) { fontSize = Mathf.RoundToInt(13f * uiScale), wordWrap = true, alignment = TextAnchor.UpperLeft };
                 var tsY = new GUIStyle(ts) { fontStyle = FontStyle.Bold, normal = { textColor = bt ? Ink : Gold } };
                 FlatText(tsY);
@@ -1622,18 +1950,18 @@ namespace BlackholeGame
             GUI.BeginGroup(new Rect(0f, Screen.height - barH, Screen.width, barH));
             {
                 var goldS = new GUIStyle(sGold) { alignment = TextAnchor.UpperLeft, fontSize = Mathf.RoundToInt(18f * uiScale), fontStyle = FontStyle.Bold };
-                GUI.Label(new Rect(margin, 8f, 520f * uiScale, 30f * uiScale), $"보유  ${gold:N0}", goldS);
+                GUI.Label(new Rect(margin, 8f, 520f * uiScale, 30f * uiScale), Loc.F("res.have", gold.ToString("N0")), goldS);
 
                 var info = new GUIStyle(sLabel) { alignment = TextAnchor.UpperLeft, fontSize = Mathf.RoundToInt(13f * uiScale), wordWrap = true };
                 float infoTop = 8f + 30f * uiScale;
                 GUI.Label(new Rect(margin, infoTop, Screen.width - startBtnW - resetBtnW - margin * 3f, barH - infoTop - 6f),
-                    "노드에 마우스를 올리면 효과.  ·  먼 노드를 눌러도 앞쪽까지 한 번에 구매됩니다.\n휠: 확대/축소  ·  우클릭 드래그: 이동  ·  F12: 전체 해금(치트)", info);
+                    Loc.T("tree.help"), info);
 
                 var bst = Btn(Mathf.RoundToInt(14f * uiScale));
                 float btnY = barH - btnH - margin;
-                if (UiBtn(new Rect(Screen.width - startBtnW - resetBtnW - margin * 2f, btnY, resetBtnW, btnH), "화면 리셋", bst))
+                if (UiBtn(new Rect(Screen.width - startBtnW - resetBtnW - margin * 2f, btnY, resetBtnW, btnH), Loc.T("tree.reset"), bst))
                 { treeZoom = 0f; treePan = Vector2.zero; }
-                if (UiBtn(new Rect(Screen.width - startBtnW - margin, btnY, startBtnW, btnH), $"웨이브 {Mathf.Max(1, stats.startWave)} 시작", bst))
+                if (UiBtn(new Rect(Screen.width - startBtnW - margin, btnY, startBtnW, btnH), Loc.F("tree.startWaveN", Mathf.Max(1, stats.startWave)), bst))
                 { BeginTransition(StartRun); }
             }
             GUI.EndGroup();

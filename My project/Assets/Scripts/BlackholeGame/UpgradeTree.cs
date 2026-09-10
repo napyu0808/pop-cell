@@ -9,17 +9,18 @@ namespace BlackholeGame
     // tier = 이 노드를 열려면 클리어해야 하는 스테이지 수 (0 = 처음부터). Phase 2에서 게이팅에 사용.
     public class UpgradeNode
     {
-        public readonly string id, parentId, label, desc, icon;
+        public readonly string id, parentId, label, desc, icon;   // label/desc = Loc 키
+        public readonly float descArg;                            // 설명 서식 인자 (0 = 없음)
         public readonly Vector2 dir;        // 부모로부터의 방향 (스크린 좌표, 위 = -Y)
         public readonly int cost;
         public readonly int tier;
         public readonly Action<Stats> apply;
 
         public UpgradeNode(string id, string parentId, Vector2 dir, string icon,
-                           string label, int cost, int tier, string desc, Action<Stats> apply)
+                           string label, int cost, int tier, string desc, float descArg, Action<Stats> apply)
         {
             this.id = id; this.parentId = parentId; this.dir = dir; this.icon = icon;
-            this.label = label; this.cost = cost; this.tier = tier; this.desc = desc; this.apply = apply;
+            this.label = label; this.cost = cost; this.tier = tier; this.desc = desc; this.descArg = descArg; this.apply = apply;
         }
         public bool IsRoot => parentId == null;
     }
@@ -46,7 +47,7 @@ namespace BlackholeGame
         // tier별 노드 비용. balance_sim 으로 "tier T 풀강 → 스테이지 T 클리어" 곡선에 맞춰 재조정 예정.
         static readonly int[] TierCost =
         {
-            40, 240, 1300, 5200, 18000, 58000, 160000, 420000
+            45, 420, 1400, 5500, 20000, 75000, 200000, 520000
         };
         static int Cost(int tier) =>
             tier >= 0 && tier < TierCost.Length ? TierCost[tier]
@@ -62,38 +63,37 @@ namespace BlackholeGame
         // d = 그 갈래에서의 깊이(0부터). 값은 깊이에 따라 커진다.
         enum T { Flat, Mult, Speed, CritC, CritX, Range, Gold, Time, Spawn, SCount, Skip, Auto }
 
-        static (string icon, string label, string desc, Action<Stats> apply) Effect(T t, int d, ref int skipIdx)
+        static (string icon, string label, string desc, float descArg, Action<Stats> apply) Effect(T t, int d, ref int skipIdx)
         {
             switch (t)
             {
                 case T.Flat:
                     int fa = 12 + d * 5;
-                    return ("sword", "공격력", $"고정 공격력 +{fa}", s => s.flatBonus += fa);
+                    return ("sword", "n.flat", "nd.flat", fa, s => s.flatBonus += fa);
                 case T.Mult:
-                    return ("mult", "공격 배수", "공격력 ×1.11배", s => s.multBucketPercent = CM(s.multBucketPercent + 11f));
+                    return ("mult", "n.mult", "nd.mult", 0f, s => s.multBucketPercent = CM(s.multBucketPercent + 11f));
                 case T.Speed:
-                    return ("bolt", "공격 속도", "타격 간격 ×0.94", s => s.attackInterval = CI(s.attackInterval * 0.94f));
+                    return ("bolt", "n.speed", "nd.speed", 0f, s => s.attackInterval = CI(s.attackInterval * 0.94f));
                 case T.CritC:
-                    return ("crosshair", "치명 확률", "치명타 확률 +4%p", s => s.critChance = CC(s.critChance + 0.04f));
+                    return ("crosshair", "n.critc", "nd.critc", 0f, s => s.critChance = CC(s.critChance + 0.04f));
                 case T.CritX:
-                    return ("star", "치명 배수", "치명타 배수 +0.25", s => s.critMult += 0.25f);
+                    return ("star", "n.critx", "nd.critx", 0f, s => s.critMult += 0.25f);
                 case T.Range:
-                    return ("ring", "공격 범위", "커서 타격 범위 +0.12", s => s.cursorRadius += 0.12f);
+                    return ("ring", "n.range", "nd.range", 0f, s => s.cursorRadius += 0.12f);
                 case T.Gold:
-                    return ("coin", "골드 획득", "처치 시 골드 +8%", s => s.goldMultPercent += 8f);
+                    return ("coin", "n.gold", "nd.gold", 0f, s => s.goldMultPercent += 8f);
                 case T.Time:
-                    return ("clock", "시작 시간", "시작 제한시간 +4초", s => s.bonusTimeSec = CT(s.bonusTimeSec + 4f));
+                    return ("clock", "n.time", "nd.time", 0f, s => s.bonusTimeSec = CT(s.bonusTimeSec + 4f));
                 case T.Spawn:
-                    return ("chevrons", "소환 가속", "적 소환 간격 ×0.93", s => s.spawnIntervalMult = CS(s.spawnIntervalMult * 0.93f));
+                    return ("chevrons", "n.spawn", "nd.spawn", 0f, s => s.spawnIntervalMult = CS(s.spawnIntervalMult * 0.93f));
                 case T.SCount:
-                    return ("chevrons", "동시 소환", "동시 소환 마릿수 +1", s => s.spawnCount = CN(s.spawnCount + 1));
+                    return ("chevrons", "n.scount", "nd.scount", 0f, s => s.spawnCount = CN(s.spawnCount + 1));
                 case T.Skip:
-                    int w = (++skipIdx) * 5;   // 5, 10, 15, 20
-                    return ("skip", "웨이브 스킵", $"웨이브 {w}부터 시작", s => s.startWave = Mathf.Max(s.startWave, w));
+                    int w = (++skipIdx) * 5;
+                    return ("skip", "n.skip", "nd.skip", w, s => s.startWave = Mathf.Max(s.startWave, w));
                 case T.Auto:
                 default:
-                    return ("bolt", "자동 공격", "커서 호버 자동 공격 해금 — 이 노드 전엔 클릭으로 공격",
-                            s => s.autoAttack = true);
+                    return ("bolt", "n.auto", "nd.auto", 0f, s => s.autoAttack = true);
             }
         }
 
@@ -109,7 +109,7 @@ namespace BlackholeGame
             new Branch { prefix = "ce", angle =  70f, cycle = new[] { T.CritC, T.Mult,  T.Flat,  T.Speed } },
             // 유틸 클러스터 — 아래쪽으로 부채꼴. ua0 = 자동 공격 해금 (제일 먼저 닿는 유틸 노드).
             new Branch { prefix = "ua", angle = 135f, cycle = new[] { T.Auto,  T.Gold,  T.Time,  T.Range } },
-            new Branch { prefix = "ub", angle = 165f, cycle = new[] { T.Time,  T.Spawn, T.Gold,  T.Skip  } },
+            new Branch { prefix = "ub", angle = 165f, cycle = new[] { T.Time,  T.Spawn, T.Gold,  T.CritC } },
             new Branch { prefix = "uc", angle = 195f, cycle = new[] { T.Gold,  T.Time,  T.SCount,T.Range } },
             new Branch { prefix = "ud", angle = 225f, cycle = new[] { T.Spawn, T.Gold,  T.Range, T.Time  } },
         };
@@ -117,7 +117,7 @@ namespace BlackholeGame
         public static List<UpgradeNode> BuildAll()
         {
             var L = new List<UpgradeNode>();
-            L.Add(new UpgradeNode(RootId, null, Vector2.zero, "hex", "코어", 0, 0, "고정 공격력 +8", s => s.flatBonus += 8f));
+            L.Add(new UpgradeNode(RootId, null, Vector2.zero, "hex", "n.core", 0, 0, "nd.core", 0f, s => s.flatBonus += 8f));
 
             int total = NodesPerTier * Tiers;   // 160
             var dir = new Vector2[Branches.Length];
@@ -141,12 +141,46 @@ namespace BlackholeGame
                     var e = Effect(type, depth, ref skipIdx);
                     int tier = added / NodesPerTier;
                     string id = br.prefix + depth;
-                    L.Add(new UpgradeNode(id, last[b], dir[b], e.icon, e.label, Cost(tier), tier, e.desc, e.apply));
+                    L.Add(new UpgradeNode(id, last[b], dir[b], e.icon, e.label, Cost(tier), tier, e.desc, e.descArg, e.apply));
                     last[b] = id;
                     added++;
                 }
             }
             return L;
+        }
+
+        // ============================================================
+        // 메타(환생) 강화 — 환생으로도 유지되는 영구 업그레이드. 재화 = shard.
+        //   baseStats 에 한 번 적용된다(런/스테이지마다 이득). 트리 아님, 그냥 목록.
+        // ============================================================
+        public class MetaNode
+        {
+            public readonly string id, label, desc;
+            public readonly int cost, maxLv;
+            public readonly Action<Stats, int> apply;   // (baseStats, 레벨)
+            public MetaNode(string id, string label, string desc, int cost, int maxLv, Action<Stats, int> apply)
+            { this.id = id; this.label = label; this.desc = desc; this.cost = cost; this.maxLv = maxLv; this.apply = apply; }
+        }
+
+        public static List<MetaNode> BuildMeta()
+        {
+            return new List<MetaNode>
+            {
+                new MetaNode("m_dmg",   "m.dmg",   "md.dmg", 3, 10,
+                    (s, lv) => s.multBucketPercent += 8f * lv),
+                new MetaNode("m_spd",   "m.spd",   "md.spd",   4, 8,
+                    (s, lv) => s.attackInterval = Mathf.Max(0.15f, s.attackInterval * Mathf.Pow(0.97f, lv))),
+                new MetaNode("m_gold",  "m.gold",   "md.gold",     3, 10,
+                    (s, lv) => s.goldMultPercent += 15f * lv),
+                new MetaNode("m_range", "m.range",   "md.range",    5, 6,
+                    (s, lv) => s.cursorRadius += 0.08f * lv),
+                new MetaNode("m_crit",  "m.crit",   "md.crit",     5, 8,
+                    (s, lv) => s.critChance = Mathf.Min(0.75f, s.critChance + 0.03f * lv)),
+                new MetaNode("m_start", "m.start", "md.start",  4, 10,
+                    (s, lv) => { /* 시작 골드는 GameManager 에서 metaLv 로 처리 */ }),
+                new MetaNode("m_auto",  "m.auto", "md.auto", 6, 1,
+                    (s, lv) => { if (lv > 0) s.autoAttack = true; }),
+            };
         }
     }
 }

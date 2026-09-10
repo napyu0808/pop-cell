@@ -41,3 +41,6 @@ unity-mcp-src/
 .claude/
 My project/Assets/_Recovery/
 My project/Assets/Screenshots/
+
+# Unity performance test runner artifacts
+/[Mm]y project/Assets/Resources/PerformanceTestRun*.json*
