@@ -143,12 +143,11 @@ namespace BlackholeGame
             ["tree.owned"]     = new[] { "보유 중", "取得済", "Owned" },
             ["tree.free"]      = new[] { "무료", "無料", "Free" },
             ["tree.lockTier"]  = new[] { "{0}지역 클리어 시 해금", "エリア{0}クリアで解放", "Unlocks at Area {0}" },
-            ["tree.pathBuy"]   = new[] { "{0}개 한번에  ·  ${1}", "まとめて{0}個  ·  ${1}", "{0} at once  ·  ${1}" },
             ["tree.reset"]     = new[] { "화면 리셋", "表示リセット", "Reset View" },
             ["tree.startWaveN"]= new[] { "웨이브 {0} 시작", "ウェーブ {0} 開始", "Start Wave {0}" },
-            ["tree.help"]      = new[] { "노드에 마우스를 올리면 효과.  ·  먼 노드를 눌러도 앞쪽까지 한 번에 구매됩니다.\n휠: 확대/축소  ·  우클릭 드래그: 이동",
-                                        "ノードにカーソルで効果表示.  ·  遠いノードを押すと途中まで一括購入.\nホイール: 拡大縮小  ·  右ドラッグ: 移動",
-                                        "Hover a node for its effect.  ·  Clicking a far node buys the path up to it.\nWheel: zoom  ·  right-drag: pan" },
+            ["tree.help"]      = new[] { "노드에 마우스를 올리면 효과.  ·  구매하면 그 다음 노드가 드러납니다.\n휠: 확대/축소  ·  우클릭 드래그: 이동",
+                                        "ノードにカーソルで効果表示.  ·  購入すると次のノードが現れます.\nホイール: 拡大縮小  ·  右ドラッグ: 移動",
+                                        "Hover a node for its effect.  ·  Buying one reveals what comes next.\nWheel: zoom  ·  right-drag: pan" },
 
             // ---- 노드 라벨 ----
             ["n.flat"]  = new[] { "공격력", "攻撃力", "Damage" },

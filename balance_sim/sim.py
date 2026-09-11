@@ -35,6 +35,7 @@ class WaveCfg:
         self.spawnSlope = 0.013
         self.spawnFloor = 0.16
         self.quotaSlope = 2
+        self.bossWaveSpawnSlow = 2.0   # round36: 보스 웨이브에도 잡몹이 나온다(간격 x2)
         for k, v in kw.items():
             setattr(self, k, v)
 
@@ -62,7 +63,7 @@ class Stats:
         self.flatBonus = 0.0
         self.multBucketPercent = 0.0
         self.critChance = 0.0
-        self.critMult = 2.0
+        self.critMult = 1.5          # GameConfig.cs Stats 기본값(round36 에서 2.0 -> 1.5)
         self.attackInterval = 0.72   # GameConfig.cs Stats 기본값과 일치(round23부터 0.72)
         self.goldMultPercent = 0.0
         self.cursorRadius = 0.45
@@ -70,6 +71,7 @@ class Stats:
         self.spawnIntervalMult = 1.0
         self.spawnCount = 2
         self.startWave = 1
+        self.autoAttack = False
         for k, v in kw.items():
             setattr(self, k, v)
 
@@ -194,16 +196,16 @@ class Run:
         while time_left > 0:
             time_left -= dt; elapsed += dt
 
-            # --- spawn
-            if wave < w.totalWaves:
-                spawn_t += dt
-                g = 0
-                while spawn_t >= spawn_interval and g < 24:
-                    spawn_t -= spawn_interval; g += 1
-                    for _ in range(per_spawn):
-                        self._spawn(wave)
-                if self.n >= w.maxEnemies:
-                    spawn_t = min(spawn_t, spawn_interval)
+            # --- spawn  (round36: 보스 웨이브에도 계속 나온다. 간격만 bossWaveSpawnSlow 배)
+            si = spawn_interval * (w.bossWaveSpawnSlow if wave >= w.totalWaves else 1.0)
+            spawn_t += dt
+            g = 0
+            while spawn_t >= si and g < 24:
+                spawn_t -= si; g += 1
+                for _ in range(per_spawn):
+                    self._spawn(wave)
+            if self.n >= w.maxEnemies:
+                spawn_t = min(spawn_t, si)
 
             # --- move + bounce (vectorized)
             n = self.n

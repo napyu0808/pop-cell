@@ -1210,7 +1210,7 @@ namespace BlackholeGame
                 else if (state == State.Tree)    { state = State.Map; }
             }
 
-            // F11 — 치트: 모든 지역(지도) 해금 — tier 게이팅도 같이 풀린다 (IsBuyable/BuyPath 가 stagesCleared 기준)
+            // F11 — 치트: 모든 지역(지도) 해금 — tier 게이팅도 같이 풀린다 (IsBuyable 이 stagesCleared 기준)
             if (kb != null && kb.f11Key.wasPressedThisFrame)
             {
                 stagesCleared = Mathf.Max(stagesCleared, StageConfig.Stages.Length - 1);
@@ -1510,45 +1510,20 @@ namespace BlackholeGame
 
         UpgradeNode NodeById(string id) => nodes.Find(m => m.id == id);
 
-        // target 까지 오는 데 필요한 (아직 안 산) 노드들 — 루트 쪽부터 순서대로
-        List<UpgradeNode> UnboughtPath(UpgradeNode target)
-        {
-            var path = new List<UpgradeNode>();
-            for (var n = target; n != null && !IsBought(n.id); n = n.IsRoot ? null : NodeById(n.parentId))
-                path.Add(n);
-            path.Reverse();
-            return path;
-        }
+        // 트리는 "이미 다 뻗어있는 지도"가 아니라 "가운데서 자라나는 것"으로 보여준다(round38).
+        //   보이는 것 = 산 노드 + 그 바로 다음 노드(=지금 살 수 있는 경계)뿐. 그 너머는 아예 안 그린다.
+        //   그래서 먼 노드를 눌러 앞쪽까지 한 번에 사는 "일괄구매"도 필요 없어져 같이 걷어냈다.
+        bool IsRevealed(UpgradeNode n) => n.IsRoot || IsBought(n.id) || IsBought(n.parentId);
 
-        (int steps, int cost) PathCost(UpgradeNode target)
+        // 노드 하나만 구매 — 경계(부모가 뚫린 노드)만 살 수 있으므로 경로 구매가 불필요하다
+        void BuyNode(UpgradeNode n)
         {
-            int c = 0, s = 0;
-            foreach (var n in UnboughtPath(target)) { c += n.cost; s++; }
-            return (s, c);
-        }
-
-        // 노드를 누르면, 그 앞의 안 산 노드들까지 "살 수 있는 만큼" 한 번에 구매
-        void BuyPath(UpgradeNode target)
-        {
-            var path = UnboughtPath(target);
-            if (path.Count == 0) return;
-            var first = path[0];
-            if (!first.IsRoot && !IsBought(first.parentId)) return; // 방어 (연쇄상 있을 수 없음)
-            int boughtNow = 0;
-            foreach (var n in path)
-            {
-                if (n.tier > stagesCleared) break;   // 잠긴 지역 tier 는 못 삼
-                if (gold < n.cost) break;
-                gold -= n.cost;
-                bought.Add(n.id);
-                n.apply(stats);
-                boughtNow++;
-            }
-            if (boughtNow > 0)
-            {
-                if (sound != null) sound.Play(Sfx.Buy, 0.75f, boughtNow > 1 ? 1.12f : 1f);
-                SaveProgress();
-            }
+            if (n == null || !IsBuyable(n) || gold < n.cost) return;
+            gold -= n.cost;
+            bought.Add(n.id);
+            n.apply(stats);
+            if (sound != null) sound.Play(Sfx.Buy, 0.75f);
+            SaveProgress();
         }
 
         // ============================================================
@@ -1595,11 +1570,12 @@ namespace BlackholeGame
                 s.onNormal.textColor = s.onHover.textColor = s.onActive.textColor = s.onFocused.textColor = col;
         }
 
-        // 이 노드를 사면(경로 포함) 스탯이 어떻게 되는지 — 트리 화면 미리보기용
+        // 이 노드를 사면 스탯이 어떻게 되는지 — 트리 화면 미리보기용.
+        // 경계 노드만 살 수 있게 바뀌었으므로(round38) 그 노드 하나만 반영하면 된다.
         Stats PreviewStats(UpgradeNode target)
         {
             var s = stats.Clone();
-            foreach (var n in UnboughtPath(target)) n.apply(s);
+            if (target != null && !IsBought(target.id)) target.apply(s);
             return s;
         }
 
@@ -1632,7 +1608,8 @@ namespace BlackholeGame
         Rect StatPanelRect(float barH)
         {
             int fs0 = Mathf.RoundToInt(14f * uiScale);
-            float w = Mathf.Min(300f * uiScale, Screen.width * 0.30f);
+            // 좁은 창에서 0.30 은 한글 "공격 속도 / 초당 1.4회" 가 들어가기엔 너무 좁다 — 비율을 키운다
+            float w = Mathf.Min(300f * uiScale, Screen.width * (Screen.width < 760 ? 0.44f : 0.30f));
             float rowH0 = Mathf.Max(fs0 * 1.7f, 26f * uiScale);
             float pad0 = 14f * uiScale;
             float h0 = pad0 + rowH0 * (StatLabels.Length + 2.2f) + pad0;
@@ -1676,6 +1653,44 @@ namespace BlackholeGame
                 head.fontSize = Mathf.Max(10, Mathf.RoundToInt(head.fontSize * k));
             }
             h = area.height;
+
+            // 폭도 맞춘다 — 예전엔 높이만 줄여서, 창이 좁으면(패널 폭은 Screen.width*0.30) 라벨이
+            // 두 줄로 접히며 아랫 행과 글자가 겹쳐 보였다. 라벨+값이 한 줄에 들어가게 폰트를 더 줄이고,
+            // 줄바꿈 자체를 꺼서 어떤 경우에도 행이 서로 침범하지 않게 한다.
+            lab.wordWrap = valS.wordWrap = upS.wordWrap = head.wordWrap = false;
+            float labW = 0f, needW = 0f;
+            for (int i = 0; i < labels.Length; i++)
+            {
+                float lw = lab.CalcSize(new GUIContent(labels[i])).x;
+                float vw = valS.CalcSize(new GUIContent(cur[i])).x;
+                labW = Mathf.Max(labW, lw);
+                needW = Mathf.Max(needW, lw + vw);
+            }
+            float gapMinW = 10f * uiScale;
+            float availW = Mathf.Max(1f, area.width - pad * 2f - gapMinW);
+            if (needW > availW)
+            {
+                // 선형 추정으로 한 번에 줄인 뒤, 글리프 폭이 정수라 덜 줄어든 만큼만 1px 씩 더 줄인다
+                int fs0 = lab.fontSize;
+                int fs3 = Mathf.Clamp(Mathf.RoundToInt(fs0 * (availW / needW)), 8, fs0);
+                for (int guard = 0; guard < 12; guard++)
+                {
+                    lab.fontSize = valS.fontSize = upS.fontSize = fs3;
+                    float w2 = 0f;
+                    for (int i = 0; i < labels.Length; i++)
+                        w2 = Mathf.Max(w2, lab.CalcSize(new GUIContent(labels[i])).x
+                                         + valS.CalcSize(new GUIContent(cur[i])).x);
+                    if (w2 <= availW || fs3 <= 8) break;
+                    fs3--;
+                }
+                head.fontSize = Mathf.Max(9, Mathf.RoundToInt(head.fontSize * (float)fs3 / fs0));
+                labW = 0f;
+                for (int i = 0; i < labels.Length; i++)
+                    labW = Mathf.Max(labW, lab.CalcSize(new GUIContent(labels[i])).x);
+            }
+            // 라벨 칸은 실제로 필요한 만큼만(최대 60%) — 나머지는 값이 오른쪽 정렬로 쓴다
+            float labFrac = Mathf.Clamp(labW / Mathf.Max(1f, area.width - pad * 2f), 0.30f, 0.60f);
+
             float x = area.x, y = area.y;
 
             GUI.color = new Color(0.13f, 0.14f, 0.17f, 0.92f);
@@ -1690,7 +1705,7 @@ namespace BlackholeGame
 
             for (int i = 0; i < labels.Length; i++)
             {
-                GUI.Label(new Rect(ix, iy, iw * 0.46f, rowH), labels[i], lab);
+                GUI.Label(new Rect(ix, iy, iw * labFrac, rowH), labels[i], lab);
                 bool changed = nxt != null && nxt[i] != cur[i];
                 if (changed)
                 {
@@ -1707,7 +1722,7 @@ namespace BlackholeGame
                 }
                 else
                 {
-                    GUI.Label(new Rect(ix + iw * 0.46f, iy, iw * 0.54f, rowH), cur[i], valS);
+                    GUI.Label(new Rect(ix + iw * labFrac, iy, iw * (1f - labFrac), rowH), cur[i], valS);
                 }
                 iy += rowH;
             }
@@ -1715,8 +1730,8 @@ namespace BlackholeGame
             var nodeS = new GUIStyle(lab) { alignment = TextAnchor.MiddleRight };
             nodeS.normal.textColor = new Color(0.62f, 0.64f, 0.68f);
             FlatText(nodeS);
-            GUI.Label(new Rect(ix, iy, iw * 0.46f, rowH), Loc.T("stat.nodes"), lab);
-            GUI.Label(new Rect(ix + iw * 0.46f, iy, iw * 0.54f, rowH),
+            GUI.Label(new Rect(ix, iy, iw * labFrac, rowH), Loc.T("stat.nodes"), lab);
+            GUI.Label(new Rect(ix + iw * labFrac, iy, iw * (1f - labFrac), rowH),
                       $"{(bought != null ? bought.Count : 0)} / {(nodes != null ? nodes.Count : 0)}", nodeS);
         }
 
@@ -2642,7 +2657,7 @@ namespace BlackholeGame
 
                 float boughtR = 0f;
                 foreach (var n in nodes)
-                    if (n.IsRoot || IsBought(n.id)) { float d = (npos[n.id] - c).magnitude; if (d > boughtR) boughtR = d; }
+                    if (IsRevealed(n)) { float d = (npos[n.id] - c).magnitude; if (d > boughtR) boughtR = d; }
                 // 산 게 코어뿐이면 boughtR 이 0 이라 lim/boughtR 이 상한(2.0)까지 튀어서 화면이 확 확대되고
                 // 모서리가 잘려 보였다(새로 시작/환생/변이 직후가 전부 이 상태). 두 가지로 바닥을 깐다:
                 //   - 산 노드 바깥으로 노드 간격만큼 여유를 둬서 "다음에 살 노드"가 화면 가장자리에 걸치게
@@ -2663,21 +2678,22 @@ namespace BlackholeGame
             GUIUtility.ScaleAroundPivot(new Vector2(treeZoom, treeZoom), pivot);
             GUI.matrix = Matrix4x4.Translate(new Vector3(treePan.x, treePan.y, 0f)) * GUI.matrix;
 
-            // 연결선
+            // 연결선 — 드러난 노드까지만(아직 안 드러난 가지는 선도 안 그린다)
             GUI.color = new Color(0.56f, 0.62f, 0.58f, 0.55f);
             foreach (var n in nodes)
-                if (!n.IsRoot) DrawConnector(npos[n.parentId], npos[n.id]);
+                if (!n.IsRoot && IsRevealed(n)) DrawConnector(npos[n.parentId], npos[n.id]);
             GUI.color = c0;
 
             // 노드 — 아이콘만. 효과는 마우스 오버 툴팁으로.
             UpgradeNode hovered = null;
             foreach (var n in nodes)
             {
+                if (!IsRevealed(n)) continue;   // 아직 자라지 않은 가지는 그리지 않는다
                 Vector2 p = npos[n.id];
                 var rect = new Rect(p.x - nodeSz * 0.5f, p.y - nodeSz * 0.5f, nodeSz, nodeSz);
                 bool bt = IsBought(n.id);
                 bool by = IsBuyable(n);                    // 부모가 뚫려 바로 살 수 있음
-                bool pathAfford = !bt && gold >= PathCost(n).cost;  // 경로까지 계산해 한 번에 살 수 있음
+                bool pathAfford = by && gold >= n.cost;    // 지금 이 노드를 살 돈이 있음
 
                 bool locked = n.tier > stagesCleared;
                 //  구매함 = 파란색(가득 채움+테두리)  ·  지금 살 수 있음 = 초록  ·  살 순 있으나 골드 부족 = 갈색  ·  잠김 = 어두움
@@ -2713,7 +2729,7 @@ namespace BlackholeGame
 
                 if (rect.Contains(Event.current.mousePosition)) hovered = n;
                 if (!bt && !locked && GUI.Button(rect, GUIContent.none, GUIStyle.none) && transDir == 0)
-                    BuyPath(n);   // 앞의 안 산 노드들까지 살 수 있는 만큼 한 번에
+                    BuyNode(n);
             }
 
             GUI.matrix = saved;
@@ -2727,9 +2743,8 @@ namespace BlackholeGame
                 string status;
                 if (bt) status = Loc.T("tree.owned");
                 else if (hovered.IsRoot) status = Loc.T("tree.free");
-                else if (IsBuyable(hovered)) status = $"${hovered.cost:N0}";
                 else if (hovered.tier > stagesCleared) status = Loc.F("tree.lockTier", hovered.tier);
-                else { var pc = PathCost(hovered); status = Loc.F("tree.pathBuy", pc.steps, pc.cost.ToString("N0")); }
+                else status = $"${hovered.cost:N0}";
                 string top = Loc.T(hovered.label) + "\n" + (hovered.descArg != 0f ? Loc.F(hovered.desc, hovered.descArg) : Loc.T(hovered.desc));
                 var ts  = new GUIStyle(sLabel) { fontSize = Mathf.RoundToInt(13f * uiScale), wordWrap = true, alignment = TextAnchor.UpperLeft };
                 var tsY = new GUIStyle(ts) { fontStyle = FontStyle.Bold, normal = { textColor = bt ? Ink : Gold } };
