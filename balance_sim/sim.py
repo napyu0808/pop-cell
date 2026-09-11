@@ -63,7 +63,7 @@ class Stats:
         self.multBucketPercent = 0.0
         self.critChance = 0.0
         self.critMult = 2.0
-        self.attackInterval = 1.0
+        self.attackInterval = 0.72   # GameConfig.cs Stats 기본값과 일치(round23부터 0.72)
         self.goldMultPercent = 0.0
         self.cursorRadius = 0.45
         self.bonusTimeSec = 0.0

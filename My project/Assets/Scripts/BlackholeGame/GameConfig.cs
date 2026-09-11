@@ -123,6 +123,24 @@ namespace BlackholeGame
             startEnemies  = st.startEnemies;
             goldRate      = st.goldRate;
         }
+
+        // ---- 승천(Ascension) — LoadStage 직후 호출. 레벨마다 난이도 배율(복리) ----
+        //   8지역 자체 밸런스는 안 건드리고 이 축만 곱한다.
+        //   round35 밸런싱: balance_sim/mutation_calc.py 로 실제로 돌려보니 0메타 기준 1지역(제한시간이
+        //   가장 짧은 28초)이 이미 레벨0에서 보스한테 시간의 81%를 쓰고 레벨3에서 102%(수학적으로 불가능)가
+        //   됨 — 보스체력 배율(1.08)을 더 낮추고, 그 대신 GameManager 의 보스 패턴(치명 내성/가속
+        //   순간이동/무적 페이즈, 레벨별로 하나씩 추가)으로 "그냥 더 세짐"이 아니라 "더 다루기 까다로워짐"
+        //   쪽으로 난이도를 옮긴다. 잡몹도 같이 완만하게.
+        public const float AscMobHpMul  = 1.12f;   // 레벨당 잡몹 체력 배율(기존 1.15)
+        public const float AscBossHpMul = 1.05f;   // 레벨당 보스 체력 배율(기존 1.08 — 벽 완화의 핵심)
+        public const float AscGoldMul   = 0.95f;   // 레벨당 골드 획득 배율
+        public void ApplyAscension(int level)
+        {
+            if (level <= 0) return;
+            baseEnemyHp *= Mathf.Pow(AscMobHpMul, level);
+            bossHp = Mathf.RoundToInt(bossHp * Mathf.Pow(AscBossHpMul, level));
+            goldRate *= Mathf.Pow(AscGoldMul, level);
+        }
     }
 
     // ============================================================
@@ -153,16 +171,18 @@ namespace BlackholeGame
 
         // 목표: 마지막 지역까지 풀클리어 ≈ 2시간 (플레이테스트로 계속 조정).
         //   i, name, waves, timeLimit, enemyHp0, hpGrowth, bossHp, quota0, startEnemies, goldRate, theme
+        //   enemyHp0 ×1.3, bossHp ×2.2 — 공속 상향(때리는 맛, UpgradeTree.CI 0.15→0.06 + Speed 노드 강화)으로
+        //   풀트리 DPS가 대략 2.5배 뛴 걸 보정. 보스를 더 세게 올려 잡몹은 여전히 시원하게 죽되 보스전 긴장감은 유지.
         public static readonly StageConfig[] Stages =
         {
-            new StageConfig(0, "s.0",  4,  28f,  38f, 1.130f,      2000,  4,  8, 0.50f, new Color(0.42f,0.72f,0.46f)),
-            new StageConfig(1, "s.1",  5,  34f,  82f, 1.136f,      8000,  5,  9, 0.70f, new Color(0.36f,0.62f,0.70f)),
-            new StageConfig(2, "s.2",  7,  44f, 140f, 1.142f,     25000,  6, 10, 0.82f, new Color(0.60f,0.54f,0.36f)),
-            new StageConfig(3, "s.3",  9,  54f, 172f, 1.148f,     68000,  7, 11, 0.95f, new Color(0.40f,0.46f,0.60f)),
-            new StageConfig(4, "s.4", 11,  64f, 205f, 1.153f,    175000,  8, 12, 1.05f, new Color(0.30f,0.58f,0.62f)),
-            new StageConfig(5, "s.5", 13,  74f, 240f, 1.158f,    410000,  9, 13, 1.15f, new Color(0.34f,0.56f,0.34f)),
-            new StageConfig(6, "s.6", 15,  88f, 235f, 1.163f,    850000, 10, 14, 1.30f, new Color(0.62f,0.66f,0.72f)),
-            new StageConfig(7, "s.7", 18, 108f, 200f, 1.168f,   1800000, 11, 15, 1.55f, new Color(0.66f,0.30f,0.34f)),
+            new StageConfig(0, "s.0",  4,  28f,  49f, 1.130f,      4400,  4,  8, 0.50f, new Color(0.42f,0.72f,0.46f)),
+            new StageConfig(1, "s.1",  5,  34f, 107f, 1.136f,     17600,  5,  9, 0.70f, new Color(0.36f,0.62f,0.70f)),
+            new StageConfig(2, "s.2",  7,  44f, 182f, 1.142f,     55000,  6, 10, 0.82f, new Color(0.60f,0.54f,0.36f)),
+            new StageConfig(3, "s.3",  9,  54f, 224f, 1.148f,    149600,  7, 11, 0.95f, new Color(0.40f,0.46f,0.60f)),
+            new StageConfig(4, "s.4", 11,  64f, 267f, 1.153f,    385000,  8, 12, 1.05f, new Color(0.30f,0.58f,0.62f)),
+            new StageConfig(5, "s.5", 13,  74f, 312f, 1.158f,    902000,  9, 13, 1.15f, new Color(0.34f,0.56f,0.34f)),
+            new StageConfig(6, "s.6", 15,  88f, 306f, 1.163f,   1870000, 10, 14, 1.30f, new Color(0.62f,0.66f,0.72f)),
+            new StageConfig(7, "s.7", 18, 108f, 260f, 1.168f,   3960000, 11, 15, 1.55f, new Color(0.66f,0.30f,0.34f)),
         };
     }
 }

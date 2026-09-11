@@ -54,6 +54,14 @@ namespace BlackholeGame
             ["title.new"]      = new[] { "새로 시작", "はじめから", "New Game" },
             ["title.settings"] = new[] { "설정", "設定", "Settings" },
             ["title.quit"]     = new[] { "게임 종료", "終了", "Quit" },
+            ["title.ascendLevel"] = new[] { "변이 단계", "変異段階", "Mutation Stage" },
+            ["title.ascendDesc"] = new[] { "적 체력 ×{0}   보스 체력 ×{1}   골드 ×{2}", "敵体力 ×{0}   ボス体力 ×{1}   ゴールド ×{2}", "Enemy HP ×{0}   Boss HP ×{1}   Gold ×{2}" },
+            ["title.ascendNote"] = new[] { "클리어 시 메타 강화 초기화 · 새 노드·상한 해금", "クリア時メタ強化リセット · 新ノード・上限解放", "Clearing resets meta upgrades · unlocks new nodes/caps" },
+            ["title.patNone"]  = new[] { "보스 패턴 없음", "ボスパターンなし", "No boss patterns" },
+            ["title.patPrefix"] = new[] { "보스 패턴: {0}", "ボスパターン: {0}", "Boss patterns: {0}" },
+            ["title.patCrit"]  = new[] { "치명 내성", "クリティカル耐性", "Crit resist" },
+            ["title.patTeleport"] = new[] { "가속 순간이동", "高速テレポート", "Faster teleport" },
+            ["title.patShield"] = new[] { "무적 페이즈", "無敵フェイズ", "Shield phase" },
             ["common.back"]    = new[] { "뒤로", "もどる", "Back" },
             ["common.toTitle"] = new[] { "타이틀로", "タイトルへ", "To Title" },
             ["common.toMap"]   = new[] { "지도로", "マップへ", "To Map" },
@@ -79,6 +87,7 @@ namespace BlackholeGame
             // ---- 지역 맵 ----
             ["map.title"]      = new[] { "지역 선택", "エリア選択", "Select Area" },
             ["map.info"]       = new[] { "보유 ${0}   ·   투입 {1}회   ·   클리어 {2}/{3}", "所持 ${0}   ·   出撃 {1}回   ·   クリア {2}/{3}", "Gold ${0}   ·   Sorties {1}   ·   Cleared {2}/{3}" },
+            ["map.infoAsc"]    = new[] { "보유 ${0}   ·   투입 {1}회   ·   클리어 {2}/{3}   ·   변이 {4}", "所持 ${0}   ·   出撃 {1}回   ·   クリア {2}/{3}   ·   変異 {4}", "Gold ${0}   ·   Sorties {1}   ·   Cleared {2}/{3}   ·   Mutation {4}" },
             ["map.locked"]     = new[] { "잠김", "ロック", "Locked" },
             ["map.cleared"]    = new[] { "클리어됨 · 재도전 가능", "クリア済 · 再挑戦可", "Cleared · replayable" },
             ["map.wavesBoss"]  = new[] { "{0}웨이브 · 보스", "{0}ウェーブ · ボス", "{0} waves · boss" },
@@ -86,8 +95,8 @@ namespace BlackholeGame
             ["map.meta"]       = new[] { "메타 강화", "メタ強化", "Meta" },
             ["map.metaN"]      = new[] { "메타 강화 ({0})", "メタ強化 ({0})", "Meta ({0})" },
             ["map.rebirth"]    = new[] { "과거로 돌아가기 (+{0})", "過去へ戻る (+{0})", "Rewind Time (+{0})" },
-            ["map.rebirthInfo"]= new[] { "과거로 돌아가면 진행 초기화 · shard +{0} (누적 {1})", "過去へ戻ると進行リセット · shard +{0} (累計 {1})", "Rewinding resets progress · +{0} shards (total {1})" },
-            ["map.rebirthLock"]= new[] { "과거로 돌아가기는 2지역 클리어부터", "過去へ戻るは2エリアクリアから", "Rewind unlocks after Area 2" },
+            ["map.rebirthInfo"]= new[] { "과거로 돌아가면 진행 초기화 · shard +{0} (누적 {1}) · 변이 {2} → {3}", "過去へ戻ると進行リセット · shard +{0} (累計 {1}) · 変異 {2} → {3}", "Rewinding resets progress · +{0} shards (total {1}) · Mutation {2} → {3}" },
+            ["map.rebirthLock"]= new[] { "2지역 클리어 후 사용 가능", "エリア2クリア後に使用可", "Unlocks after Area 2" },
 
             // ---- 메타 화면 ----
             ["meta.title"]     = new[] { "미래의 지식 · 각성", "未来の知識 · 覚醒", "Knowledge of the Future" },
@@ -95,9 +104,11 @@ namespace BlackholeGame
             ["meta.lv"]        = new[] { "{0}   Lv {1}/{2}", "{0}   Lv {1}/{2}", "{0}   Lv {1}/{2}" },
             ["meta.cost"]      = new[] { "{0} shard", "{0} shard", "{0} shards" },
             ["meta.max"]       = new[] { "MAX", "MAX", "MAX" },
+            ["meta.lockAsc"]   = new[] { "변이 {0}단계부터 해금", "変異{0}段階から解放", "Unlocks at Mutation Stage {0}" },
 
             // ---- 결과 / 승리 ----
             ["res.title"]      = new[] { "— {0}지역 · 웨이브 {1} 종료 —", "— エリア{0} · ウェーブ{1} 終了 —", "— Area {0} · Wave {1} ended —" },
+            ["res.titleClear"] = new[] { "— {0}지역 · 감염원 제거 —", "— エリア{0} · 感染源除去 —", "— Area {0} · Source eradicated —" },
             ["res.cycle"]      = new[] { "이번 싸이클", "このサイクル", "This cycle" },
             ["res.kills"]      = new[] { "처치  {0}", "撃破  {0}", "Kills  {0}" },
             ["res.gain"]       = new[] { "획득  +${0}", "獲得  +${0}", "Gained  +${0}" },
@@ -106,7 +117,12 @@ namespace BlackholeGame
             ["win.title"]      = new[] { "감염원 제거 완료 — CLEAR", "感染源 除去完了 — CLEAR", "Source eradicated — CLEAR" },
             ["win.line1"]      = new[] { "이번 판  ·  처치 {0}", "今回  ·  撃破 {0}", "This run  ·  kills {0}" },
             ["win.line2"]      = new[] { "획득  +${0}      보유  ${1}", "獲得  +${0}      所持  ${1}", "Gained  +${0}      Gold  ${1}" },
-            ["win.endless"]    = new[] { "계속 (무한)", "つづける (無限)", "Continue (endless)" },
+            ["win.ascend"]     = new[] { "변이 {0}단계 돌파 · shard +{1} · 메타 강화 확장", "変異{0}段階突破 · shard +{1} · メタ強化拡張", "Mutation Stage {0} broken through · +{1} shards · meta tree expanded" },
+            ["win.next"]       = new[] { "다음 변이로", "次の変異へ", "To the Next Mutation" },
+            ["win.unlocked"]   = new[] { "감염원이 변이하기 시작합니다!", "感染源が変異を始めました！", "The source has begun to mutate!" },
+            ["win.time"]       = new[] { "소요 시간  {0}:{1}", "所要時間  {0}:{1}", "Time  {0}:{1}" },
+            ["win.goldEarned"] = new[] { "획득  ${0}", "獲得  ${0}", "Gained  ${0}" },
+            ["win.nextLevel"]  = new[] { "다음 판 변이 단계", "次のラン・変異段階", "Next Run — Mutation Stage" },
 
             // ---- 스탯 패널 ----
             ["stat.dmg"]       = new[] { "공격력", "攻撃力", "Damage" },
@@ -151,7 +167,7 @@ namespace BlackholeGame
             // ---- 노드 설명 ({0} = 수치) ----
             ["nd.flat"]  = new[] { "고정 공격력 +{0}", "固定攻撃力 +{0}", "Flat damage +{0}" },
             ["nd.mult"]  = new[] { "공격력 ×1.11배", "攻撃力 ×1.11", "Damage ×1.11" },
-            ["nd.speed"] = new[] { "타격 간격 ×0.94", "攻撃間隔 ×0.94", "Attack interval ×0.94" },
+            ["nd.speed"] = new[] { "타격 간격 ×0.90", "攻撃間隔 ×0.90", "Attack interval ×0.90" },
             ["nd.critc"] = new[] { "치명타 확률 +4%p", "クリ率 +4%p", "Crit rate +4%p" },
             ["nd.critx"] = new[] { "치명타 배수 +0.25", "クリ倍率 +0.25", "Crit dmg +0.25" },
             ["nd.range"] = new[] { "커서 타격 범위 +0.12", "カーソル範囲 +0.12", "Cursor range +0.12" },
@@ -167,7 +183,7 @@ namespace BlackholeGame
             ["m.dmg"]    = new[] { "각성 · 공격", "覚醒 · 攻撃", "Awaken · Damage" },
             ["md.dmg"]   = new[] { "영구 공격력 배수 +8%p / 레벨", "永久 攻撃倍率 +8%p / Lv", "Perm. damage mult +8%p / lv" },
             ["m.spd"]    = new[] { "각성 · 속도", "覚醒 · 速度", "Awaken · Speed" },
-            ["md.spd"]   = new[] { "영구 타격 간격 ×0.97 / 레벨", "永久 攻撃間隔 ×0.97 / Lv", "Perm. atk interval ×0.97 / lv" },
+            ["md.spd"]   = new[] { "영구 타격 간격 ×0.94 / 레벨", "永久 攻撃間隔 ×0.94 / Lv", "Perm. atk interval ×0.94 / lv" },
             ["m.gold"]   = new[] { "각성 · 재화", "覚醒 · 資源", "Awaken · Gold" },
             ["md.gold"]  = new[] { "영구 골드 획득 +15% / 레벨", "永久 ゴールド獲得 +15% / Lv", "Perm. gold gain +15% / lv" },
             ["m.range"]  = new[] { "각성 · 범위", "覚醒 · 範囲", "Awaken · Range" },
@@ -178,6 +194,10 @@ namespace BlackholeGame
             ["md.start"] = new[] { "런 시작 골드 +2,000 / 레벨", "開始ゴールド +2,000 / Lv", "Starting gold +2,000 / lv" },
             ["m.auto"]   = new[] { "미래 지식 · 자동", "未来の知識 · オート", "Foresight · Auto" },
             ["md.auto"]  = new[] { "과거로 돌아간 뒤 자동 공격 즉시 해금", "過去へ戻った後オート攻撃を即解放", "Auto-attack from the start after rewinding" },
+            ["m.critx"]  = new[] { "변이 · 치명 배율", "変異 · クリ倍率", "Mutation · Crit Dmg" },
+            ["md.critx"] = new[] { "영구 치명 배수 +0.15 / 레벨", "永久 クリ倍率 +0.15 / Lv", "Perm. crit dmg mult +0.15 / lv" },
+            ["m.time"]   = new[] { "변이 · 여유", "変異 · 猶予", "Mutation · Time" },
+            ["md.time"]  = new[] { "영구 시작 제한시간 +3초 / 레벨", "永久 開始制限時間 +3秒 / Lv", "Perm. start time +3s / lv" },
 
             // ---- 스테이지 이름 ----
             ["s.0"] = new[] { "감염 구역 · 실험실", "感染区域 · 研究所", "Infected Zone · Lab" },

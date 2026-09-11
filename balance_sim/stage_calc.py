@@ -54,7 +54,8 @@ def nice(x):
 
 def dps_of(nodes, ids):
     s = _stats(nodes, ids)
-    return s.hit() * (1 / max(0.15, s.attackInterval)) * (1 + s.critChance * (s.critMult - 1))
+    # 0.01 은 0으로 나누기 방지용일 뿐 — 실제 하한은 노드 적용 시(interval_floor)에 이미 걸려 있음
+    return s.hit() * (1 / max(0.01, s.attackInterval)) * (1 + s.critChance * (s.critMult - 1))
 
 
 def compute(seed=0):

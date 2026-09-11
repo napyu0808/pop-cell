@@ -158,6 +158,7 @@ class CfgV2:
         self.flat = lambda d: 12 + d * 5
         self.mult_pp = 11.0
         self.interval_mul = 0.94
+        self.interval_floor = 0.15
         self.crit_pp = 0.04
         self.critmult_add = 0.25
         self.cursor_add = 0.12
@@ -201,7 +202,7 @@ class CfgV2:
         if t == "Mult":
             return ("배수", lambda s: setattr(s, "multBucketPercent", min(c.mult_cap, s.multBucketPercent + c.mult_pp)))
         if t == "Speed":
-            return ("공속", lambda s: setattr(s, "attackInterval", max(0.15, s.attackInterval * c.interval_mul)))
+            return ("공속", lambda s: setattr(s, "attackInterval", max(c.interval_floor, s.attackInterval * c.interval_mul)))
         if t == "CritC":
             return ("치확", lambda s: setattr(s, "critChance", min(0.75, s.critChance + c.crit_pp)))
         if t == "CritX":

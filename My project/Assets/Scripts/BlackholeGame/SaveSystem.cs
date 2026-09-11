@@ -21,6 +21,10 @@ namespace BlackholeGame
         public List<string> bought = new List<string>();
 
         // Phase 3 (환생) — 지금은 0/빈 값으로 저장만
+        public bool everRebirth;      // 환생이 한 번이라도 해금된 적 있는지 — 환생해서 stagesCleared 가 0으로
+                                       // 돌아간 뒤에도 메타/환생 버튼이 계속 보이게 하려고 별도로 유지
+        public int ascensionLevel;    // 다음 판에 적용될 승천 난이도(플레이어가 화살표로 선택)
+        public int maxAscensionUnlocked;  // 지금까지 열어본 최고 승천치 — 선택 상한, 8지역 클리어로만 오름
         public int metaCurrency;
         public List<string> metaBought = new List<string>();
 

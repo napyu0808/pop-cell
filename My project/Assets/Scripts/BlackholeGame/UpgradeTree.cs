@@ -39,7 +39,7 @@ namespace BlackholeGame
 
         static float CM(float v) => Mathf.Min(240f, v);   // 배수 상한
         static float CC(float v) => Mathf.Min(0.75f, v);  // 치명 확률 상한
-        static float CI(float v) => Mathf.Max(0.15f, v);  // 타격 간격 하한 (오토마우스 방지 하한)
+        static float CI(float v) => Mathf.Max(0.06f, v);  // 타격 간격 하한 — 후반 "때리는 맛"을 위해 크게 낮춤(기존 0.15)
         static float CT(float v) => Mathf.Min(60f, v);    // 시작 시간 버퍼 상한
         static float CS(float v) => Mathf.Max(0.22f, v);  // 소환 간격 배율 하한
         static int   CN(int v)   => Mathf.Clamp(v, 2, 6); // 동시 소환 마릿수
@@ -74,7 +74,7 @@ namespace BlackholeGame
                 case T.Mult:
                     return ("mult", "n.mult", "nd.mult", 0f, s => s.multBucketPercent = CM(s.multBucketPercent + 11f));
                 case T.Speed:
-                    return ("bolt", "n.speed", "nd.speed", 0f, s => s.attackInterval = CI(s.attackInterval * 0.94f));
+                    return ("bolt", "n.speed", "nd.speed", 0f, s => s.attackInterval = CI(s.attackInterval * 0.90f));
                 case T.CritC:
                     return ("crosshair", "n.critc", "nd.critc", 0f, s => s.critChance = CC(s.critChance + 0.04f));
                 case T.CritX:
@@ -171,30 +171,35 @@ namespace BlackholeGame
         public class MetaNode
         {
             public readonly string id, label, desc;
-            public readonly int cost, maxLv;
+            public readonly int cost, maxLv, unlockAsc;   // unlockAsc = 이 노드가 보이려면 필요한 승천 레벨(0=항상)
             public readonly Action<Stats, int> apply;   // (baseStats, 레벨)
-            public MetaNode(string id, string label, string desc, int cost, int maxLv, Action<Stats, int> apply)
-            { this.id = id; this.label = label; this.desc = desc; this.cost = cost; this.maxLv = maxLv; this.apply = apply; }
+            public MetaNode(string id, string label, string desc, int cost, int maxLv, int unlockAsc, Action<Stats, int> apply)
+            { this.id = id; this.label = label; this.desc = desc; this.cost = cost; this.maxLv = maxLv; this.unlockAsc = unlockAsc; this.apply = apply; }
         }
 
         public static List<MetaNode> BuildMeta()
         {
             return new List<MetaNode>
             {
-                new MetaNode("m_dmg",   "m.dmg",   "md.dmg", 3, 10,
+                new MetaNode("m_dmg",   "m.dmg",   "md.dmg", 3, 10, 0,
                     (s, lv) => s.multBucketPercent += 8f * lv),
-                new MetaNode("m_spd",   "m.spd",   "md.spd",   4, 8,
-                    (s, lv) => s.attackInterval = Mathf.Max(0.15f, s.attackInterval * Mathf.Pow(0.97f, lv))),
-                new MetaNode("m_gold",  "m.gold",   "md.gold",     3, 10,
+                new MetaNode("m_spd",   "m.spd",   "md.spd",   4, 8, 0,
+                    (s, lv) => s.attackInterval = Mathf.Max(0.06f, s.attackInterval * Mathf.Pow(0.94f, lv))),
+                new MetaNode("m_gold",  "m.gold",   "md.gold",     3, 10, 0,
                     (s, lv) => s.goldMultPercent += 15f * lv),
-                new MetaNode("m_range", "m.range",   "md.range",    5, 6,
+                new MetaNode("m_range", "m.range",   "md.range",    5, 6, 0,
                     (s, lv) => s.cursorRadius += 0.08f * lv),
-                new MetaNode("m_crit",  "m.crit",   "md.crit",     5, 8,
+                new MetaNode("m_crit",  "m.crit",   "md.crit",     5, 8, 0,
                     (s, lv) => s.critChance = Mathf.Min(0.75f, s.critChance + 0.03f * lv)),
-                new MetaNode("m_start", "m.start", "md.start",  4, 10,
+                new MetaNode("m_start", "m.start", "md.start",  4, 10, 0,
                     (s, lv) => { /* 시작 골드는 GameManager 에서 metaLv 로 처리 */ }),
-                new MetaNode("m_auto",  "m.auto", "md.auto", 6, 1,
+                new MetaNode("m_auto",  "m.auto", "md.auto", 6, 1, 0,
                     (s, lv) => { if (lv > 0) s.autoAttack = true; }),
+                // ---- 승천으로만 열리는 노드 — "승천에 따른 강화요소 추가" ----
+                new MetaNode("m_critx", "m.critx", "md.critx", 6, 6, 1,
+                    (s, lv) => s.critMult += 0.15f * lv),
+                new MetaNode("m_time",  "m.time",  "md.time",  5, 8, 2,
+                    (s, lv) => s.bonusTimeSec += 3f * lv),
             };
         }
     }
