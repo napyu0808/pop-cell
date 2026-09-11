@@ -23,14 +23,21 @@ def run(cmd):
         print("FAILED:", cmd, "\n", r.stdout, r.stderr)
         sys.exit(1)
 
+# Localization.cs 밖(GameManager 등)에서 코드로 직접 그리는 UI 기호들.
+# 폰트는 Localization.cs 만 보고 서브셋되므로 여기에 적어두지 않으면 두부(tofu)로 렌더된다.
+EXTRA = "▲▼▶"   # ▲ ▼ ▶ (타이틀 언어 드롭다운). ▸(U+25B8) 는 Noto KR/JP 둘 다 없음 — 쓰지 말 것
+
+subset_text = SCRATCH / "_subset_text.txt"
+subset_text.write_text(LOC.read_text(encoding="utf-8") + EXTRA, encoding="utf-8")
+
 # 1) KR 베이스를 현재 전체 파일 기준으로 서브셋
 run(["python", "-m", "fontTools.subset", str(KR_SRC),
-     f"--output-file={kr_base}", f"--text-file={LOC}", "--glyph-names"])
+     f"--output-file={kr_base}", f"--text-file={subset_text}", "--glyph-names"])
 
 # 2) KR 베이스에서 빠진 문자 찾기
 f = TTFont(str(kr_base))
 cmap = f.getBestCmap()
-text = LOC.read_text(encoding="utf-8")
+text = subset_text.read_text(encoding="utf-8")
 need = set(ch for ch in text if ord(ch) > 0x7f)
 missing = sorted(c for c in need if ord(c) not in cmap)
 print("KR 서브셋에서 빠진 문자(JP 패치 대상):", len(missing), "".join(missing))

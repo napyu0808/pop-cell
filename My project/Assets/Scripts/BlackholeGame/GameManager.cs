@@ -43,6 +43,10 @@ namespace BlackholeGame
         int bestScore = 0;        // 역대 최고 score
         bool everRebirth = false; // 환생이 한 번이라도 해금된 적 있으면 true(환생해도 안 꺼짐) — 메타/환생 버튼 노출용
         bool resultCleared = false; // Result 화면이 "지역 클리어"로 온 건지("감염원 제거") "시간초과"로 온 건지
+        // 트리 화면에 "재도전"을 띄울지 — 전투가 끝나고(Result) 들어왔을 때만. 지도에서 그냥 구경하러
+        // 들어온 경우엔 재도전할 "직전 전투"가 없으므로 숨긴다.
+        bool treeFromResult = false;
+        bool langOpen = false;      // 타이틀 우측 상단 언어 드롭다운이 펼쳐져 있는지
         int ascensionLevel = 0;    // 다음 판에 적용될 승천 난이도 — Win 화면 화살표로 플레이어가 직접 고름
         int maxAscensionUnlocked = 0;  // 지금까지 클리어로 열어본 최고 승천치 — 화살표 선택 상한(영구, 새로시작에만 리셋)
         int lastAscendShardGain = 0;   // Win 화면에 표시할, 방금 승천으로 받은 shard 양
@@ -85,6 +89,7 @@ namespace BlackholeGame
         const float BossTeleportInterval = 4.5f;   // 후반에 커서가 너무 커져서 그냥 쫓아가기만 하면 잡히는 문제 완화
         const float ShieldPhaseInterval = 7f;      // 승천3+: 이 간격마다 잠깐 무적
         const float ShieldPhaseDuration = 1.2f;
+        const float BossWaveSpawnSlow = 2.0f;      // 보스 웨이브 잡몹 소환 간격 배율(느리게) — 보스에 집중할 여지
         int bossesKilled;    // 무한 모드 보스 체력 스케일
 
         class Floater { public Vector3 world; public float life; public string text; public bool crit; }
@@ -781,13 +786,15 @@ namespace BlackholeGame
                 }
         }
 
-        // 2지역만 깨고 환생하는 "치트성 루프"를 죽이려고 문턱+제곱 곡선으로. score 250(2지역 클리어+α) 이하는 0,
-        // 그 위부터 완만히 시작해 후반 지역일수록 훨씬 커진다(8지역 풀클리어 ≈ 60).
-        int ShardReward(int score)
+        // 환생 보상 — "이번 회차에 몇 지역까지 깼나"로 직접 차등한다.
+        //   예전엔 maxScore(=지역수×100+웨이브) 의 제곱 곡선이라 (a) 환생이 열리는 2지역에서 0을 줬고,
+        //   (b) 3~5지역 구간이 뭉개져서 더 깊이 가도 보상이 늘어난 게 체감되지 않았다.
+        //   지역을 하나 더 깰 때마다 증가폭 자체가 커지도록(+2,+3,+5,+8,+12,+16,+24) — 깊이 갈수록 이득.
+        static readonly int[] ShardByRegion = { 0, 0, 2, 5, 10, 18, 30, 46, 70 };
+        int ShardReward(int regions)
         {
-            float over = score - 250f;
-            if (over <= 0f) return 0;
-            return Mathf.FloorToInt(over * over / 5000f);
+            int r = Mathf.Clamp(regions, 0, ShardByRegion.Length - 1);
+            return ShardByRegion[r];
         }
 
         // 메타 노드 구매 비용 — 레벨이 오를수록 ×1.4 씩 뛴다. 한 번의 환생으로 같은 노드를
@@ -824,7 +831,7 @@ namespace BlackholeGame
         }
 
         // 승천 보상 미리보기/실제 지급에 같이 쓰는 계산 — 레벨이 오를수록 shard 도 더 준다(15%/레벨).
-        int ShardGainNow() => Mathf.RoundToInt(ShardReward(maxScore) * (1f + 0.15f * ascensionLevel));
+        int ShardGainNow() => Mathf.RoundToInt(ShardReward(stagesCleared) * (1f + 0.15f * ascensionLevel));
 
         void BuyMeta(UpgradeTree.MetaNode m)
         {
@@ -1197,7 +1204,7 @@ namespace BlackholeGame
                     state = settingsReturn;
                 }
                 else if (state == State.Win)     { state = State.Title; }
-                else if (state == State.Map)     { state = State.Title; }
+                else if (state == State.Map)     { pauseReturn = State.Map; state = State.Paused; }   // 톱니바퀴와 같은 메뉴
                 else if (state == State.Meta)    { state = State.Map; }
                 else if (state == State.Result)  { state = State.Map; }
                 else if (state == State.Tree)    { state = State.Map; }
@@ -1242,19 +1249,24 @@ namespace BlackholeGame
                 }
             }
 
+            // 보스 웨이브에도 잡몹이 계속 나온다(round36). 예전엔 보스만 덩그러니 남아서 제한시간의 70~110%를
+            // 혼자 먹는 "조용한 장시간 딜링" 구간이 됐다 — 잡몹 구간은 짧은데 보스전만 길다는 문제의 핵심.
+            // 이제 보스전은 "잡몹을 계속 터뜨리면서 그 사이를 순간이동하는 보스를 쫓는" 구간이 된다.
+            // 다만 보스에게 화력을 집중할 여지는 남겨야 하므로 소환 속도는 절반으로.
             int guard;
-            if (waveNum < wave.totalWaves)   // 보스 웨이브엔 일반 적 안 나옴
             {
+                bool bossWave = waveNum >= wave.totalWaves;
+                float si = bossWave ? spawnInterval * BossWaveSpawnSlow : spawnInterval;
                 spawnTimer += dt;
                 guard = 0;
-                while (spawnTimer >= spawnInterval && guard++ < 24)
+                while (spawnTimer >= si && guard++ < 24)
                 {
-                    spawnTimer -= spawnInterval;
+                    spawnTimer -= si;
                     int n = Mathf.Max(2, stats.spawnCount);   // 한 번에 최소 2마리 (노드로 최대 5)
                     for (int k = 0; k < n; k++) SpawnEnemy();
                 }
                 if (enemies.Count >= wave.maxEnemies)
-                    spawnTimer = Mathf.Min(spawnTimer, spawnInterval);
+                    spawnTimer = Mathf.Min(spawnTimer, si);
             }
 
             var fr = FieldRect;
@@ -1761,10 +1773,14 @@ namespace BlackholeGame
 
             if (state == State.Paused)
             {
-                // 일시정지 배경 = ESC를 누른 화면
+                // 일시정지 배경 = ESC(또는 톱니바퀴)를 누른 화면.
+                // GUI.enabled=false 로 그려서 뒤 화면의 버튼이 딤 너머로 눌리는 일이 없게 한다.
+                bool ge = GUI.enabled; GUI.enabled = false;
                 if (pauseReturn == State.Tree) DrawTree();
                 else if (pauseReturn == State.Result) DrawResult();
+                else if (pauseReturn == State.Map) DrawMap();      // 지도에서 열었으면 지도가 배경
                 else { DrawHUD(); DrawGameplayOverlays(); }
+                GUI.enabled = ge;
                 DrawPause();
                 return;
             }
@@ -1992,7 +2008,7 @@ namespace BlackholeGame
             var bst = Btn(16);
             int row = 0;
             if (UiBtn(new Rect(w * 0.5f - bw * 0.5f, by + (bh + gap) * row++, bw, bh),
-                fromPlay ? Loc.T("pause.resume") : Loc.T("pause.return"), bst)) state = pauseReturn;
+                Loc.T("pause.resume"), bst)) state = pauseReturn;
             if (fromPlay && UiBtn(new Rect(w * 0.5f - bw * 0.5f, by + (bh + gap) * row++, bw, bh),
                 Loc.T("pause.endWave"), bst)) state = State.Result;
             if (UiBtn(new Rect(w * 0.5f - bw * 0.5f, by + (bh + gap) * row++, bw, bh),
@@ -2025,6 +2041,26 @@ namespace BlackholeGame
                 ? Loc.F("map.infoAsc", gold.ToString("N0"), retryCount, stagesCleared, n, ascensionLevel)
                 : Loc.F("map.info", gold.ToString("N0"), retryCount, stagesCleared, n);
             GUI.Label(new Rect(0, h * 0.045f + 38f * s, w, 24f * s), infoTxt, sub);
+
+            // ---- 우측 상단 설정(톱니바퀴) — 누르면 계속하기/설정/타이틀로 메뉴 ----
+            {
+                float gs = Mathf.Round(42f * s);
+                var gr = new Rect(w - gs - 22f * s, 18f * s, gs, gs);
+                bool gHover = gr.Contains(Event.current.mousePosition);
+                var gc0 = GUI.color;
+                GUI.color = new Color(0.32f, 0.36f, 0.40f, gHover ? 0.22f : 0.12f);
+                GUI.DrawTexture(gr, Texture2D.whiteTexture);
+                GUI.color = gHover ? InkDark : new Color(0.26f, 0.30f, 0.34f, 0.85f);
+                if (iconTex != null && iconTex.TryGetValue("gear", out var gtex) && gtex != null)
+                {
+                    float ins = gs * 0.16f;
+                    GUI.DrawTexture(new Rect(gr.x + ins, gr.y + ins, gr.width - ins * 2f, gr.height - ins * 2f), gtex);
+                }
+                GUI.color = gc0;
+                // 아이콘 위에 투명 버튼을 겹쳐서 클릭/사운드는 공용 UiBtn 규칙을 그대로 따른다
+                if (UiBtn(gr, GUIContent.none.text, GUIStyle.none))
+                { pauseReturn = State.Map; state = State.Paused; }
+            }
 
             // ---- 캐러셀 ----
             float cardW = Mathf.Min(300f * s, w * 0.40f);
@@ -2095,7 +2131,7 @@ namespace BlackholeGame
             float bx = (w - totw) * 0.5f;
             float byy = Mathf.Min(h * 0.87f, h - bh - 34f * s);
             if (UiBtn(new Rect(bx, byy, bw, bh), Loc.T("map.upgrade"), bst))
-            { state = State.Tree; treeZoom = 0f; treePan = Vector2.zero; }
+            { state = State.Tree; treeZoom = 0f; treePan = Vector2.zero; treeFromResult = false; }
             if (everUnlocked)
             {
                 bx += bw + bgap;
@@ -2270,6 +2306,37 @@ namespace BlackholeGame
             FlatText(sub);
             GUI.Label(new Rect(0, h * 0.13f + 92f * uiScale, w, 34f * uiScale), Loc.T("title.sub"), sub);
 
+            // ---- 우측 상단 언어 드롭다운 (설정창에서 이 자리로 옮김, round37) ----
+            // 닫혀 있을 땐 현재 언어만, 누르면 3개가 펼쳐지고 고르면 바로 적용된다.
+            {
+                float lw = Mathf.Min(150f * uiScale, w * 0.22f), lh = 34f * uiScale;
+                float lx = w - lw - 22f * uiScale, ly = 18f * uiScale;
+                var lst = Btn(Mathf.RoundToInt(14f * uiScale));
+                lst.normal.textColor = InkDark; FlatText(lst);
+                // 펼친 목록이 먼저 클릭을 받도록, 열려 있으면 목록을 "나중에" 그린다(IMGUI 는 먼저 그린 쪽이 우선)
+                if (langOpen)
+                {
+                    for (int li = 0; li < Loc.LangNames.Length; li++)
+                    {
+                        bool sel = (int)Loc.Cur == li;
+                        var ist = Btn(Mathf.RoundToInt(14f * uiScale));
+                        ist.normal.textColor = sel ? new Color(0.12f, 0.42f, 0.22f) : InkDark;
+                        FlatText(ist);
+                        var ir = new Rect(lx, ly + (lh + 4f * uiScale) * (li + 1), lw, lh);
+                        if (UiBtn(ir, (sel ? "▶ " : "   ") + Loc.LangNames[li], ist))
+                        { Loc.SetLang((Lang)li); langOpen = false; }
+                    }
+                }
+                if (UiBtn(new Rect(lx, ly, lw, lh), Loc.LangNames[(int)Loc.Cur] + (langOpen ? "  ▲" : "  ▼"), lst))
+                    langOpen = !langOpen;
+                // 목록 밖을 누르면 닫힌다
+                if (langOpen && Event.current.type == EventType.MouseDown)
+                {
+                    var box = new Rect(lx, ly, lw, lh + (lh + 4f * uiScale) * Loc.LangNames.Length);
+                    if (!box.Contains(Event.current.mousePosition)) langOpen = false;
+                }
+            }
+
             // 승천 난이도 선택 — 한 번이라도 승천을 해봤으면(8지역 클리어) 타이틀에서 미리 고르고 플레이 시작.
             // 그 전엔 통째로 안 보임(버튼 위치는 기본값 h*0.56 그대로). 보일 때는 실제로 그린 높이만큼
             // 버튼 줄을 아래로 밀어서 겹치지 않게 한다(해상도/uiScale 달라져도 안전하도록 계산으로).
@@ -2332,6 +2399,11 @@ namespace BlackholeGame
 
             // 버튼: 기존 대비 1.2배 + 화면 비례(uiScale). 밝은 배경이라 글자는 검게.
             float bw = 260f * 1.2f * uiScale, bh = 54f * 1.2f * uiScale, gap = 12f * uiScale, by = titleButtonsY;
+            // 변이 선택 UI 가 보이면 버튼 줄이 그만큼 아래로 밀린다 — 맨 아래 버튼이 화면 밖으로
+            // 나가지 않게 스택 전체를 위로 당긴다(창이 낮거나 가로로 길 때 안전).
+            int rows = (hasSave ? 2 : 1) + 2;
+            float stackH = rows * bh + (rows - 1) * gap;
+            by = Mathf.Min(by, h - stackH - 16f * uiScale);
             var bst = Btn(Mathf.RoundToInt(17f * 1.2f * uiScale));
             bst.normal.textColor = InkDark; FlatText(bst);
             int rowN = 0;
@@ -2408,21 +2480,9 @@ namespace BlackholeGame
                           Mathf.RoundToInt(sound.SfxVolume * 100f) + "%", val);
             }
 
-            // 언어 선택
-            float ylang = y0 + rowH * 2f + 24f * uiScale;
-            GUI.Label(new Rect(x0, ylang, labelW, rowH), Loc.T("set.lang"), row);
-            float lbw = 118f * uiScale, lbg = 8f * uiScale, lbx = x0 + labelW + 14f;
-            for (int li = 0; li < 3; li++)
-            {
-                var lb = Btn(Mathf.RoundToInt(13f * uiScale));
-                bool sel = (int)Loc.Cur == li;
-                if (sel) { lb.normal.textColor = new Color(0.49f, 0.92f, 0.62f); FlatText(lb); }
-                if (UiBtn(new Rect(lbx + li * (lbw + lbg), ylang + 4f * uiScale, lbw, rowH - 8f * uiScale),
-                          (sel ? "▸ " : "") + Loc.LangNames[li], lb))
-                    Loc.SetLang((Lang)li);
-            }
+            // 언어 선택은 타이틀 화면 우측 상단 드롭다운으로 옮겼다(round37) — 여기선 뺀다.
 
-            if (UiBtn(new Rect(w * 0.5f - 110f, h * 0.66f, 220f, 50f), Loc.T("common.back"), Btn(16)))
+            if (UiBtn(new Rect(w * 0.5f - 110f, h * 0.60f, 220f, 50f), Loc.T("common.back"), Btn(16)))
             {
                 if (audioDirty && sound != null) { sound.Save(); audioDirty = false; }
                 state = settingsReturn;
@@ -2434,35 +2494,38 @@ namespace BlackholeGame
         {
             FillScreen(new Color(0.10f, 0.11f, 0.13f, 0.55f)); // 딤 (게임화면 비침)
 
-            const float pw = 640f, ph = 360f;
+            // 전체를 K배로 — "웨이브 종료" 화면이 작아서 잘 안 보인다는 피드백(round37)
+            const float K = 1.2f;
+            const float pw = 640f * K, ph = 360f * K;
             var panel = new Rect((Screen.width - pw) * 0.5f, (Screen.height - ph) * 0.5f, pw, ph);
             var c = GUI.color;
             GUI.color = new Color(0.16f, 0.17f, 0.19f, 0.93f);       // 어두운 반투명 패널
             GUI.DrawTexture(panel, Texture2D.whiteTexture);
             GUI.color = new Color(0.55f, 0.62f, 0.58f, 0.7f);        // 상단 라인
-            GUI.DrawTexture(new Rect(panel.x, panel.y, pw, 2f), Texture2D.whiteTexture);
+            GUI.DrawTexture(new Rect(panel.x, panel.y, pw, 2f * K), Texture2D.whiteTexture);
             GUI.color = c;
 
             float cx = panel.center.x;
-            var title = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleCenter, fontSize = 22, fontStyle = FontStyle.Bold };
-            GUI.Label(new Rect(panel.x, panel.y + 24f, pw, 40f),
+            var title = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(22f * K), fontStyle = FontStyle.Bold };
+            GUI.Label(new Rect(panel.x, panel.y + 24f * K, pw, 40f * K),
                 resultCleared ? Loc.F("res.titleClear", currentStage + 1) : Loc.F("res.title", currentStage + 1, waveNum), title);
 
-            var head  = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleCenter, fontSize = 13, normal = { textColor = new Color(0.68f, 0.72f, 0.70f) } };
-            var big   = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleCenter, fontSize = 19, fontStyle = FontStyle.Bold };
+            var head  = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(13f * K), normal = { textColor = new Color(0.68f, 0.72f, 0.70f) } };
+            var big   = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(19f * K), fontStyle = FontStyle.Bold };
             var bigY  = new GUIStyle(big)  { normal = { textColor = Gold } };
             var headY = new GUIStyle(head) { normal = { textColor = Gold } };
-            float ly = panel.y + 94f, lh = 33f;
+            float ly = panel.y + 94f * K, lh = 33f * K;
             GUI.Label(new Rect(panel.x, ly, pw, lh), Loc.T("res.cycle"), head);
             GUI.Label(new Rect(panel.x, ly + lh, pw, lh), Loc.F("res.kills", cycleKills), big);
             GUI.Label(new Rect(panel.x, ly + lh * 2f, pw, lh), Loc.F("res.gain", cycleGold.ToString("N0")), bigY);
-            GUI.Label(new Rect(panel.x, ly + lh * 3f + 6f, pw, lh), Loc.F("res.have", gold.ToString("N0")), headY);
+            GUI.Label(new Rect(panel.x, ly + lh * 3f + 6f * K, pw, lh), Loc.F("res.have", gold.ToString("N0")), headY);
 
-            const float bw = 200f, bh = 46f, gap = 16f;
-            float by = panel.yMax - bh - 26f;
-            var bst = Btn(14);
+            // 버튼 3개가 패널 폭(pw)을 거의 꽉 채워 좌우 여백이 4px 밖에 안 됐다 — 폭을 조금 줄여 숨통을
+            const float bw = 186f * K, bh = 46f * K, gap = 16f * K;
+            float by = panel.yMax - bh - 26f * K;
+            var bst = Btn(Mathf.RoundToInt(14f * K));
             if (UiBtn(new Rect(cx - bw * 1.5f - gap, by, bw, bh), Loc.T("map.upgrade"), bst))
-            { state = State.Tree; treeZoom = 0f; treePan = Vector2.zero; }
+            { state = State.Tree; treeZoom = 0f; treePan = Vector2.zero; treeFromResult = true; }
             if (UiBtn(new Rect(cx - bw * 0.5f, by, bw, bh), Loc.T("res.retry"), bst))
             { BeginTransition(StartRun); }
             if (UiBtn(new Rect(cx + bw * 0.5f + gap, by, bw, bh), Loc.T("common.toMap"), bst))
@@ -2580,7 +2643,11 @@ namespace BlackholeGame
                 float boughtR = 0f;
                 foreach (var n in nodes)
                     if (n.IsRoot || IsBought(n.id)) { float d = (npos[n.id] - c).magnitude; if (d > boughtR) boughtR = d; }
-                boughtR += nodeSz * 0.9f;   // 노드 한 개 정도의 여유
+                // 산 게 코어뿐이면 boughtR 이 0 이라 lim/boughtR 이 상한(2.0)까지 튀어서 화면이 확 확대되고
+                // 모서리가 잘려 보였다(새로 시작/환생/변이 직후가 전부 이 상태). 두 가지로 바닥을 깐다:
+                //   - 산 노드 바깥으로 노드 간격만큼 여유를 둬서 "다음에 살 노드"가 화면 가장자리에 걸치게
+                //   - 최소한 첫 링(코어에서 뻗는 십자 4노드)까지는 항상 담기게
+                boughtR = Mathf.Max(boughtR + spacing * 0.6f, firstRing + nodeSz);
 
                 treeZoom = Mathf.Clamp(lim / Mathf.Max(1f, boughtR), fitZoom, 2.0f);
                 treePan = -(c - pivot) * treeZoom;
@@ -2691,7 +2758,8 @@ namespace BlackholeGame
             float mapBtnW   = Mathf.Min(130f * uiScale, Screen.width * 0.16f);
             float btnH = 34f * uiScale;
             float margin = 20f, btnGap = 10f * uiScale;
-            float groupW = resetBtnW + btnGap + retryBtnW + btnGap + mapBtnW;
+            bool showRetry = treeFromResult;   // 전투 직후에 들어온 경우에만 재도전
+            float groupW = resetBtnW + btnGap + mapBtnW + (showRetry ? retryBtnW + btnGap : 0f);
             GUI.BeginGroup(new Rect(0f, Screen.height - barH, Screen.width, barH));
             {
                 var goldS = new GUIStyle(sGold) { alignment = TextAnchor.UpperLeft, fontSize = Mathf.RoundToInt(18f * uiScale), fontStyle = FontStyle.Bold };
@@ -2714,9 +2782,9 @@ namespace BlackholeGame
                 float bx3 = bx2 + retryBtnW + btnGap;
                 if (UiBtn(new Rect(bx1, btnY, resetBtnW, btnH), Loc.T("tree.reset"), bst))
                 { treeZoom = 0f; treePan = Vector2.zero; }
-                if (UiBtn(new Rect(bx2, btnY, retryBtnW, btnH), Loc.T("res.retry"), bst))
+                if (showRetry && UiBtn(new Rect(bx2, btnY, retryBtnW, btnH), Loc.T("res.retry"), bst))
                 { BeginTransition(StartRun); }
-                if (UiBtn(new Rect(bx3, btnY, mapBtnW, btnH), Loc.T("common.toMap"), bst))
+                if (UiBtn(new Rect(showRetry ? bx3 : bx2, btnY, mapBtnW, btnH), Loc.T("common.toMap"), bst))
                 { state = State.Map; }
             }
             GUI.EndGroup();

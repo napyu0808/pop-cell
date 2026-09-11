@@ -82,7 +82,7 @@ namespace BlackholeGame
             ["pause.menu"]     = new[] { "메뉴", "メニュー", "Menu" },
             ["pause.resume"]   = new[] { "계속하기", "つづける", "Resume" },
             ["pause.return"]   = new[] { "돌아가기", "もどる", "Return" },
-            ["pause.endWave"]  = new[] { "웨이브 종료 (상점으로)", "ウェーブ終了 (ショップへ)", "End Wave (to Shop)" },
+            ["pause.endWave"]  = new[] { "웨이브 종료", "ウェーブ終了", "End Wave" },
 
             // ---- 지역 맵 ----
             ["map.title"]      = new[] { "지역 선택", "エリア選択", "Select Area" },

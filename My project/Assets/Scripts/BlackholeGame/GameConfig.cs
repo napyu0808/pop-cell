@@ -15,7 +15,7 @@ namespace BlackholeGame
         public float flatBonus = 0f;           // 고정합 버킷
         public float multBucketPercent = 0f;   // 배수 버킷(합산). 상한 200 => ×3.0
         [Range(0f, 0.75f)] public float critChance = 0f;
-        public float critMult = 2.0f;
+        public float critMult = 1.5f;          // 치명 배율 기본(기존 2.0). 노드는 +0.06 씩 — 운빨보다 평균 화력
         public float attackInterval = 0.72f;   // 타격 간격(초). 하한 0.15. 수동 클릭은 이보다 항상 느림
         public float goldMultPercent = 0f;
         public float cursorRadius = 0.45f;     // 커서 타격 범위(월드 단위). 초반은 좁게. 커서 범위 노드는 맨 마지막
@@ -171,18 +171,26 @@ namespace BlackholeGame
 
         // 목표: 마지막 지역까지 풀클리어 ≈ 2시간 (플레이테스트로 계속 조정).
         //   i, name, waves, timeLimit, enemyHp0, hpGrowth, bossHp, quota0, startEnemies, goldRate, theme
-        //   enemyHp0 ×1.3, bossHp ×2.2 — 공속 상향(때리는 맛, UpgradeTree.CI 0.15→0.06 + Speed 노드 강화)으로
-        //   풀트리 DPS가 대략 2.5배 뛴 걸 보정. 보스를 더 세게 올려 잡몹은 여전히 시원하게 죽되 보스전 긴장감은 유지.
+        //
+        // round36 재밸런싱 (balance_sim/final36.py 로 계산):
+        //  1) 보스가 제한시간의 34~110%를 먹던 문제 — 3지역은 정티어 화력으로 110%라 수학적으로 불가능했다.
+        //     보스 체력을 "정티어 DPS × 제한시간 × 0.33"으로 다시 뽑아 전 지역에서 보스 비중을 33%로 통일.
+        //     남는 시간은 잡몹이 채운다(보스 웨이브에도 잡몹이 계속 나오게 GameManager 에서 같이 수정).
+        //  2) 잡몹 체력은 "티어별 DPS 변화율"만큼만 재조정 — 킬 속도(=골드 수입)는 예전과 같게 유지해
+        //     TierCost/GoldCurve 경제를 그대로 쓸 수 있게 했다. 티어7·8 화력이 살아나면서(예전엔 마지막
+        //     40노드가 화력 0) 7·8지역 잡몹은 반대로 세졌다.
         public static readonly StageConfig[] Stages =
         {
-            new StageConfig(0, "s.0",  4,  28f,  49f, 1.130f,      4400,  4,  8, 0.50f, new Color(0.42f,0.72f,0.46f)),
-            new StageConfig(1, "s.1",  5,  34f, 107f, 1.136f,     17600,  5,  9, 0.70f, new Color(0.36f,0.62f,0.70f)),
-            new StageConfig(2, "s.2",  7,  44f, 182f, 1.142f,     55000,  6, 10, 0.82f, new Color(0.60f,0.54f,0.36f)),
-            new StageConfig(3, "s.3",  9,  54f, 224f, 1.148f,    149600,  7, 11, 0.95f, new Color(0.40f,0.46f,0.60f)),
-            new StageConfig(4, "s.4", 11,  64f, 267f, 1.153f,    385000,  8, 12, 1.05f, new Color(0.30f,0.58f,0.62f)),
-            new StageConfig(5, "s.5", 13,  74f, 312f, 1.158f,    902000,  9, 13, 1.15f, new Color(0.34f,0.56f,0.34f)),
-            new StageConfig(6, "s.6", 15,  88f, 306f, 1.163f,   1870000, 10, 14, 1.30f, new Color(0.62f,0.66f,0.72f)),
-            new StageConfig(7, "s.7", 18, 108f, 260f, 1.168f,   3960000, 11, 15, 1.55f, new Color(0.66f,0.30f,0.34f)),
+            // 1지역만 "튜토리얼 보정" — 잡몹 30, 골드배율 1.0, 보스 1400. (round37: 초반 골드 수급이
+            // 막혀 첫 노드조차 못 사던 문제. 이 보정으로 1판마다 노드를 사고 5판이면 클리어된다.)
+            new StageConfig(0, "s.0",  4,  28f,  30f, 1.130f,      1400,  4,  8, 1.00f, new Color(0.42f,0.72f,0.46f)),
+            new StageConfig(1, "s.1",  5,  34f,  92f, 1.136f,      6700,  5,  9, 0.70f, new Color(0.36f,0.62f,0.70f)),
+            new StageConfig(2, "s.2",  7,  44f, 245f, 1.142f,     22700,  6, 10, 0.82f, new Color(0.60f,0.54f,0.36f)),
+            new StageConfig(3, "s.3",  9,  54f, 210f, 1.148f,     66100,  7, 11, 0.95f, new Color(0.40f,0.46f,0.60f)),
+            new StageConfig(4, "s.4", 11,  64f, 205f, 1.153f,    188100,  8, 12, 1.05f, new Color(0.30f,0.58f,0.62f)),
+            new StageConfig(5, "s.5", 13,  74f, 190f, 1.158f,    531600,  9, 13, 1.15f, new Color(0.34f,0.56f,0.34f)),
+            new StageConfig(6, "s.6", 15,  88f, 335f, 1.163f,   1544500, 10, 14, 1.30f, new Color(0.62f,0.66f,0.72f)),
+            new StageConfig(7, "s.7", 18, 108f, 705f, 1.168f,   4695300, 11, 15, 1.55f, new Color(0.66f,0.30f,0.34f)),
         };
     }
 }

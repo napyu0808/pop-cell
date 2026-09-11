@@ -44,3 +44,7 @@ My project/Assets/Screenshots/
 
 # Unity performance test runner artifacts
 /[Mm]y project/Assets/Resources/PerformanceTestRun*.json*
+
+# balance_sim 폰트 파이프라인 중간 산출물
+balance_sim/_*.ttf
+balance_sim/_*.txt
