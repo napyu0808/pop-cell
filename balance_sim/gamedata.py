@@ -8,58 +8,52 @@
   round38 기준. 이전 tree.py(CfgV2) 는 가지별 타입 순환(cyc)을 쓰던 구버전 트리라 더는 맞지 않는다.
 """
 
-# ---- UpgradeTree.cs ----------------------------------------------------
-NODES_PER_TIER = 20
+# ---- UpgradeTree.cs (round42: 능력치별 가지, 300노드) ----------------------
 TIERS = 8
 
-# 티어별 노드 구성 (합계는 항상 20) — UpgradeTree.TierMix 와 순서까지 동일하게
-#        Flat Mult Speed CritC CritX Range Gold Time Spawn SCount Auto
-TIER_MIX = [
-    [5, 3, 4, 1, 1, 2, 2, 1, 0, 0, 1],   # t0
-    [4, 3, 3, 1, 1, 3, 3, 1, 1, 0, 0],   # t1
-    [4, 3, 3, 1, 1, 3, 3, 1, 1, 0, 0],   # t2
-    [4, 3, 2, 1, 1, 3, 3, 1, 1, 1, 0],   # t3
-    [5, 3, 1, 1, 1, 3, 3, 1, 1, 1, 0],   # t4
-    [5, 4, 1, 1, 1, 3, 3, 0, 1, 1, 0],   # t5
-    [5, 4, 1, 1, 1, 3, 3, 1, 1, 0, 0],   # t6
-    [5, 4, 1, 1, 1, 3, 3, 1, 0, 1, 0],   # t7
-]
-MIX_ORDER = ["Flat", "Mult", "Speed", "CritC", "CritX",
-             "Range", "Gold", "Time", "Spawn", "SCount", "Auto"]
-
 FLAT_BY_TIER = [10, 12, 15, 25, 44, 78, 145, 280]
-TIER_COST    = [15, 700, 2300, 9000, 38000, 145000, 380000, 880000]
+TIER_COST    = [15, 750, 1900, 40000, 110000, 240000, 1100000, 1500000]
 
 ROOT_FLAT    = 8.0
-MULT_PP      = 11.0
-MULT_CAP     = 300.0
-SPEED_MUL    = 0.90
-INTERVAL_FLOOR = 0.06
-CRITC_PP     = 0.06
-CRIT_CAP     = 0.75
-CRITX_ADD    = 0.06
-CURSOR_ADD   = 0.12
+MULT_PP, MULT_CAP        = 10.0, 300.0
+SPEED_MUL, INTERVAL_FLOOR = 0.915, 0.06
+CRITC_PP, CRIT_CAP       = 0.04, 0.80
+CRITX_ADD    = 0.08
+RANGE_ADD    = 0.10
 GOLD_PP      = 8.0
-TIME_ADD     = 4.0
-TIME_CAP     = 60.0
-SPAWN_MUL    = 0.93
-SPAWN_FLOOR  = 0.22
-SCOUNT_MAX   = 6
+TIME_ADD, TIME_CAP       = 6.0, 120.0
+SPAWN_MUL, SPAWN_FLOOR   = 0.93, 0.22
+SCOUNT_MAX   = 10
+BOMB_DMG_ADD, BOMB_DMG_MAX = 0.25, 5.0
+BOMB_RAD_ADD, BOMB_RAD_MAX = 0.10, 2.0
+BOMB_INT_SUB, BOMB_INT_MIN = 1.0, 10.0
+BOMB_UNLOCK_TIER = 1
+
+# 가지 정의 (타입, id 접두어, 길이, 시작 티어) — UpgradeTree.L* 와 같은 값
+LANES = {
+    "flat":  ("Flat", 36, 0),  "mult":  ("Mult", 30, 0),  "speed": ("Speed", 28, 0),
+    "critc": ("CritC", 20, 0), "range": ("Range", 28, 0), "critx": ("CritX", 34, 0),
+    "time":  ("Time", 20, 0),  "gold":  ("Gold", 34, 0),  "skip":  ("Skip", 6, 0),
+    "scount": ("SCount", 9, 0), "spawn": ("Spawn", 20, 0),
+    "bombdmg": ("BombDmg", 12, 1), "bombrad": ("BombRad", 10, 1), "bombfreq": ("BombFreq", 10, 1),
+}
 
 # ---- GameConfig.cs : Stats 기본값 --------------------------------------
 BASE_ATTACK   = 10.0
 BASE_INTERVAL = 0.72
 BASE_CRITMULT = 1.5
 BASE_CURSOR   = 0.45
-BASE_SPAWNCNT = 2
+BASE_SPAWNCNT = 1   # round42
 
+# round42: 지역 체력 ×[1,1.8,3,3,3,3.5,4.2,9] (새 트리가 세서 지역 k 가 티어 k-1 을 필요로 하게)
+# round43: 보스만 ×[1,1.3,1.3,3.2,4,5,6,8] — 보스가 안 맞던 버그가 고쳐져 보스전만 짧아진 만큼
 # ---- GameConfig.cs : StageConfig.Stages --------------------------------
 #            S1    S2    S3    S4    S5    S6    S7    S8
 WAVES    = [   4,    5,    7,    9,   11,   13,   15,   18]
 TLIM     = [  28,   34,   44,   54,   64,   74,   88,  108]
-HP0      = [  46,   92,  245,  210,  205,  190,  335,  705]
+HP0      = [  30,  166,  735,  630,  615,  665, 1407, 6345]
 HPG      = [1.130, 1.136, 1.142, 1.148, 1.153, 1.158, 1.163, 1.168]
-BOSSHP   = [1400, 6700, 22700, 66100, 188100, 531600, 1544500, 4695300]
+BOSSHP   = [1400, 15678, 88530, 634560, 2257200, 9303000, 38921400, 338061600]
 QUOTA0   = [   4,    5,    6,    7,    8,    9,   10,   11]
 SE       = [   8,    9,   10,   11,   12,   13,   14,   15]
 GOLDRATE = [1.00, 0.70, 0.82, 0.95, 1.05, 1.15, 1.30, 1.55]
@@ -78,37 +72,7 @@ ASC_MOB, ASC_BOSS, ASC_GOLD = 1.12, 1.05, 0.95
 BOSS_WAVE_SPAWN_SLOW = 2.0
 
 
-# ---- 티어 구성표 -> 실제 노드 타입 배열 --------------------------------
-def build_tier_types(tier):
-    """UpgradeTree.BuildTierTypes 와 같은 '고르게 흩뿌리기' 배치."""
-    res = [None] * NODES_PER_TIER
-    used = [False] * NODES_PER_TIER
-    for k, name in enumerate(MIX_ORDER):
-        c = TIER_MIX[tier][k]
-        for i in range(c):
-            want = int((i + 0.5) * NODES_PER_TIER / c)
-            want = max(0, min(NODES_PER_TIER - 1, want))
-            p = want
-            step = 1
-            while used[p]:
-                p = (want + step) % NODES_PER_TIER
-                step += 1
-            used[p] = True
-            res[p] = name
-    if tier == 0:                                  # 자동공격은 코어 바로 옆
-        for i, t in enumerate(res):
-            if t == "Auto":
-                res[i] = res[0]
-                res[0] = "Auto"
-                break
-    return res
-
-
-def type_of(index):
-    tier = min(index // NODES_PER_TIER, TIERS - 1)
-    return build_tier_types(tier)[index % NODES_PER_TIER]
-
-
+# ---- 노드 ----------------------------------------------------------------
 def cost_of(tier):
     if 0 <= tier < len(TIER_COST):
         return TIER_COST[tier]
@@ -119,6 +83,11 @@ def flat_at(tier):
     if 0 <= tier < len(FLAT_BY_TIER):
         return FLAT_BY_TIER[tier]
     return round(FLAT_BY_TIER[-1] * 1.9 ** (tier - len(FLAT_BY_TIER) + 1))
+
+
+def tier_of(key, k):
+    _, ln, t0 = LANES[key]
+    return t0 + (k * (TIERS - t0)) // ln
 
 
 def apply_type(t, tier, s):
@@ -134,7 +103,7 @@ def apply_type(t, tier, s):
     elif t == "CritX":
         s.critMult += CRITX_ADD
     elif t == "Range":
-        s.cursorRadius += CURSOR_ADD
+        s.cursorRadius += RANGE_ADD
     elif t == "Gold":
         s.goldMultPercent += GOLD_PP
     elif t == "Time":
@@ -142,37 +111,57 @@ def apply_type(t, tier, s):
     elif t == "Spawn":
         s.spawnIntervalMult = max(SPAWN_FLOOR, s.spawnIntervalMult * SPAWN_MUL)
     elif t == "SCount":
-        s.spawnCount = min(SCOUNT_MAX, s.spawnCount + 1)
+        s.spawnCount = min(SCOUNT_MAX, max(1, s.spawnCount + 1))
+    elif t == "Skip":
+        s.startWave += 1
     elif t == "Auto":
         s.autoAttack = True
+    elif t == "Bomb":
+        s.bombUnlocked = True
+    elif t == "BombDmg":
+        s.bombDmgMul = min(BOMB_DMG_MAX, s.bombDmgMul + BOMB_DMG_ADD)
+    elif t == "BombRad":
+        s.bombRadiusMul = min(BOMB_RAD_MAX, s.bombRadiusMul + BOMB_RAD_ADD)
+    elif t == "BombFreq":
+        s.bombInterval = max(BOMB_INT_MIN, s.bombInterval - BOMB_INT_SUB)
 
 
 class Node:
-    """경제 시뮬용 노드. 기하(가지 각도)는 밸런스에 영향이 없어 단순한 체인으로 둔다 —
-    중요한 건 티어별 구성·비용·부모 관계(경계 구매 규칙)뿐."""
-    __slots__ = ("id", "parent", "tier", "cost", "type")
+    __slots__ = ("id", "parent", "tier", "cost", "type", "lane")
 
-    def __init__(self, nid, parent, tier, cost, t):
-        self.id, self.parent, self.tier, self.cost, self.type = nid, parent, tier, cost, t
+    def __init__(self, nid, parent, tier, t, lane):
+        self.id, self.parent, self.tier, self.type, self.lane = nid, parent, tier, t, lane
+        self.cost = cost_of(tier)
 
     def apply(self, s):
         apply_type(self.type, self.tier, s)
 
 
-BRANCHES = 9   # C# 은 가지가 계속 갈라지지만, 경제적으로는 '동시에 열려 있는 경계 수'만 의미가 있다
-
-
 def build():
-    """루트 + 160 노드. 20개씩 티어가 올라가고, 노드는 BRANCHES 개의 체인에 라운드로빈."""
-    root = Node("root", None, 0, 0, None)
-    nodes = [root]
-    last = ["root"] * BRANCHES
-    for i in range(NODES_PER_TIER * TIERS):
-        tier = i // NODES_PER_TIER
-        b = i % BRANCHES
-        n = Node("u%d" % i, last[b], tier, cost_of(tier), type_of(i))
-        last[b] = n.id
-        nodes.append(n)
+    """UpgradeTree.BuildAll 과 같은 순서·부모·티어. 루트 + 299 노드."""
+    nodes = [Node("root", None, 0, None, "root")]
+    nodes[0].cost = 0
+
+    def make(nid, parent, t, tier, lane):
+        nodes.append(Node(nid, parent, tier, t, lane))
+
+    def lane(key, parent, frm=0):
+        t = LANES[key][0]
+        for k in range(frm, LANES[key][1]):
+            nid = "%s%d" % (key, k)
+            make(nid, parent, t, tier_of(key, k), key)
+            parent = nid
+
+    make("auto", "root", "Auto", 0, "auto")
+    lane("mult", "auto"); lane("flat", "auto"); lane("speed", "auto")
+    make("range0", "root", "Range", tier_of("range", 0), "range")
+    lane("critc", "range0"); lane("range", "range0", 1); lane("critx", "range0")
+    make("gold0", "root", "Gold", tier_of("gold", 0), "gold")
+    lane("time", "gold0"); lane("gold", "gold0", 1); lane("skip", "gold0")
+    make("spawn0", "root", "Spawn", tier_of("spawn", 0), "spawn")
+    lane("scount", "spawn0"); lane("spawn", "spawn0", 1)
+    make("bomb", "spawn0", "Bomb", BOMB_UNLOCK_TIER, "bomb")
+    lane("bombdmg", "bomb"); lane("bombrad", "bomb"); lane("bombfreq", "bomb")
     return nodes
 
 
@@ -192,6 +181,10 @@ def new_stats():
     s.spawnCount = BASE_SPAWNCNT
     s.startWave = 1
     s.autoAttack = False
+    s.bombUnlocked = False
+    s.bombDmgMul = 2.0
+    s.bombRadiusMul = 1.0
+    s.bombInterval = 20.0
     return s
 
 
@@ -199,8 +192,9 @@ def stats_upto(tier_exclusive):
     """티어 0..tier_exclusive-1 을 전부 산 상태의 스탯 (코어 포함)."""
     s = new_stats()
     s.flatBonus += ROOT_FLAT
-    for i in range(NODES_PER_TIER * min(tier_exclusive, TIERS)):
-        apply_type(type_of(i), i // NODES_PER_TIER, s)
+    for n in build():
+        if n.type is not None and n.tier < tier_exclusive:
+            n.apply(s)
     return s
 
 
@@ -234,8 +228,10 @@ def wave_cfg(stage, asc=0):
 
 # ---- 유니티 에디터 실측값과 대조 ---------------------------------------
 # GameManager 가 살아있는 Play 모드에서 UpgradeTree.BuildAll() 로 뽑은 값 (round38).
-EXPECTED_DPS = [198, 601, 1566, 3708, 8906, 21767, 53185, 131742]
-EXPECTED_HIT = [90, 193, 350, 640, 1314, 2738, 5687, 11954]
+EXPECTED_DPS = [209, 672, 2315, 6112, 22152, 62078, 226355, 636051]
+EXPECTED_HIT = [95, 209, 420, 728, 1482, 2716, 5728, 10672]
+EXPECTED_TOTAL_COST = 105_114_350
+EXPECTED_NODES = 300
 
 
 def self_check(verbose=True):
@@ -248,9 +244,11 @@ def self_check(verbose=True):
         good = abs(h - eh) <= max(1.0, eh * 0.01) and abs(d - ed) <= max(1.0, ed * 0.01)
         ok &= good
         lines.append("T%d | %7.0f %6d  | %9.0f %7d | %s" % (t, h, eh, d, ed, "OK" if good else "*** 불일치 ***"))
-    tot = sum(n.cost for n in build())
-    lines.append("\n트리 총비용 %s (에디터 실측 29,100,300)" % format(tot, ","))
-    ok &= (tot == 29_100_300)
+    nodes = build()
+    tot = sum(n.cost for n in nodes)
+    lines.append("\n트리 노드 %d개 (에디터 %d) · 총비용 %s (에디터 %s)"
+                 % (len(nodes), EXPECTED_NODES, format(tot, ","), format(EXPECTED_TOTAL_COST, ",")))
+    ok &= (tot == EXPECTED_TOTAL_COST) and len(nodes) == EXPECTED_NODES
     if verbose:
         print("\n".join(lines))
         print("\n=> 시뮬레이터가 현재 C# 트리와", "일치합니다." if ok else "어긋납니다!")

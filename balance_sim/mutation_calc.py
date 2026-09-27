@@ -14,6 +14,10 @@ from sim import run_once
 from prog import AIM, GOLD_FIX
 
 SHOP = 15.0           # 판 사이 상점/트리에서 쓰는 시간(초)
+# 같은 값·같은 진척이면 이 순서로 (사람이 먼저 찍을 법한 순서: 자동공격 → 화력 → 범위 → 경제 → 소환 → 백신)
+LANE_PRIO = {k: i for i, k in enumerate(
+    ["auto", "flat", "mult", "speed", "range", "critc", "critx", "gold", "spawn", "scount",
+     "time", "bomb", "bombdmg", "bombrad", "bombfreq", "skip"])}
 DT = 1 / 40.0
 SIM_TO_REAL = 3.8
 
@@ -23,6 +27,7 @@ def run_level(level, seed=0, max_runs=400):
     nodes = G.build()
     by_id = {n.id: n for n in nodes}
     bought = {"root"}
+    lane_cnt = {}
     stats = G.new_stats()
     stats.flatBonus += G.ROOT_FLAT
 
@@ -46,7 +51,9 @@ def run_level(level, seed=0, max_runs=400):
                 break
             secs += SHOP
 
-            # 경계 노드만, 싼 것부터 — 더 못 살 때까지
+            # 경계 노드만, 싼 것부터 — 더 못 살 때까지.
+            #   round42: 같은 티어는 값이 같아서 예전 tie-break(id 사전순)면 한 가지(예: bombdmg)만
+            #   몰아 사게 된다. 사람처럼 "덜 찍은 가지부터" 고르게 올리고, 동률이면 LANE_PRIO 순.
             while True:
                 cand = [n for n in nodes
                         if n.id not in bought
@@ -55,9 +62,10 @@ def run_level(level, seed=0, max_runs=400):
                         and n.cost <= gold]
                 if not cand:
                     break
-                pick = min(cand, key=lambda n: (n.cost, n.id))
+                pick = min(cand, key=lambda n: (n.cost, lane_cnt.get(n.lane, 0), LANE_PRIO.get(n.lane, 99), n.id))
                 gold -= pick.cost
                 bought.add(pick.id)
+                lane_cnt[pick.lane] = lane_cnt.get(pick.lane, 0) + 1
                 pick.apply(stats)
 
         region_min.append(secs / 60.0)

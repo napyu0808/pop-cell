@@ -33,7 +33,11 @@ namespace BlackholeGame
 
     public static class SaveSystem
     {
-        const string Key = "popcell.save.v1";
+        // round42: 트리를 능력치별 가지·300노드로 다시 짜면서 노드 id/구조가 전부 바뀌었다 — 예전 구매 기록은
+        //   새 트리와 안 맞으므로 키를 올려서 버린다(아직 플레이한 사람 없음, 사용자 확인 2026-09-27).
+        const string Key = "popcell.save.v2";
+        const string OldKey = "popcell.save.v1";
+        public static void DropLegacy() { if (PlayerPrefs.HasKey(OldKey)) { PlayerPrefs.DeleteKey(OldKey); PlayerPrefs.Save(); } }
 
         public static bool Exists() => PlayerPrefs.HasKey(Key);
 

@@ -14,16 +14,24 @@ namespace BlackholeGame
         public float baseAttack = 10f;
         public float flatBonus = 0f;           // 고정합 버킷
         public float multBucketPercent = 0f;   // 배수 버킷(합산). 상한 200 => ×3.0
-        [Range(0f, 0.75f)] public float critChance = 0f;
+        [Range(0f, 0.80f)] public float critChance = 0f;   // 상한 = UpgradeTree.CritCap
         public float critMult = 1.5f;          // 치명 배율 기본(기존 2.0). 노드는 +0.06 씩 — 운빨보다 평균 화력
         public float attackInterval = 0.72f;   // 타격 간격(초). 하한 0.15. 수동 클릭은 이보다 항상 느림
         public float goldMultPercent = 0f;
         public float cursorRadius = 0.45f;     // 커서 타격 범위(월드 단위). 초반은 좁게. 커서 범위 노드는 맨 마지막
         public float bonusTimeSec = 0f;        // 제한시간 +초
         public float spawnIntervalMult = 1f;   // 소환 가속 노드가 낮춘다 (하한 0.25). 낮을수록 적이 더 자주 등장
-        public int spawnCount = 2;             // 소환 1회당 적 마릿수 (기본 2, 노드로 +1, 최대 5)
+        public int spawnCount = 1;             // 소환 1회당 적 마릿수 (round42: 기본 1, 노드로 +1씩 최대 10)
         public int startWave = 1;              // 스킵 노드로 시작 웨이브 상승 (5,10,15,20)
         public bool autoAttack = false;        // 자동 공격 해금 여부. false면 좌클릭으로만 타격(초반 수동 구간)
+
+        // ---- 백신 캡슐(round42) — "백신" 노드를 사야 그때부터 생성된다 ----
+        public bool bombUnlocked = false;
+        public float bombDmgMul = 2f;          // 잡몹 피해 = 타격 × 이 값. 노드로 최대 5
+        public float bombRadiusMul = 1f;       // 폭발 반경 배율. 노드 +0.1 씩 최대 2
+        public float bombInterval = 20f;       // 생성 간격(초). 노드로 최소 10
+        // 보스에게는 최대체력의 1% → 5% — 대미지 강화(2→5배)에 비례해서 같이 오른다
+        public float BombBossFrac => 0.01f + Mathf.Clamp01((bombDmgMul - 2f) / 3f) * 0.04f;
 
         public float GetHitDamage()
             => (baseAttack + flatBonus) * (1f + multBucketPercent / 100f);
@@ -35,6 +43,8 @@ namespace BlackholeGame
             goldMultPercent = goldMultPercent, cursorRadius = cursorRadius,
             bonusTimeSec = bonusTimeSec, spawnIntervalMult = spawnIntervalMult,
             spawnCount = spawnCount, startWave = startWave, autoAttack = autoAttack,
+            bombUnlocked = bombUnlocked, bombDmgMul = bombDmgMul,
+            bombRadiusMul = bombRadiusMul, bombInterval = bombInterval,
         };
 
         // 치명타는 타격 시점에 공식 바깥에서 롤
@@ -179,18 +189,23 @@ namespace BlackholeGame
         //  2) 잡몹 체력은 "티어별 DPS 변화율"만큼만 재조정 — 킬 속도(=골드 수입)는 예전과 같게 유지해
         //     TierCost/GoldCurve 경제를 그대로 쓸 수 있게 했다. 티어7·8 화력이 살아나면서(예전엔 마지막
         //     40노드가 화력 0) 7·8지역 잡몹은 반대로 세졌다.
+        // round42: 트리가 능력치별 가지·300노드로 세지면서, 예전 체력표로는 지역 k 를 티어 k-2 노드로
+        //   깨고 마지막 두 티어(71노드)는 8지역까지 한 번도 안 샀다. 잡몹·보스 체력을 지역별로
+        //   ×1/1.8/3/3/3/3.5/4.2/9 — 지역 k 클리어 때 티어 k-1 을 30~60% 사게 (balance_sim/tune42.py).
+        // round43: 보스 체력만 추가로 ×1/1.3/1.3/3.2/4/5/6/8 — 보스전 잡몹 킬마다 펄스가 끊겨 보스가 안 맞던
+        //   버그를 고치자 보스전이 크게 짧아졌다(시뮬 5.3h → 2.9h). 잡몹 체력은 그대로.
         public static readonly StageConfig[] Stages =
         {
             // 1지역만 "튜토리얼 보정" — 잡몹 30, 골드배율 1.0, 보스 1400. (round37: 초반 골드 수급이
             // 막혀 첫 노드조차 못 사던 문제. 이 보정으로 1판마다 노드를 사고 5판이면 클리어된다.)
-            new StageConfig(0, "s.0",  4,  28f,  30f, 1.130f,      1400,  4,  8, 1.00f, new Color(0.42f,0.72f,0.46f)),
-            new StageConfig(1, "s.1",  5,  34f,  92f, 1.136f,      6700,  5,  9, 0.70f, new Color(0.36f,0.62f,0.70f)),
-            new StageConfig(2, "s.2",  7,  44f, 245f, 1.142f,     22700,  6, 10, 0.82f, new Color(0.60f,0.54f,0.36f)),
-            new StageConfig(3, "s.3",  9,  54f, 210f, 1.148f,     66100,  7, 11, 0.95f, new Color(0.40f,0.46f,0.60f)),
-            new StageConfig(4, "s.4", 11,  64f, 205f, 1.153f,    188100,  8, 12, 1.05f, new Color(0.30f,0.58f,0.62f)),
-            new StageConfig(5, "s.5", 13,  74f, 190f, 1.158f,    531600,  9, 13, 1.15f, new Color(0.34f,0.56f,0.34f)),
-            new StageConfig(6, "s.6", 15,  88f, 335f, 1.163f,   1544500, 10, 14, 1.30f, new Color(0.62f,0.66f,0.72f)),
-            new StageConfig(7, "s.7", 18, 108f, 705f, 1.168f,   4695300, 11, 15, 1.55f, new Color(0.66f,0.30f,0.34f)),
+            new StageConfig(0, "s.0",  4,  28f,    30f, 1.130f,       1400,  4,  8, 1.00f, new Color(0.42f,0.72f,0.46f)),
+            new StageConfig(1, "s.1",  5,  34f,   166f, 1.136f,      15678,  5,  9, 0.70f, new Color(0.36f,0.62f,0.70f)),
+            new StageConfig(2, "s.2",  7,  44f,   735f, 1.142f,      88530,  6, 10, 0.82f, new Color(0.60f,0.54f,0.36f)),
+            new StageConfig(3, "s.3",  9,  54f,   630f, 1.148f,     634560,  7, 11, 0.95f, new Color(0.40f,0.46f,0.60f)),
+            new StageConfig(4, "s.4", 11,  64f,   615f, 1.153f,    2257200,  8, 12, 1.05f, new Color(0.30f,0.58f,0.62f)),
+            new StageConfig(5, "s.5", 13,  74f,   665f, 1.158f,    9303000,  9, 13, 1.15f, new Color(0.34f,0.56f,0.34f)),
+            new StageConfig(6, "s.6", 15,  88f,  1407f, 1.163f,   38921400, 10, 14, 1.30f, new Color(0.62f,0.66f,0.72f)),
+            new StageConfig(7, "s.7", 18, 108f,  6345f, 1.168f,  338061600, 11, 15, 1.55f, new Color(0.66f,0.30f,0.34f)),
         };
     }
 }

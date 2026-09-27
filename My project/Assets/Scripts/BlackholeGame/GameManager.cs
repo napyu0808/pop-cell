@@ -77,8 +77,14 @@ namespace BlackholeGame
             public Vector2 vel;
             public Color baseColor;
             public float wobSpeed, wobPhase;
+            public float rotSpeed;     // 독립 회전(도/초) — 이동 방향과 무관하게 계속 돈다. 불규칙해 보이게
+            public float visScale = 1f; // 종(species)마다 그림이 텍스처를 채우는 정도가 달라 타격판정(r)과
+                                        // 눈에 보이는 크기를 맞추기 위한 배율 — BuildCellSprites 에서 실측
             public int spawnWave;   // 이 적이 소환된 웨이브 (골드·체력 기준)
             // ---- 보스 전용 패턴(승천 레벨별로 하나씩 켜짐, round35) ----
+            public bool elite;         // 변이개체 — 체력 x3, 골드 x5, 빨간 테두리
+            public bool bomb;          // 백신 캡슐 — 터뜨리면 광역 피해
+            public bool dead;          // 이번 타격 처리 중 죽음 — 펄스 끝에 목록에서 한꺼번에 뺀다(폭발 연쇄 대비)
             public bool critResist;    // 승천1+: 치명타 "추가" 피해를 절반만 받음
             public bool shielded;      // 지금 무적 페이즈인지
             public float shieldTimer;  // 다음 무적 페이즈까지 남은 시간(또는 무적 페이즈 남은 시간)
@@ -90,6 +96,19 @@ namespace BlackholeGame
         const float ShieldPhaseInterval = 7f;      // 승천3+: 이 간격마다 잠깐 무적
         const float ShieldPhaseDuration = 1.2f;
         const float BossWaveSpawnSlow = 2.0f;      // 보스 웨이브 잡몹 소환 간격 배율(느리게) — 보스에 집중할 여지
+
+        // ---- 변이개체 / 백신 캡슐 (round39) ----
+        const float EliteChance   = 0.07f;   // 잡몹이 변이개체로 나올 확률
+        const float EliteHpMul    = 3f;      // 체력 배율
+        const int   EliteGoldMul  = 5;       // 골드 배율
+        // 폭탄은 "잡몹 소환의 일정 비율"이 아니라 자체 타이머로 뜬다. 비율로 하면 소환 노드를 찍을수록
+        // 빈도가 같이 폭증해서(소환수 2→6, 간격 하한 0.22) 8지역에선 폭탄만으로 보스 체력 71% 가 날아간다.
+        // round42: 간격·대미지·반경·보스 비율은 전부 Stats(bomb*)로 — 백신 노드가 올린다.
+        //   반경은 커서와 무관한 고정값 × bombRadiusMul — 커서 비례로 두면 후반엔 강화 없이도 화면을
+        //   다 덮어서 반경 노드가 의미 없어진다. 2.6 → 최대 5.2 (전장 16×10 의 약 절반).
+        const float BombBaseRadius = 2.6f;
+        const int   BombMaxAlive   = 2;       // 안 터뜨리고 두면 쌓이는 것 방지
+        float bombTimer;
         int bossesKilled;    // 무한 모드 보스 체력 스케일
 
         class Floater { public Vector3 world; public float life; public string text; public bool crit; }
@@ -120,7 +139,12 @@ namespace BlackholeGame
         float lastSfxPreview;        // 효과음 슬라이더 미리듣기 쿨다운
 
         Camera cam;
-        Sprite cellSprite, discSprite, splatSprite;
+        Sprite discSprite, splatSprite;
+        Texture2D nodeRingTex;   // 트리 노드용 네온 글로우 링(round40)
+        Sprite[] cellSprites;   // 지역(0~7)별로 다른 잡몹 실루엣 — round39
+        float[] cellVisualBoost; // 종별 시각 배율(1.0 이상) — 타격판정보다 그림이 작아 보이는 문제 보정
+        float[] bossVisualBoost; // 보스도 같은 문제(종마다 실제로 차지하는 면적이 다름) — 지역별 배율
+        Sprite capsuleSprite;   // 백신 캡슐(알약) — 터뜨리면 광역 피해
         Sprite[] bossSprites;   // 지역별 보스 실루엣 (스테이지 오를수록 촉수↑, 마지막 = 살점 덩어리)
         Texture2D gridTile;
         Dictionary<string, Texture2D> iconTex;
@@ -206,7 +230,7 @@ namespace BlackholeGame
             cam.backgroundColor = Glass;   // 현미경 유리 너머의 뿌연 하늘색
 
             spriteMat = new Material(FindSpriteShader());
-            cellSprite = BuildCellSprite();
+            cellSprites = BuildCellSprites();
             discSprite = BuildDiscSprite();
             splatSprite = BuildSplatSprite();
             gridTile = BuildGridTile();
@@ -220,6 +244,7 @@ namespace BlackholeGame
             metaNodes = UpgradeTree.BuildMeta();
             pristineStats = stats.Clone();
             baseStats = stats.Clone();
+            SaveSystem.DropLegacy();   // round42: 옛 트리(v1) 세이브는 새 트리와 안 맞아 버린다
             LoadProgress();
             RebuildBaseStats();
 
@@ -231,26 +256,235 @@ namespace BlackholeGame
 
         // ---- 절차적 스프라이트 ----
 
-        Sprite BuildCellSprite()
+        Sprite[] BuildCellSprites()
         {
-            const int size = 96;
-            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false) { filterMode = FilterMode.Bilinear };
-            float rad = size * 0.5f - 2f;
-            var c = new Vector2(size * 0.5f, size * 0.5f);
-            var px = new Color32[size * size];
+            var arr = new Sprite[StageConfig.Stages.Length];
+            cellVisualBoost = new float[arr.Length];
+            for (int i = 0; i < arr.Length; i++)
+            {
+                arr[i] = BuildCellSprite(i, arr.Length);
+                cellVisualBoost[i] = MeasureVisualBoost(arr[i].texture);
+            }
+            return arr;
+        }
+
+        // 텍스처 중심에서 "알파 0.5 이상"인 가장 먼 픽셀까지의 거리를 재서, 예전 원형 세포가 꽉 채우던
+        // 기준(~44.6px, half=48 텍스처에서)과 비교한 배율을 낸다. 종마다 실루엣이 차지하는 면적이
+        // 다르므로(박테리아는 좁게, 바이러스는 넓게) — 타격판정(e.r)은 그대로 두고 "보이는 크기"만
+        // 이 배율만큼 키워서 눈에 보이는 것과 실제 맞는 범위를 맞춘다.
+        static float MeasureVisualBoost(Texture2D tex) => MeasureVisualBoost(tex, 44.6f);  // 잡몹 기본값(96px 텍스처 기준)
+
+        // 텍스처 중심에서 "알파 0.5 이상"인 가장 먼 픽셀까지의 거리를 재서, 목표 반경(refRadius)과
+        // 비교한 배율을 낸다 — 종마다 실루엣이 차지하는 면적이 달라 그림만 보정하고 타격판정은 그대로 둘 때 쓴다.
+        static float MeasureVisualBoost(Texture2D tex, float refRadius)
+        {
+            int size = tex.width;
+            float half = size * 0.5f;
+            var px = tex.GetPixels32();
+            float maxD = 1f;
             for (int y = 0; y < size; y++)
                 for (int x = 0; x < size; x++)
                 {
-                    float d = Vector2.Distance(new Vector2(x + 0.5f, y + 0.5f), c) / rad;
+                    if (px[y * size + x].a < 128) continue;
+                    float dx = x + 0.5f - half, dy = y + 0.5f - half;
+                    float d = Mathf.Sqrt(dx * dx + dy * dy);
+                    if (d > maxD) maxD = d;
+                }
+            return Mathf.Clamp(refRadius / maxD, 1.0f, 2.4f);
+        }
+
+        // 잡몹 실루엣 — 지역(tier)이 오를수록 둥근 원에서 울퉁불퉁한 다엽형으로 "돌연변이"해간다.
+        // BuildBossSprite 와 같은 극좌표 가장자리 요동 방식이지만, 작은 크기에서도 읽히도록
+        // 촉수 대신 "혹(lobe) 개수·진폭"만 키운다 — 후반에도 실루엣이 뭉개지지 않는다.
+        // 곡선을 따라 StampBlob 을 여러 번 찍어 두꺼운 선(촉수/꼬리/고리)을 만든다.
+        //   path(u), thickness(u) : u=0..1 구간의 위치/두께 함수. BuildBossSprite 의 촉수 루프를 일반화한 것.
+        static void StampCurve(float[] a, int size, System.Func<float, Vector2> path, System.Func<float, float> thickness, int steps = 36)
+        {
+            for (int k = 0; k < steps; k++)
+            {
+                float u = k / (float)(steps - 1);
+                Vector2 p = path(u);
+                StampBlob(a, size, p.x, p.y, thickness(u));
+            }
+        }
+
+        // StampBlob 의 반대 — 원 안쪽 알파를 파낸다(눈구멍 등에 사용).
+        static void StampErase(float[] a, int size, float cx, float cy, float r)
+        {
+            int x0 = Mathf.Max(0, Mathf.FloorToInt(cx - r)), x1 = Mathf.Min(size - 1, Mathf.CeilToInt(cx + r));
+            int y0 = Mathf.Max(0, Mathf.FloorToInt(cy - r)), y1 = Mathf.Min(size - 1, Mathf.CeilToInt(cy + r));
+            for (int y = y0; y <= y1; y++)
+                for (int x = x0; x <= x1; x++)
+                {
+                    float dx = x + 0.5f - cx, dy = y + 0.5f - cy;
+                    float d = Mathf.Sqrt(dx * dx + dy * dy);
+                    if (d > r) continue;
+                    float v = Mathf.SmoothStep(1f, 0f, d / r);
+                    int idx = y * size + x;
+                    a[idx] *= (1f - v);
+                }
+        }
+
+        // 지역(0~7)마다 "완전히 다른 병원체 종" 실루엣 — 전염병주식회사 스타일 참고(round39).
+        //   예전엔 원 하나가 점점 삐죽해지는 단일 변형이라 후반이 오히려 꽃처럼 예뻐 보였다.
+        //   이제 종 자체가 바뀐다: 박테리아(순한 덩어리) -> 바이러스(둥근 돌기) -> 곰팡이(비대칭 군집) ->
+        //   기생충(꿈틀대는 몸) -> 프리온(엉킨 리본) -> 나노바이러스(각진 가시) -> 뇌기생충(머리+꼬리) ->
+        //   네크로아(해골+가시관). 알파 버퍼에 합성 스탬프를 찍은 뒤 평평한 흰색 실루엣으로 굽는다.
+        Sprite BuildCellSprite(int tier, int tierCount)
+        {
+            const int size = 96;
+            float half = size * 0.5f;
+            var c = new Vector2(half, half);
+            var a = new float[size * size];
+            var rnd = new System.Random(tier * 7841 + 13);
+
+            switch (tier)
+            {
+                case 0: // 박테리아 — 둥근 덩어리 3개가 겹친 순한 군집
+                    StampBlob(a, size, half - 11f, half - 6f, 17f);
+                    StampBlob(a, size, half + 12f, half - 3f, 15f);
+                    StampBlob(a, size, half + 1f, half + 14f, 14f);
+                    break;
+
+                case 1: // 바이러스 — 둥근 몸통 + 끝이 동그란 돌기(코로나 실루엣)
+                {
+                    StampBlob(a, size, c.x, c.y, 21f);
+                    int spikes = 10;
+                    for (int i = 0; i < spikes; i++)
+                    {
+                        float ang = i / (float)spikes * Mathf.PI * 2f;
+                        var dir = new Vector2(Mathf.Cos(ang), Mathf.Sin(ang));
+                        var baseP = c + dir * 20f;
+                        var tip = c + dir * 33f;
+                        StampCurve(a, size, u => Vector2.Lerp(baseP, tip, u), u => Mathf.Lerp(4f, 2.2f, u), 16);
+                        StampBlob(a, size, tip.x, tip.y, 5.4f);
+                    }
+                    break;
+                }
+
+                case 2: // 곰팡이균 — 중심 덩어리 + 비대칭으로 흩어진 포자 뭉치
+                {
+                    StampBlob(a, size, c.x, c.y, 19f);
+                    int bumps = 7;
+                    for (int i = 0; i < bumps; i++)
+                    {
+                        float ang = (i / (float)bumps) * Mathf.PI * 2f + (float)rnd.NextDouble() * 0.7f;
+                        float dist = 13f + (float)rnd.NextDouble() * 9f;
+                        float r = 8f + (float)rnd.NextDouble() * 6f;
+                        StampBlob(a, size, c.x + Mathf.Cos(ang) * dist, c.y + Mathf.Sin(ang) * dist, r);
+                    }
+                    break;
+                }
+
+                case 3: // 기생충 — 두껍게 꿈틀대는 S자 몸
+                {
+                    var startP = c + new Vector2(-30f, -13f);
+                    var endP = c + new Vector2(30f, 15f);
+                    StampCurve(a, size,
+                        u => Vector2.Lerp(startP, endP, u) + new Vector2(0f, Mathf.Sin(u * Mathf.PI * 2.1f) * 13f),
+                        u => 3.6f + 7f * Mathf.Sin(u * Mathf.PI), 72);
+                    break;
+                }
+
+                case 4: // 프리온 — 중심 덩어리를 휘감은 엉킨 리본 두 가닥
+                {
+                    StampBlob(a, size, c.x, c.y, 13f);
+                    for (int li = 0; li < 2; li++)
+                    {
+                        float loopR = 19f + li * 9f;
+                        float rot = li * 2.0f;
+                        StampCurve(a, size,
+                            u => c + new Vector2(Mathf.Cos(u * Mathf.PI * 1.4f + rot), Mathf.Sin(u * Mathf.PI * 1.4f + rot) * 0.72f) * loopR,
+                            u => 3f + 2f * Mathf.Sin(u * 9f + li), 150);
+                    }
+                    break;
+                }
+
+                case 5: // 나노바이러스 — 작은 코어 + 각진 침(가늘고 뾰족, 기계적인 느낌)
+                {
+                    StampBlob(a, size, c.x, c.y, 13f);
+                    int spikes = 8;
+                    for (int i = 0; i < spikes; i++)
+                    {
+                        float ang = i / (float)spikes * Mathf.PI * 2f + 0.28f;
+                        var dir = new Vector2(Mathf.Cos(ang), Mathf.Sin(ang));
+                        StampCurve(a, size, u => c + dir * Mathf.Lerp(11f, 39f, u), u => Mathf.Lerp(5f, 0.6f, u), 24);
+                    }
+                    break;
+                }
+
+                case 6: // 뇌신경 기생충 — 둥근 머리 + 길게 휘어지는 꼬리
+                {
+                    var head = c + new Vector2(-7f, -11f);
+                    StampBlob(a, size, head.x, head.y, 16f);
+                    StampCurve(a, size,
+                        u => head + new Vector2(u * 38f, u * u * 28f + Mathf.Sin(u * 6f) * 7f),
+                        u => Mathf.Lerp(8.5f, 1.8f, u), 40);
+                    break;
+                }
+
+                default: // 네크로아 바이러스(최종) — 해골(눈구멍) + 위쪽 절반에 가시관
+                {
+                    var skullC = new Vector2(c.x, c.y - 5f);
+                    StampBlob(a, size, skullC.x, skullC.y, 21f);          // 두개골
+                    StampBlob(a, size, c.x, c.y + 15f, 12f);              // 턱
+                    StampErase(a, size, skullC.x - 7.5f, skullC.y - 6f, 5.5f);  // 눈구멍(좌)
+                    StampErase(a, size, skullC.x + 7.5f, skullC.y - 6f, 5.5f);  // 눈구멍(우)
+                    StampErase(a, size, skullC.x, skullC.y + 3f, 2.6f);        // 콧구멍
+                    int spikes = 6;
+                    for (int i = 0; i < spikes; i++)
+                    {
+                        float ang = Mathf.Lerp(Mathf.PI * 0.12f, Mathf.PI * 0.88f, i / (float)(spikes - 1));
+                        var dir = new Vector2(Mathf.Cos(ang), Mathf.Sin(ang));
+                        var baseP = skullC + dir * 19f;
+                        var tip = skullC + dir * 32f;
+                        StampCurve(a, size, u => Vector2.Lerp(baseP, tip, u), u => Mathf.Lerp(3.6f, 0.8f, u), 14);
+                    }
+                    break;
+                }
+            }
+
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false) { filterMode = FilterMode.Bilinear };
+            var px = new Color32[size * size];
+            for (int i = 0; i < a.Length; i++)
+                px[i] = new Color32(255, 255, 255, (byte)(Mathf.Clamp01(a[i]) * 255f));
+            tex.SetPixels32(px); tex.Apply();
+            return Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), size, 0, SpriteMeshType.FullRect);
+        }
+
+        // 백신 캡슐 — 세로로 선 알약 모양. 위/아래 반쪽 밝기를 달리해 "캡슐"로 읽히게 하고,
+        // 가운데 이음새와 바깥 테두리를 진하게. cellSprite 와 같은 규약(흰 알파형 → 런타임에 색 틴트).
+        Sprite BuildCapsuleSprite()
+        {
+            const int size = 96;
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false) { filterMode = FilterMode.Bilinear };
+            var px = new Color32[size * size];
+            float cx = size * 0.5f, cy = size * 0.5f;
+            float halfW = size * 0.26f;          // 알약 반폭
+            float halfH = size * 0.44f;          // 반높이 (세로로 길쭉)
+            float rCap = halfW;                  // 위아래 둥근 끝 반지름
+            float straight = halfH - rCap;       // 직선 구간 절반 길이
+            for (int y = 0; y < size; y++)
+                for (int x = 0; x < size; x++)
+                {
+                    float dx = x + 0.5f - cx, dy = y + 0.5f - cy;
+                    // 캡슐(스타디움) 거리장 — 직선 구간은 |dx|, 끝은 원 거리
+                    float ay = Mathf.Abs(dy);
+                    float d = (ay <= straight) ? Mathf.Abs(dx)
+                                               : Mathf.Sqrt(dx * dx + (ay - straight) * (ay - straight));
+                    float t = d / rCap;          // 0 = 중심축, 1 = 바깥선
                     float v, a;
-                    if (d >= 1.02f) { v = 0f; a = 0f; }
+                    if (t >= 1.02f) { v = 0f; a = 0f; }
                     else
                     {
-                        if (d < 0.34f)       v = 0.55f;   // 핵 (약간 어둡게)
-                        else if (d < 0.82f)  v = 0.96f;   // 몸통 (밝고 단색 — 색이 진하게 보임)
-                        else if (d < 0.90f)  v = 1.00f;   // 세포막 하이라이트
-                        else                 v = 0.10f;   // 굵고 진한 테두리 (배경과 확실히 분리)
-                        a = d < 0.93f ? 1.0f : Mathf.Lerp(1.0f, 0f, (d - 0.93f) / 0.09f);
+                        bool seam = ay < size * 0.035f;                   // 가운데 이음새
+                        if (t > 0.88f)      v = 0.10f;                    // 진한 테두리
+                        else if (seam)      v = 0.22f;                    // 이음새 선
+                        else if (dy > 0f)   v = 0.98f;                    // 위쪽 반 — 밝게
+                        else                v = 0.62f;                    // 아래쪽 반 — 조금 어둡게
+                        // 위쪽 반에 사선 하이라이트 한 줄
+                        if (dy > 0f && t < 0.55f && Mathf.Abs(dx + (dy - straight) * 0.35f) < size * 0.035f) v = 1.0f;
+                        a = t < 0.92f ? 1.0f : Mathf.Lerp(1.0f, 0f, (t - 0.92f) / 0.10f);
                     }
                     px[y * size + x] = new Color32(
                         (byte)(Mathf.Clamp01(v) * 255f), (byte)(Mathf.Clamp01(v) * 255f),
@@ -259,6 +493,7 @@ namespace BlackholeGame
             tex.SetPixels32(px); tex.Apply();
             return Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), size, 0, SpriteMeshType.FullRect);
         }
+
 
         // 세포가 터진 자국. 원이 아니라 각도별로 반지름을 흔들어 찌그러진 얼룩 + 튄 방울 몇 개.
         Sprite BuildSplatSprite()
@@ -463,6 +698,30 @@ namespace BlackholeGame
             return Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), size, 0, SpriteMeshType.FullRect);
         }
 
+        // 트리 노드 뱃지 테두리 — 링 라인에서 안팎으로 부드럽게 번지는 네온 글로우.
+        //   GUI.DrawTexture 로 그대로 색을 입혀 쓴다(Texture2D, Sprite 아님).
+        Texture2D BuildNodeRingTex()
+        {
+            const int size = 128;
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false) { filterMode = FilterMode.Bilinear };
+            float half = size * 0.5f;
+            float ringR = half - 7f;
+            float glowW = 16f;
+            var px = new Color32[size * size];
+            for (int y = 0; y < size; y++)
+                for (int x = 0; x < size; x++)
+                {
+                    float dx = x + 0.5f - half, dy = y + 0.5f - half;
+                    float d = Mathf.Sqrt(dx * dx + dy * dy);
+                    float t = Mathf.Abs(d - ringR) / glowW;
+                    float a = Mathf.Clamp01(1f - t);
+                    a *= a;   // 부드러운 감쇠 — 중심선에 밝음이 몰리게
+                    px[y * size + x] = new Color32(255, 255, 255, (byte)(a * 255f));
+                }
+            tex.SetPixels32(px); tex.Apply();
+            return tex;
+        }
+
         // 커서 범위 테두리 — 속은 비고 가장자리만 굵게. 안쪽 옅은 채움은 discSprite가 담당.
         Sprite BuildRingSprite(float borderFrac)
         {
@@ -491,7 +750,20 @@ namespace BlackholeGame
         {
             int n = StageConfig.Stages.Length;
             var arr = new Sprite[n];
-            for (int i = 0; i < n; i++) arr[i] = BuildBossSprite(i, n);
+            bossVisualBoost = new float[n];
+            for (int i = 0; i < n; i++)
+            {
+                arr[i] = BuildBossSprite(i, n);
+                // 그 스테이지의 "의도된 최대 반경"(옛 촉수형 보스가 뻗던 len)에 맞춰 배율을 낸다 —
+                // 종(species)마다 실제 잉크가 차지하는 면적이 달라서(박테리아처럼 중심에 몰린 종은
+                // 작아 보이고, 바이러스처럼 끝까지 뻗는 종은 커 보임) 그림만 보정, 타격판정(bossR)은 그대로.
+                bool finalBoss = i >= n - 1;
+                float grow = n > 1 ? i / (float)(n - 1) : 0f;
+                float half = arr[i].texture.width * 0.5f;
+                float bodyR = half * BossBodyFrac(i, n);
+                float lenTarget = bodyR + half * (finalBoss ? 0.24f : Mathf.Lerp(0.14f, 0.34f, grow));
+                bossVisualBoost[i] = MeasureVisualBoost(arr[i].texture, lenTarget);
+            }
             return arr;
         }
 
@@ -522,6 +794,10 @@ namespace BlackholeGame
             return finalBoss ? 0.50f : Mathf.Lerp(0.36f, 0.46f, grow);
         }
 
+        // 보스 = 그 지역 잡몹과 같은 "종"의 거대판. 잡몹 실루엣(BuildCellSprite)과 같은 8종 언어를
+        // 그대로 쓰되, 개체수·촉수 길이를 키운다(round39). 코어 반경(bodyR)·촉수 최대 길이(len)는
+        // 예전 촉수형 보스와 동일한 공식을 그대로 물려받아 — 타격판정(SpawnBoss 의 bossR)이 쓰는
+        // BossBodyFrac 기준과 계속 맞는다(별도 보정 없이도 기존 밸런스가 유지됨).
         Sprite BuildBossSprite(int stage, int stageCount)
         {
             const int size = 192;
@@ -532,47 +808,131 @@ namespace BlackholeGame
             float grow = stageCount > 1 ? stage / (float)(stageCount - 1) : 0f;   // 0..1
 
             float bodyR = half * BossBodyFrac(stage, stageCount);
+            int tent = finalBoss ? 12 : Mathf.RoundToInt(Mathf.Lerp(4f, 10f, grow));
+            float len = bodyR + half * (finalBoss ? 0.24f
+                                                  : Mathf.Lerp(0.14f, 0.34f, grow));
+            var c = new Vector2(half, half);
 
-            if (finalBoss)
+            switch (Mathf.Clamp(stage, 0, 7))
             {
-                // 살점 덩어리 — 여러 로브가 겹쳐 뭉친 불규칙 몸통
-                for (int i = 0; i < 7; i++)
+                case 0: // 박테리아 — 큰 덩어리 여럿이 겹친 군집 (len 근처까지 퍼지도록 넓게)
                 {
-                    float ang = (float)rnd.NextDouble() * 6.2832f;
-                    float dist = (0.06f + (float)rnd.NextDouble() * 0.30f) * half;
-                    float lr = (0.28f + (float)rnd.NextDouble() * 0.22f) * half;
-                    StampBlob(a, size, half + Mathf.Cos(ang) * dist, half + Mathf.Sin(ang) * dist, lr);
-                }
-            }
-            else
-            {
-                // 울퉁불퉁한 세포 몸통
-                for (int y = 0; y < size; y++)
-                    for (int x = 0; x < size; x++)
+                    int blobs = 7;
+                    for (int i = 0; i < blobs; i++)
                     {
-                        float dx = x + 0.5f - half, dy = y + 0.5f - half;
-                        float d = Mathf.Sqrt(dx * dx + dy * dy), th = Mathf.Atan2(dy, dx);
-                        float edge = bodyR * (1f + 0.10f * Mathf.Sin(3f * th + stage) + 0.05f * Mathf.Sin(5f * th + 1.3f));
-                        if (d <= edge) a[y * size + x] = 1f;
+                        float ang = i / (float)blobs * Mathf.PI * 2f + (float)rnd.NextDouble() * 0.4f;
+                        float dist = Mathf.Lerp(bodyR * 0.35f, len * 0.78f, (float)rnd.NextDouble());
+                        float r = bodyR * Mathf.Lerp(0.55f, 0.80f, (float)rnd.NextDouble());
+                        StampBlob(a, size, c.x + Mathf.Cos(ang) * dist, c.y + Mathf.Sin(ang) * dist, r);
                     }
-            }
+                    break;
+                }
 
-            // 촉수 — 스테이지가 오를수록 개수·길이 증가. 마지막은 살점 돌기.
-            int tent = finalBoss ? 12 : Mathf.RoundToInt(Mathf.Lerp(0f, 9f, grow));
-            for (int t = 0; t < tent; t++)
-            {
-                float baseAng = (t / (float)Mathf.Max(1, tent)) * 6.2832f + (float)rnd.NextDouble() * 0.6f;
-                float len = bodyR + half * (finalBoss ? 0.10f + (float)rnd.NextDouble() * 0.16f
-                                                      : Mathf.Lerp(0.10f, 0.34f, grow) * (0.6f + (float)rnd.NextDouble() * 0.8f));
-                float curl = (float)(rnd.NextDouble() - 0.5) * 2.6f;
-                int steps = 44;
-                for (int k = 0; k < steps; k++)
+                case 1: // 바이러스 — 큰 몸통 + 둥근 돌기 다수
                 {
-                    float u = k / (float)(steps - 1);
-                    float rr = Mathf.Lerp(bodyR * 0.72f, len, u);
-                    float aa = baseAng + curl * u * u * 0.5f + 0.12f * Mathf.Sin(u * 8f + t);
-                    float tr = Mathf.Lerp(size * (finalBoss ? 0.070f : 0.052f), size * 0.010f, u);
-                    StampBlob(a, size, half + Mathf.Cos(aa) * rr, half + Mathf.Sin(aa) * rr, tr);
+                    StampBlob(a, size, c.x, c.y, bodyR);
+                    for (int i = 0; i < tent; i++)
+                    {
+                        float ang = i / (float)tent * Mathf.PI * 2f;
+                        var dir = new Vector2(Mathf.Cos(ang), Mathf.Sin(ang));
+                        var baseP = c + dir * bodyR * 0.92f;
+                        var tip = c + dir * len;
+                        StampCurve(a, size, u => Vector2.Lerp(baseP, tip, u), u => Mathf.Lerp(size * 0.052f, size * 0.024f, u),
+                                   Mathf.Max(20, Mathf.RoundToInt((len - bodyR) / 2.2f)));
+                        StampBlob(a, size, tip.x, tip.y, size * 0.045f);
+                    }
+                    break;
+                }
+
+                case 2: // 곰팡이균 — 중심 덩어리 + 여러 겹의 비대칭 포자 뭉치
+                {
+                    StampBlob(a, size, c.x, c.y, bodyR * 0.86f);
+                    int bumps = tent + 6;
+                    for (int i = 0; i < bumps; i++)
+                    {
+                        float ang = (i / (float)bumps) * Mathf.PI * 2f + (float)rnd.NextDouble() * 0.6f;
+                        float dist = bodyR * Mathf.Lerp(0.55f, 1.02f, (float)rnd.NextDouble());
+                        float r = bodyR * Mathf.Lerp(0.24f, 0.40f, (float)rnd.NextDouble());
+                        StampBlob(a, size, c.x + Mathf.Cos(ang) * dist, c.y + Mathf.Sin(ang) * dist, r);
+                    }
+                    break;
+                }
+
+                case 3: // 기생충 — 화면을 가로지르는 굵고 긴 꿈틀 몸
+                {
+                    var startP = c + new Vector2(-len * 0.94f, -bodyR * 0.5f);
+                    var endP = c + new Vector2(len * 0.94f, bodyR * 0.6f);
+                    StampCurve(a, size,
+                        u => Vector2.Lerp(startP, endP, u) + new Vector2(0f, Mathf.Sin(u * Mathf.PI * 2.6f) * bodyR * 0.55f),
+                        u => bodyR * (0.20f + 0.34f * Mathf.Sin(u * Mathf.PI)), 130);
+                    break;
+                }
+
+                case 4: // 프리온 — 중심 덩어리를 휘감은 굵은 리본 여러 가닥
+                {
+                    StampBlob(a, size, c.x, c.y, bodyR * 0.56f);
+                    int loops = 3;
+                    for (int li = 0; li < loops; li++)
+                    {
+                        float loopR = Mathf.Lerp(bodyR * 0.62f, len, li / (float)(loops - 1));
+                        float rot = li * 1.6f;
+                        StampCurve(a, size,
+                            u => c + new Vector2(Mathf.Cos(u * Mathf.PI * 1.4f + rot), Mathf.Sin(u * Mathf.PI * 1.4f + rot) * 0.72f) * loopR,
+                            u => bodyR * (0.13f + 0.05f * Mathf.Sin(u * 9f + li)), 260);
+                    }
+                    break;
+                }
+
+                case 5: // 나노바이러스 — 코어 + 각진 침(길고 짧은 두 겹, 기계적)
+                {
+                    StampBlob(a, size, c.x, c.y, bodyR * 0.62f);
+                    for (int i = 0; i < tent; i++)
+                    {
+                        float ang = i / (float)tent * Mathf.PI * 2f + 0.2f;
+                        var dir = new Vector2(Mathf.Cos(ang), Mathf.Sin(ang));
+                        float thisLen = (i % 2 == 0) ? len : Mathf.Lerp(bodyR, len, 0.62f);
+                        StampCurve(a, size, u => c + dir * Mathf.Lerp(bodyR * 0.5f, thisLen, u),
+                                   u => Mathf.Lerp(size * 0.030f, size * 0.004f, u),
+                                   Mathf.Max(18, Mathf.RoundToInt(thisLen / 2f)));
+                    }
+                    break;
+                }
+
+                case 6: // 뇌신경 기생충 — 크고 또렷한 머리 + 사방으로 넓게 펼쳐지는 꼬리 3갈래(히드라형)
+                {
+                    StampBlob(a, size, c.x, c.y, bodyR * 0.95f);
+                    int tails = 3;
+                    for (int ti = 0; ti < tails; ti++)
+                    {
+                        float baseAng = ti / (float)tails * Mathf.PI * 2f + 0.5f;   // 120°씩 고르게 분산
+                        float curl = (float)(rnd.NextDouble() - 0.5) * 1.1f;
+                        var dir0 = new Vector2(Mathf.Cos(baseAng), Mathf.Sin(baseAng));
+                        StampCurve(a, size,
+                            u => c + dir0 * (bodyR * 0.6f + (len - bodyR * 0.6f) * u)
+                                    + new Vector2(-dir0.y, dir0.x) * Mathf.Sin(u * 3.2f) * bodyR * 0.22f * u
+                                    + dir0 * curl * u * u * bodyR * 0.5f,
+                            u => Mathf.Lerp(bodyR * 0.30f, size * 0.010f, u), 90);
+                    }
+                    break;
+                }
+
+                default: // 네크로아 바이러스(최종) — 큰 해골 + 사방을 두른 가시관
+                {
+                    StampBlob(a, size, c.x, c.y - bodyR * 0.14f, bodyR * 0.92f);   // 두개골
+                    StampBlob(a, size, c.x, c.y + bodyR * 0.62f, bodyR * 0.56f);  // 턱
+                    StampErase(a, size, c.x - bodyR * 0.34f, c.y - bodyR * 0.26f, bodyR * 0.22f);  // 눈구멍(좌)
+                    StampErase(a, size, c.x + bodyR * 0.34f, c.y - bodyR * 0.26f, bodyR * 0.22f);  // 눈구멍(우)
+                    StampErase(a, size, c.x, c.y + bodyR * 0.06f, bodyR * 0.10f);                   // 콧구멍
+                    for (int i = 0; i < tent; i++)
+                    {
+                        float ang = i / (float)tent * Mathf.PI * 2f;
+                        var dir = new Vector2(Mathf.Cos(ang), Mathf.Sin(ang));
+                        var baseP = c + dir * bodyR * 0.88f;
+                        var tip = c + dir * len;
+                        StampCurve(a, size, u => Vector2.Lerp(baseP, tip, u), u => Mathf.Lerp(size * 0.034f, size * 0.006f, u),
+                                   Mathf.Max(16, Mathf.RoundToInt((len - bodyR) / 2f)));
+                    }
+                    break;
                 }
             }
 
@@ -932,7 +1292,7 @@ namespace BlackholeGame
             PurgeSpawnedObjects();
             // 스프라이트/머티리얼 안전망 (Awake가 어중간하게 끝났을 경우 대비)
             if (spriteMat == null)  spriteMat = new Material(Shader.Find("Sprites/Default"));
-            if (cellSprite == null) cellSprite = BuildCellSprite();
+            if (cellSprites == null) cellSprites = BuildCellSprites();
             if (discSprite == null) discSprite = BuildDiscSprite();
 
             gold = 0;
@@ -992,6 +1352,7 @@ namespace BlackholeGame
             goldFloats.Clear();
             attackTimer = 0f;
             spawnTimer = 0f;
+            bombTimer = 0f;
             cycleKills = 0;
             cycleGold = 0;
             bossesKilled = 0;
@@ -1037,21 +1398,27 @@ namespace BlackholeGame
 #endif
         }
 
-        Enemy SpawnEnemy()
+        Enemy SpawnEnemy(bool asBomb = false)
         {
-            if (enemies.Count >= wave.maxEnemies) return null;
+            // 캡슐은 적이 꽉 차 있을 때 더 필요하다 — 상한을 조금 넘겨서라도 나오게
+            if (enemies.Count >= wave.maxEnemies + (asBomb ? BombMaxAlive : 0)) return null;
 
-            if (cellSprite == null) cellSprite = BuildCellSprite();
+            if (cellSprites == null) cellSprites = BuildCellSprites();
+            if (capsuleSprite == null) capsuleSprite = BuildCapsuleSprite();
             if (spriteMat == null) spriteMat = new Material(FindSpriteShader());
 
-            var go = new GameObject("Enemy");
+            bool isElite = !asBomb && Random.value < EliteChance;
+            int cellTier = Mathf.Clamp(currentStage, 0, cellSprites.Length - 1);
+            Sprite cellSprite = cellSprites[cellTier];
+
+            var go = new GameObject(asBomb ? "Vaccine" : isElite ? "Elite" : "Enemy");
             var sr = go.AddComponent<SpriteRenderer>();
-            sr.sprite = cellSprite;
+            sr.sprite = asBomb ? capsuleSprite : cellSprite;
             sr.sharedMaterial = spriteMat;
-            sr.sortingOrder = 10;
+            sr.sortingOrder = asBomb ? 11 : 10;   // 캡슐은 잡몹보다 살짝 위 — 묻히지 않게
             sr.enabled = true;
 
-            float sizeMul = Random.Range(wave.enemySizeRange.x, wave.enemySizeRange.y);
+            float sizeMul = asBomb ? 1.9f : Random.Range(wave.enemySizeRange.x, wave.enemySizeRange.y);   // 캡슐은 잡몹 떼 속에서도 눈에 띄게
 
             var e = new Enemy
             {
@@ -1059,12 +1426,17 @@ namespace BlackholeGame
                 tr = go.transform,
                 sr = sr,
                 r = wave.enemyRadius * sizeMul,
-                baseColor = WaveColor(waveNum),
-                wobSpeed = Random.Range(1.4f, 3.4f),
+                visScale = asBomb ? 1f : (cellVisualBoost != null ? cellVisualBoost[cellTier] : 1f),
+                baseColor = asBomb ? new Color(0.94f, 0.96f, 0.99f) : WaveColor(waveNum),
+                wobSpeed = asBomb ? 0.8f : Random.Range(1.4f, 3.4f),
+                rotSpeed = asBomb ? 0f : Random.Range(-150f, 150f) + Mathf.Sign(Random.value - 0.5f) * 40f,  // 0 근처를 피해 확실히 돌게
                 wobPhase = Random.value * 6.2832f,
                 spawnWave = waveNum,
+                elite = isElite,
+                bomb = asBomb,
             };
-            e.hpMax = e.hp = Mathf.CeilToInt(wave.EnemyHpAt(waveNum) * sizeMul);
+            e.hpMax = e.hp = Mathf.CeilToInt(wave.EnemyHpAt(waveNum) * sizeMul
+                                             * (isElite ? EliteHpMul : asBomb ? 0.6f : 1f));
 
             float sp = Random.Range(0.25f, 0.65f);
             float ang = Random.value * Mathf.PI * 2f;
@@ -1078,6 +1450,20 @@ namespace BlackholeGame
             var col = e.baseColor; col.a = 1f;   // 알파 확실히 1
             sr.color = col;
 
+            // 변이개체 — 같은 실루엣을 살짝 크게 빨갛게 뒤에 깔아 테두리처럼. 자식이라 회전·흔들림을
+            // 그대로 따라가고, 본체 flash 는 e.sr 만 바꾸므로 테두리는 항상 빨갛게 남는다.
+            if (isElite)
+            {
+                var og = new GameObject("EliteRim");
+                og.transform.SetParent(go.transform, false);
+                og.transform.localScale = Vector3.one * 1.24f;
+                var osr = og.AddComponent<SpriteRenderer>();
+                osr.sprite = cellSprite;
+                osr.sharedMaterial = spriteMat;
+                osr.sortingOrder = 9;
+                osr.color = new Color(0.95f, 0.10f, 0.12f, 1f);
+            }
+
             enemies.Add(e);
             return e;
         }
@@ -1085,14 +1471,14 @@ namespace BlackholeGame
         void SpawnBoss()
         {
             if (boss != null) return;
-            if (cellSprite == null) cellSprite = BuildCellSprite();
+            if (cellSprites == null) cellSprites = BuildCellSprites();
             if (bossSprites == null) bossSprites = BuildBossSprites();
             if (spriteMat == null) spriteMat = new Material(FindSpriteShader());
 
             var go = new GameObject("Boss");
             var sr = go.AddComponent<SpriteRenderer>();
             int bi = Mathf.Clamp(currentStage, 0, bossSprites.Length - 1);
-            sr.sprite = (bossSprites[bi] != null) ? bossSprites[bi] : cellSprite;   // 지도 카드와 같은 지역별 실루엣
+            sr.sprite = (bossSprites[bi] != null) ? bossSprites[bi] : cellSprites[Mathf.Clamp(bi, 0, cellSprites.Length - 1)];   // 지도 카드와 같은 지역별 실루엣
             sr.sharedMaterial = spriteMat;
             sr.sortingOrder = 12;
             sr.enabled = true;
@@ -1110,14 +1496,17 @@ namespace BlackholeGame
                 r = bossR,
                 baseColor = new Color(0.80f, 0.12f, 0.14f), // 위협적인 진한 빨강
                 wobSpeed = 0.9f,
+                rotSpeed = 25f,   // 보스는 크니까 천천히, 위압감 있게
                 wobPhase = 0f,
                 spawnWave = wave.totalWaves,
             };
-            boss.hpMax = boss.hp = wave.bossHp * (bossesKilled + 1);  // 무한 모드마다 +100%
+            // 무한 모드마다 +100%. round43: float 로 곱한다 — 8지역 보스가 3억대라 int 로 곱하면 7번째에 넘친다
+            boss.hpMax = boss.hp = (float)wave.bossHp * (bossesKilled + 1);
             float ang = Random.value * Mathf.PI * 2f;
             boss.vel = new Vector2(Mathf.Cos(ang), Mathf.Sin(ang)) * 0.35f;
+            boss.visScale = (bossVisualBoost != null && bi < bossVisualBoost.Length) ? bossVisualBoost[bi] : 1f;
             boss.tr.position = Vector3.zero;
-            boss.tr.localScale = Vector3.one * (boss.r * 2f);
+            boss.tr.localScale = Vector3.one * (boss.r * 2f * boss.visScale);
             sr.color = boss.baseColor;
             bossTeleportTimer = BossTeleportInterval / BossTeleportSpeedMul(ascensionLevel);
 
@@ -1262,11 +1651,24 @@ namespace BlackholeGame
                 while (spawnTimer >= si && guard++ < 24)
                 {
                     spawnTimer -= si;
-                    int n = Mathf.Max(2, stats.spawnCount);   // 한 번에 최소 2마리 (노드로 최대 5)
+                    int n = Mathf.Max(1, stats.spawnCount);   // round42: 기본 1마리, 노드로 최대 10
                     for (int k = 0; k < n; k++) SpawnEnemy();
                 }
                 if (enemies.Count >= wave.maxEnemies)
                     spawnTimer = Mathf.Min(spawnTimer, si);
+            }
+
+            // 백신 캡슐 — 노드로 해금된 뒤부터, 자체 타이머로(보스 웨이브에도). 소환 노드와 무관.
+            if (stats.bombUnlocked)
+            {
+                bombTimer += dt;
+                if (bombTimer >= stats.bombInterval)
+                {
+                    int alive = 0;
+                    foreach (var e in enemies) if (e.bomb) alive++;
+                    if (alive < BombMaxAlive) { SpawnEnemy(true); bombTimer = 0f; }
+                    else bombTimer = stats.bombInterval;   // 꽉 찼으면 자리 나는 즉시 다음 것
+                }
             }
 
             var fr = FieldRect;
@@ -1281,8 +1683,9 @@ namespace BlackholeGame
                 if (p.y < fr.yMin + e.r) { p.y = fr.yMin + e.r; e.vel.y = -e.vel.y; }
                 if (p.y > fr.yMax - e.r) { p.y = fr.yMax - e.r; e.vel.y = -e.vel.y; }
                 e.tr.position = p;
+                e.tr.Rotate(0f, 0f, e.rotSpeed * dt);   // 이동 방향과 별개로 계속 회전 — 불규칙하게 뒤척이는 느낌
 
-                float dd = e.r * 2f;
+                float dd = e.r * 2f * e.visScale;
                 float sx = 1f + 0.055f * Mathf.Sin(t * e.wobSpeed + e.wobPhase);
                 float sy = 1f + 0.055f * Mathf.Sin(t * e.wobSpeed * 1.13f + e.wobPhase + 1.7f);
                 e.tr.localScale = new Vector3(dd * sx, dd * sy, 1f);
@@ -1361,9 +1764,11 @@ namespace BlackholeGame
         {
             float R = stats.cursorRadius;
             bool hitAny = false;
-            for (int i = enemies.Count - 1; i >= 0; i--)
+            bool stop = false;
+            for (int i = enemies.Count - 1; i >= 0 && !stop; i--)
             {
                 var e = enemies[i];
+                if (e.dead) continue;   // 이번 펄스에서 폭발 연쇄로 이미 죽음
                 float dx = e.tr.position.x - cursorWorld.x;
                 float dy = e.tr.position.y - cursorWorld.y;
                 float rr = R + e.r + 0.05f;   // 테두리에 닿아 보이면 반드시 맞도록 살짝 여유
@@ -1398,77 +1803,140 @@ namespace BlackholeGame
 
                 if (blocked) continue;   // 무적 중엔 이 적(보스)이 죽을 수 없음 — 사망 처리 스킵
 
-                if (e.hp <= 0f)
-                {
-                    bool wasBoss = e == boss;
-                    int g = Mathf.RoundToInt(wave.GoldAt(e.spawnWave) * (1f + stats.goldMultPercent / 100f));
-                    SpawnBurst(e.tr.position, e.baseColor, e.r);
-                    SpawnSplat(e.tr.position, e.baseColor, e.r);
-                    if (wasBoss) { SpawnBurst(e.tr.position, e.baseColor, e.r * 1.6f); SpawnBurst(e.tr.position, Color.white, e.r); }
-                    if (goldFloats.Count < 30)
-                        goldFloats.Add(new GoldFloat { startWorld = e.tr.position, age = 0f, life = 1.0f, amount = g });
-
-                    if (e.go) Destroy(e.go);
-                    enemies.RemoveAt(i);
-                    kills++;
-                    cycleKills++;
-                    campaignKills++;
-                    gold += g;
-                    cycleGold += g;
-                    campaignGold += g;
-
-                    if (wasBoss)
-                    {
-                        boss = null; bossesKilled++;
-                        if (sound != null) sound.Play(Sfx.Win, 1f);
-                        stagesCleared = Mathf.Max(stagesCleared, currentStage + 1);
-                        maxScore = Mathf.Max(maxScore, stagesCleared * 100);
-                        if (stagesCleared >= 2) everRebirth = true;   // 한 번 열리면 환생해도 메타/환생 버튼은 계속 보임
-                        mapIndex = currentStage; mapScroll = currentStage;   // 지도로 돌아가면 방금 (재)클리어한 지역이 선택돼 있게
-
-                        if (currentStage >= StageConfig.Stages.Length - 1)
-                        {
-                            // 8지역 전부 클리어 = 승천. 환생과는 별개 — 여기서만 승천 사다리가 오른다.
-                            winKills = campaignKills; winGold = campaignGold; winTimeSec = campaignElapsedSec;   // Win 화면 스냅샷
-
-                            lastAscendShardGain = ShardGainNow();
-                            metaCurrency += lastAscendShardGain;
-                            bestScore = Mathf.Max(bestScore, maxScore);
-
-                            lastAscendWasFirst = maxAscensionUnlocked == 0;
-                            lastAscendLevelPlayed = ascensionLevel;   // Win 화면에 "이번에 깬 난이도"로 표시
-                            if (ascensionLevel >= maxAscensionUnlocked) maxAscensionUnlocked = ascensionLevel + 1;
-                            ascensionLevel = maxAscensionUnlocked;   // 다음 판 기본값 = 새로 연 상한(화살표로 낮출 수 있음)
-
-                            metaLv.Clear();   // 메타 강화 레벨 초기화 — 대신 승천 레벨만큼 새 노드/더 높은 상한이 열림
-                            RebuildBaseStats();
-                            bought.Clear();
-                            gold = 2000 * MetaLv("m_start");   // 방금 초기화했으니 사실상 0
-                            stats = baseStats.Clone();
-                            GrabRoot();
-                            stagesCleared = 0;
-                            currentStage = 0;
-                            maxScore = 0;
-                            bossSeenMask = 0;
-                            retryCount = 0;
-                            campaignKills = 0; campaignGold = 0; campaignElapsedSec = 0f;   // 다음 승천 사이클 시작
-                            wave.LoadStage(0);
-                            wave.ApplyAscension(ascensionLevel);
-                            SaveProgress();
-                            state = State.Win;
-                        }
-                        else
-                        {
-                            SaveProgress();
-                            resultCleared = true;
-                            state = State.Result;   // 바로 지도로 안 넘기고 선택지 3개(업그레이드/재도전/지도로)
-                        }
-                        return;
-                    }
-                    if (sound != null) sound.PlayKill(crit);
-                    if (kills >= quota) { OnWaveClear(); return; }
-                }
+                if (e.hp <= 0f) stop = KillEnemy(e, crit);
             }
+            enemies.RemoveAll(x => x.dead);
+        }
+
+        // 적 하나 사망 처리. true = 이번 펄스를 여기서 멈춰야 함(보스 처치로 화면 전환 / 웨이브 클리어).
+        //   round42: 목록에서 바로 빼지 않고 dead 표시만 — 백신 폭발이 다른 적을 연쇄로 죽여도
+        //   AttackPulse 의 인덱스 순회가 꼬이지 않게, 펄스 끝에 RemoveAll 로 한꺼번에 뺀다.
+        bool KillEnemy(Enemy e, bool crit)
+        {
+            if (e.dead) return false;
+            e.dead = true;
+
+            if (e.bomb)
+            {
+                // 백신 캡슐 — 골드·처치 수 없음. 대신 터지면서 주변을 쓸어버린다.
+                Vector3 bpos = e.tr.position;
+                if (e.go) Destroy(e.go);
+                return Detonate(bpos);
+            }
+
+            bool wasBoss = e == boss;
+            int g = Mathf.RoundToInt(wave.GoldAt(e.spawnWave) * (1f + stats.goldMultPercent / 100f));
+            if (e.elite) g *= EliteGoldMul;   // 변이개체 — 반가운 보너스
+            SpawnBurst(e.tr.position, e.baseColor, e.r);
+            SpawnSplat(e.tr.position, e.baseColor, e.r);
+            if (e.elite) SpawnBurst(e.tr.position, new Color(0.95f, 0.12f, 0.14f), e.r * 1.3f);
+            if (wasBoss) { SpawnBurst(e.tr.position, e.baseColor, e.r * 1.6f); SpawnBurst(e.tr.position, Color.white, e.r); }
+            if (goldFloats.Count < 30)
+                goldFloats.Add(new GoldFloat { startWorld = e.tr.position, age = 0f, life = 1.0f, amount = g });
+
+            if (e.go) Destroy(e.go);
+            kills++;
+            cycleKills++;
+            campaignKills++;
+            gold += g;
+            cycleGold += g;
+            campaignGold += g;
+
+            if (wasBoss)
+            {
+                boss = null; bossesKilled++;
+                if (sound != null) sound.Play(Sfx.Win, 1f);
+                stagesCleared = Mathf.Max(stagesCleared, currentStage + 1);
+                maxScore = Mathf.Max(maxScore, stagesCleared * 100);
+                if (stagesCleared >= 2) everRebirth = true;   // 한 번 열리면 환생해도 메타/환생 버튼은 계속 보임
+                mapIndex = currentStage; mapScroll = currentStage;   // 지도로 돌아가면 방금 (재)클리어한 지역이 선택돼 있게
+
+                if (currentStage >= StageConfig.Stages.Length - 1)
+                {
+                    // 8지역 전부 클리어 = 승천. 환생과는 별개 — 여기서만 승천 사다리가 오른다.
+                    winKills = campaignKills; winGold = campaignGold; winTimeSec = campaignElapsedSec;   // Win 화면 스냅샷
+
+                    lastAscendShardGain = ShardGainNow();
+                    metaCurrency += lastAscendShardGain;
+                    bestScore = Mathf.Max(bestScore, maxScore);
+
+                    lastAscendWasFirst = maxAscensionUnlocked == 0;
+                    lastAscendLevelPlayed = ascensionLevel;   // Win 화면에 "이번에 깬 난이도"로 표시
+                    if (ascensionLevel >= maxAscensionUnlocked) maxAscensionUnlocked = ascensionLevel + 1;
+                    ascensionLevel = maxAscensionUnlocked;   // 다음 판 기본값 = 새로 연 상한(화살표로 낮출 수 있음)
+
+                    metaLv.Clear();   // 메타 강화 레벨 초기화 — 대신 승천 레벨만큼 새 노드/더 높은 상한이 열림
+                    RebuildBaseStats();
+                    bought.Clear();
+                    gold = 2000 * MetaLv("m_start");   // 방금 초기화했으니 사실상 0
+                    stats = baseStats.Clone();
+                    GrabRoot();
+                    stagesCleared = 0;
+                    currentStage = 0;
+                    maxScore = 0;
+                    bossSeenMask = 0;
+                    retryCount = 0;
+                    campaignKills = 0; campaignGold = 0; campaignElapsedSec = 0f;   // 다음 승천 사이클 시작
+                    wave.LoadStage(0);
+                    wave.ApplyAscension(ascensionLevel);
+                    SaveProgress();
+                    state = State.Win;
+                }
+                else
+                {
+                    SaveProgress();
+                    resultCleared = true;
+                    state = State.Result;   // 바로 지도로 안 넘기고 선택지 3개(업그레이드/재도전/지도로)
+                }
+                return true;
+            }
+            if (sound != null) sound.PlayKill(crit);
+            // 쿼터를 채워 "실제로 다음 웨이브로 넘어갈 때만" 펄스를 멈춘다.
+            //   round43 버그: 보스 웨이브는 쿼터를 채워도 안 넘어가는데(OnWaveClear 가 그냥 return)
+            //   여기서 매번 true 를 돌려줘서, 보스 옆 잡몹이 하나 죽을 때마다 그 펄스가 끊겼다.
+            //   펄스는 최근에 나온 적부터 도는데 보스는 목록 앞쪽이라 차례가 안 와서, 잡몹이 정리될
+            //   때까지(0.5초쯤) 범위 안의 보스가 안 맞았다.
+            if (kills >= quota && waveNum < wave.totalWaves) { OnWaveClear(); return true; }
+            return false;
+        }
+
+        // 백신 폭발 — 반경 안의 잡몹은 타격 × bombDmgMul, 보스는 최대체력 × BombBossFrac(1%→5%).
+        //   폭발로 죽은 적도 KillEnemy 로 똑같이 처리(골드·처치 수) — 다른 캡슐이 휘말리면 연쇄 폭발.
+        bool Detonate(Vector3 pos)
+        {
+            float rad = BombBaseRadius * stats.bombRadiusMul;
+            var vc = new Color(0.62f, 0.93f, 1f);   // 백신 색(연한 청록)
+            SpawnBurst(pos, Color.white, rad / 3f);   // 링이 정확히 폭발 반경까지 퍼진다(최종 지름 = r0×6)
+            SpawnBurst(pos, vc, rad / 4.2f);
+            SpawnSplat(pos, vc, rad * 0.85f);          // 큼직한 흔적 — 폭발 반경을 거의 덮고 판 끝날 때까지 남는다
+                                                       // (자국 스프라이트가 텍스처를 절반쯤만 채워서 0.42 로는 반경의 40%뿐이었다)
+            if (sound != null) sound.Play(Sfx.Boss, 0.7f, 1.35f);
+
+            float hit = stats.GetHitDamage() * stats.bombDmgMul;
+            for (int j = enemies.Count - 1; j >= 0; j--)
+            {
+                var o = enemies[j];
+                if (o.dead) continue;
+                float dx = o.tr.position.x - pos.x, dy = o.tr.position.y - pos.y;
+                float rr = rad + o.r;
+                if (dx * dx + dy * dy > rr * rr) continue;
+
+                bool isBoss = o == boss;
+                if (isBoss && o.shielded) continue;   // 무적 페이즈는 폭발도 막는다
+                float dmg = isBoss ? o.hpMax * stats.BombBossFrac : hit;
+                o.hp -= dmg;
+                o.flash = 0.12f;
+                if (floaters.Count < 40)
+                    floaters.Add(new Floater
+                    {
+                        world = o.tr.position + Vector3.up * (o.r + 0.1f),
+                        life = 0.6f,
+                        text = Mathf.RoundToInt(dmg).ToString(),
+                        crit = true,
+                    });
+                if (o.hp <= 0f && KillEnemy(o, false)) return true;
+            }
+            return false;
         }
 
         void UpdateCursor()
@@ -1584,7 +2052,7 @@ namespace BlackholeGame
 
         string[] StatLabels => new[]
         { Loc.T("stat.dmg"), Loc.T("stat.crit"), Loc.T("stat.aspd"), Loc.T("stat.range"),
-          Loc.T("stat.gold"), Loc.T("stat.spawn"), Loc.T("stat.time"), Loc.T("stat.startWave") };
+          Loc.T("stat.gold"), Loc.T("stat.spawn"), Loc.T("stat.time"), Loc.T("stat.startWave"), Loc.T("stat.bomb") };
 
         string[] StatValues(Stats s)
         {
@@ -1599,6 +2067,9 @@ namespace BlackholeGame
                 Loc.F("stat.spawnVal", s.spawnIntervalMult.ToString("0.00"), s.spawnCount),
                 Loc.F("stat.timeVal", (wave.baseTimeLimit + s.bonusTimeSec).ToString("0")),
                 $"{Mathf.Max(1, s.startWave)}",
+                s.bombUnlocked
+                    ? Loc.F("stat.bombVal", s.bombDmgMul.ToString("0.0#"), s.bombRadiusMul.ToString("0.0"), s.bombInterval.ToString("0"))
+                    : Loc.T("stat.bombOff"),
             };
         }
 
@@ -1771,6 +2242,7 @@ namespace BlackholeGame
             if (gridTile == null) gridTile = BuildGridTile();
             if (bought == null) bought = new HashSet<string>();          // 직렬화 안 됨
             if (splatSprite == null) splatSprite = BuildSplatSprite();
+            if (nodeRingTex == null) nodeRingTex = BuildNodeRingTex();
             if (stats == null) stats = new Stats();
             if (wave == null) wave = new WaveConfig();
             if (cam == null) return;
@@ -1990,23 +2462,8 @@ namespace BlackholeGame
                 GUI.DrawTexture(new Rect(bx, by, bw * ratio, bh), Texture2D.whiteTexture);
                 GUI.color = gcPrev;
 
-                if (rPix >= 9f)
-                {
-                    string hpTxt = Mathf.CeilToInt(e.hp).ToString("N0");   // 1,234
-                    // 세포 크기 대비 자릿수만큼 폰트 축소 → 셀 밖으로 안 삐져나가고 안 잘림
-                    int fs2 = Mathf.Clamp(Mathf.RoundToInt(rPix * 2.4f / Mathf.Max(2, hpTxt.Length)), 8, 40);
-                    var ns = new GUIStyle(sLabel)
-                    { alignment = TextAnchor.MiddleCenter, fontSize = fs2, fontStyle = FontStyle.Bold };
-                    var ctr = new Vector2(esp.x, ey);
-                    ns.normal.textColor = new Color(0f, 0f, 0f, 0.75f); // 검은 헤일로 (4방향)
-                    var box = FitRect(ns, hpTxt, ctr);
-                    GUI.Label(new Rect(box.x + 1f, box.y + 1f, box.width, box.height), hpTxt, ns);
-                    GUI.Label(new Rect(box.x - 1f, box.y - 1f, box.width, box.height), hpTxt, ns);
-                    GUI.Label(new Rect(box.x + 1f, box.y - 1f, box.width, box.height), hpTxt, ns);
-                    GUI.Label(new Rect(box.x - 1f, box.y + 1f, box.width, box.height), hpTxt, ns);
-                    ns.normal.textColor = new Color(0.98f, 0.98f, 1f);
-                    GUI.Label(box, hpTxt, ns);
-                }
+                // round39: 가운데 남은 체력 숫자가 (특히 작은 종의) 몹 그림을 완전히 가려서 제거 —
+                // 체력바만으로 충분히 보인다.
             }
         }
 
@@ -2600,89 +3057,154 @@ namespace BlackholeGame
         }
 
         // 부모 a → 자식 b 를 ㄱ자(축 정렬) 선으로 연결. 회전을 안 쓰므로 확대/이동해도 노드에 딱 붙는다.
-        static void DrawConnector(Vector2 a, Vector2 b)
+        // 수직/수평 선분 하나 — 회전 없이 축 정렬 사각형으로.
+        //   round41 버그: 예전엔 GUIUtility.RotateAroundPivot 로 돌려 그렸는데, 이 함수는 기준점을
+        //   "화면 좌표"로 받는다(내부에서 GUI.matrix 를 identity 로 되돌린 뒤 pivot 을 해석). 트리는
+        //   확대/이동 행렬 안에서 그리므로 트리 좌표를 넘기면 엉뚱한 점을 기준으로 돌아가서,
+        //   세로선(90°)·왼쪽 가로선(180°)이 배율/이동에 따라 노드에서 떨어져 나갔다.
+        //   선이 전부 직각이 된 지금은 회전 자체가 필요 없다 — 노드와 같은 행렬만 거치므로 어긋날 수 없다.
+        //   w: 선 굵기(트리 좌표). 끝을 반 굵기만큼 늘려 꺾이는 모서리가 빈틈 없이 맞물리게.
+        static void DrawAxisLine(Vector2 a, Vector2 b, float w, Color col)
         {
-            const float t = 3f;
-            float x0 = Mathf.Min(a.x, b.x), x1 = Mathf.Max(a.x, b.x);
-            float y0 = Mathf.Min(a.y, b.y), y1 = Mathf.Max(a.y, b.y);
-            // a의 높이에서 가로로, b의 x에서 세로로 (직각 꺾임)
-            GUI.DrawTexture(new Rect(x0 - t * 0.5f, a.y - t * 0.5f, (x1 - x0) + t, t), Texture2D.whiteTexture);
-            GUI.DrawTexture(new Rect(b.x - t * 0.5f, y0 - t * 0.5f, t, (y1 - y0) + t), Texture2D.whiteTexture);
+            float h = w * 0.5f;
+            Rect r;
+            if (Mathf.Abs(a.x - b.x) < 0.01f)
+            {
+                if (Mathf.Abs(a.y - b.y) < 0.01f) return;
+                r = new Rect(a.x - h, Mathf.Min(a.y, b.y) - h, w, Mathf.Abs(a.y - b.y) + w);
+            }
+            else
+                r = new Rect(Mathf.Min(a.x, b.x) - h, a.y - h, Mathf.Abs(a.x - b.x) + w, w);
+            var gc = GUI.color;
+            GUI.color = col;
+            GUI.DrawTexture(r, Texture2D.whiteTexture);
+            GUI.color = gc;
+        }
+
+        // round41: 직각(ㄱ자) 꺾임 3단 — 부모(a, 아래)에서 수직으로 올라가다 부모·자식 행의 중간
+        //   높이에서 꺾여 자식의 x로 이동한 뒤 다시 수직으로 자식(b)까지. 같은 부모를 둔 형제들은
+        //   전부 같은 중간 높이에서 꺾이므로 "선반(shelf)" 하나에 나란히 매달린 것처럼 보인다.
+        static void DrawConnector(Vector2 a, Vector2 b, float w, Color col)
+        {
+            float midY = (a.y + b.y) * 0.5f;
+            DrawAxisLine(a, new Vector2(a.x, midY), w, col);
+            DrawAxisLine(new Vector2(a.x, midY), new Vector2(b.x, midY), w, col);
+            DrawAxisLine(new Vector2(b.x, midY), b, w, col);
         }
 
         void DrawTree()
         {
-            FillScreen(new Color(0.27f, 0.28f, 0.31f, 1f));
-            DrawGridOverlay(new Color(0.42f, 0.44f, 0.48f, 1f));
+            // round41: 어두운 배경 -> 타이틀/지도와 같은 밝은 유리 톤으로 통일
+            FillScreen(Glass);
+            DrawGridOverlay(GlassGrid);
             var c0 = GUI.color;
 
             // 하단 바 높이 + 좌측 능력치 패널 폭을 먼저 알아야 트리를 남는 공간 중앙에 맞출 수 있다
             float barH = 118f * uiScale;
             Rect statRect = StatPanelRect(barH);   // 우측 상단 능력치 패널
 
-            // firstRing: 코어에서 첫 노드까지의 반경. 9갈래가 40° 간격이라 spacing을 그대로 쓰면
-            //   현(chord) = 2·R·sin20° 이 노드 크기보다 작아져 가운데에서 칩이 서로 겹친다.
-            //   R=104 → 현 ≈ 71px, 노드 40px → 좌우 31px 여유.
-            const float nodeSz = 40f, spacing = 200f, firstRing = 357f;   // 겹침 신고 — 간격을 훨씬 넓게
+            const float nodeSz = 80f, rowSpacing = 230f, colUnit = 120f;   // round41: 노드 2배 확대 요청 — 열 간격도 겹치지 않게 같이 키움
 
-            Vector2 pivot = new Vector2(Screen.width * 0.5f, (Screen.height - barH) * 0.5f);
+            // round41: 부채꼴로 뻗던 걸 걷어내고 "티어 = 한 행"인 계층형(org-chart) 레이아웃으로 —
+            //   같은 부모의 자식들이 한 선반(shelf)처럼 가로로 늘어서고, 세분화될수록(자식이 많을수록)
+            //   그 행이 넓어지며 위로 쌓인다. 고전적인 재귀 서브트리-너비 배분 알고리즘.
+            float availTop = Screen.height - barH;
+            // round43: 가로는 고정 — 가지 14개 전부가 능력치 패널 왼쪽 공간에 딱 들어오는 배율로 두고,
+            //   확대/축소 대신 휠·우클릭 드래그로 위아래 스크롤만 한다(사용자 요청).
+            Rect area = new Rect(16f, 16f, Mathf.Max(240f, statRect.xMin - 32f), Mathf.Max(120f, availTop - 32f));
+            Vector2 pivot = new Vector2(area.center.x, availTop - 20f);   // y 는 배율 계산 뒤 다시 잡는다
+
+            var childrenOf = new Dictionary<string, List<UpgradeNode>>();
+            UpgradeNode rootNode = null;
+            foreach (var n in nodes)
+            {
+                if (n.IsRoot) { rootNode = n; continue; }
+                if (!childrenOf.TryGetValue(n.parentId, out var list)) { list = new List<UpgradeNode>(); childrenOf[n.parentId] = list; }
+                list.Add(n);
+            }
+
+            var depthOf = new Dictionary<string, int>();
+            var weightOf = new Dictionary<string, int>();
+            // 가중치 = 그 아래 "잎(가지 끝)" 개수 — 가지 하나가 차지하는 가로 칸 수.
+            //   round43: 전체 트리 기준(드러난 것만이 아니라). 스크롤 방식에선 열이 제자리에 있어야
+            //   한다 — 드러난 것 기준이면 노드를 살 때마다 가지들이 옆으로 밀려 움직였다.
+            int ComputeDepthWeight(UpgradeNode n, int depth)
+            {
+                depthOf[n.id] = depth;
+                int w = 0;
+                if (childrenOf.TryGetValue(n.id, out var kids))
+                    foreach (var k in kids) w += ComputeDepthWeight(k, depth + 1);
+                if (w == 0) w = 1;   // 가지 끝 = 한 칸
+                weightOf[n.id] = w;
+                return w;
+            }
+            if (rootNode != null) ComputeDepthWeight(rootNode, 0);
+
+            var xOf = new Dictionary<string, float>();
+            void AssignX(UpgradeNode n, float xMin, float xMax)
+            {
+                xOf[n.id] = (xMin + xMax) * 0.5f;
+                if (!childrenOf.TryGetValue(n.id, out var kids)) return;
+                int total = 0;
+                foreach (var k in kids) total += weightOf[k.id];
+                // 자식이 전부 아직 안 드러났어도(가중치 합 0) 위치는 줘야 한다 — 안 그러면 아래 npos
+                // 루프가 xOf 를 못 찾아 KeyNotFoundException. 그땐 균등 분배(어차피 안 그려짐).
+                float cursor = xMin;
+                foreach (var k in kids)
+                {
+                    float w = total > 0 ? (xMax - xMin) * weightOf[k.id] / total : (xMax - xMin) / kids.Count;
+                    AssignX(k, cursor, cursor + w);
+                    cursor += w;
+                }
+            }
+            if (rootNode != null)
+            {
+                float rootHalfW = weightOf[rootNode.id] * colUnit * 0.5f;
+                AssignX(rootNode, -rootHalfW, rootHalfW);
+            }
+
+            // 배율 = 전체 가지 폭이 area 가로에 딱 맞게(좌우 여백 = 노드 반 개 + 약간). 고정.
+            float fullW = (rootNode != null ? weightOf[rootNode.id] : 1) * colUnit;
+            float zoom = Mathf.Clamp(area.width / (fullW + nodeSz * 0.5f), 0.2f, 1.6f);
+            pivot.y = availTop - 22f - nodeSz * 0.5f * zoom;   // 스크롤 맨 아래에서 코어가 하단 바 바로 위
 
             npos.Clear();
             foreach (var n in nodes)
-                npos[n.id] = n.IsRoot ? pivot
-                           : npos[n.parentId] + n.dir * (n.parentId == UpgradeTree.RootId ? firstRing : spacing);
+                npos[n.id] = new Vector2(pivot.x + xOf[n.id], pivot.y - depthOf[n.id] * rowSpacing);
 
-            // 트리 전체가 들어가는 배율(= "화면 리셋" 기본값). 노드 수가 바뀌어도 알아서 맞는다.
-            float maxR = 0f;
-            foreach (var kv in npos) { float d = (kv.Value - pivot).magnitude; if (d > maxR) maxR = d; }
-            maxR += nodeSz * 0.5f;
-            // 화면 중앙 정렬은 유지하고, 반경이 좌측 패널을 침범하지 않는 선까지만 키운다
-            float availW = Screen.width * 0.5f - 16f;
-            float availH = (Screen.height - barH) * 0.5f - 16f;
-            // 트리는 원형이라, 중심에서 패널 사각형까지의 거리보다 반경이 크면 겹친다.
-            float dx = Mathf.Max(0f, Mathf.Max(statRect.xMin - pivot.x, pivot.x - statRect.xMax));
-            float dy = Mathf.Max(0f, Mathf.Max(statRect.yMin - pivot.y, pivot.y - statRect.yMax));
-            float dPanel = Mathf.Sqrt(dx * dx + dy * dy) - 14f;
-            float lim = Mathf.Min(availW, availH);
-            if (dPanel > 40f) lim = Mathf.Min(lim, dPanel);   // 창이 아주 작아 중심이 패널에 닿으면 무시
-            float fitZoom = Mathf.Clamp(lim / Mathf.Max(1f, maxR), 0.10f, 2.2f);
-            if (treeZoom <= 0f)
-            {
-                // 열 때는 '지금까지 구매한 노드'만 화면에 딱 맞게 확대 — 다음에 살 수 있는 노드는
-                // 미리 보여주지 않는다(살 노드는 휠/드래그로 찾아가게). fit-all 아님.
-                Vector2 c = pivot; int cnt = 0;
-                foreach (var n in nodes)
-                    if (n.IsRoot || IsBought(n.id)) { c += npos[n.id]; cnt++; }
-                if (cnt > 0) c = (c - pivot) / cnt; else c = pivot;
+            // 위로는 "지금까지 드러난 것"까지만 올라간다 — 뚫을수록 더 위까지 볼 수 있다(round41 규칙 유지).
+            float minY = pivot.y;
+            foreach (var n in nodes)
+                if (IsRevealed(n) && npos[n.id].y < minY) minY = npos[n.id].y;   // 화면 좌표는 위로 갈수록 y가 작아짐
+            float topScreen0 = pivot.y + (minY - pivot.y) * zoom;          // 스크롤 0 일 때 가장 높은 노드의 화면 y
+            float maxPan = Mathf.Max(0f, (area.yMin + nodeSz * 0.5f * zoom + 8f) - topScreen0);
 
-                float boughtR = 0f;
-                foreach (var n in nodes)
-                    if (IsRevealed(n)) { float d = (npos[n.id] - c).magnitude; if (d > boughtR) boughtR = d; }
-                // 산 게 코어뿐이면 boughtR 이 0 이라 lim/boughtR 이 상한(2.0)까지 튀어서 화면이 확 확대되고
-                // 모서리가 잘려 보였다(새로 시작/환생/변이 직후가 전부 이 상태). 두 가지로 바닥을 깐다:
-                //   - 산 노드 바깥으로 노드 간격만큼 여유를 둬서 "다음에 살 노드"가 화면 가장자리에 걸치게
-                //   - 최소한 첫 링(코어에서 뻗는 십자 4노드)까지는 항상 담기게
-                boughtR = Mathf.Max(boughtR + spacing * 0.6f, firstRing + nodeSz);
-
-                treeZoom = Mathf.Clamp(lim / Mathf.Max(1f, boughtR), fitZoom, 2.0f);
-                treePan = -(c - pivot) * treeZoom;
-            }
+            if (treeZoom <= 0f)   // 들어올 때/"화면 리셋" — 지금 살 수 있는 맨 위(경계)가 보이게 끝까지 올려둔다
+                treePan = new Vector2(0f, maxPan);
+            treeZoom = zoom;
 
             Event ev = Event.current;
             if (ev.type == EventType.ScrollWheel)
-            { treeZoom = Mathf.Clamp(treeZoom * (1f - ev.delta.y * 0.06f), fitZoom, 2.2f); ev.Use(); }   // fitZoom(전체가 딱 들어오는 배율) 밑으로는 더 안 줄어들게
-            else if (ev.type == EventType.MouseDrag && ev.button == 1)
-            { treePan += ev.delta; ev.Use(); }
+            { treePan.y -= ev.delta.y * 45f; ev.Use(); }   // 휠 위로 = 트리의 위쪽(더 뚫은 곳)으로
+            else if (ev.type == EventType.MouseDrag && (ev.button == 1 || ev.button == 2))
+            { treePan.y += ev.delta.y; ev.Use(); }
+            treePan = new Vector2(0f, Mathf.Clamp(treePan.y, 0f, maxPan));
 
             Matrix4x4 saved = GUI.matrix;
             GUIUtility.ScaleAroundPivot(new Vector2(treeZoom, treeZoom), pivot);
             GUI.matrix = Matrix4x4.Translate(new Vector3(treePan.x, treePan.y, 0f)) * GUI.matrix;
 
-            // 연결선 — 드러난 노드까지만(아직 안 드러난 가지는 선도 안 그린다)
-            GUI.color = new Color(0.56f, 0.62f, 0.58f, 0.55f);
-            foreach (var n in nodes)
-                if (!n.IsRoot && IsRevealed(n)) DrawConnector(npos[n.parentId], npos[n.id]);
-            GUI.color = c0;
+            // 연결선 — 드러난 노드까지만(아직 안 드러난 가지는 선도 안 그린다).
+            //   기본은 검정, 그 노드를 뚫으면 초록. 형제끼리 부모의 세로선·가로 선반을 공유하므로
+            //   검정을 먼저 다 그리고 초록을 위에 덮어야 뚫은 경로가 중간에 끊겨 보이지 않는다.
+            //   굵기는 트리 좌표 5 — 단, 축소해도 화면에서 1.5px 밑으로는 안 가늘어지게.
+            float lineW = Mathf.Max(5f, 1.5f / Mathf.Max(0.01f, treeZoom));
+            Color lineOff = new Color(0.05f, 0.05f, 0.06f, 0.85f);   // 검정 — 아직
+            Color lineOn  = new Color(0.10f, 0.62f, 0.18f, 1f);      // 초록 — 뚫음
+            for (int pass = 0; pass < 2; pass++)
+                foreach (var n in nodes)
+                    if (!n.IsRoot && IsRevealed(n) && IsBought(n.id) == (pass == 1))
+                        DrawConnector(npos[n.parentId], npos[n.id], lineW, pass == 1 ? lineOn : lineOff);
 
             // 노드 — 아이콘만. 효과는 마우스 오버 툴팁으로.
             UpgradeNode hovered = null;
@@ -2696,24 +3218,29 @@ namespace BlackholeGame
                 bool pathAfford = by && gold >= n.cost;    // 지금 이 노드를 살 돈이 있음
 
                 bool locked = n.tier > stagesCleared;
-                //  구매함 = 파란색(가득 채움+테두리)  ·  지금 살 수 있음 = 초록  ·  살 순 있으나 골드 부족 = 갈색  ·  잠김 = 어두움
-                GUI.color = locked ? new Color(0.10f, 0.10f, 0.12f, 0.9f)
-                         : bt ? new Color(0.16f, 0.40f, 0.66f, 1f)
-                         : pathAfford ? new Color(0.16f, 0.44f, 0.24f, 1f)
-                         : by ? new Color(0.40f, 0.30f, 0.14f, 1f)
-                         : new Color(0.13f, 0.14f, 0.16f, 1f);
-                GUI.DrawTexture(rect, Texture2D.whiteTexture);
+                // round40: 사각 칩 -> 원형 네온 뱃지. 안쪽 부드러운 원(discSprite) + 바깥 글로우 링(nodeRingTex).
+                //  구매함 = 하늘색  ·  지금 살 수 있음(돈 있음) = 초록  ·  살 순 있으나 골드 부족 = 갈색  ·  잠김 = 어두움
+                Color fillCol = locked ? new Color(0.08f, 0.08f, 0.10f, 0.92f)
+                             : bt ? new Color(0.10f, 0.22f, 0.34f, 1f)
+                             : pathAfford ? new Color(0.09f, 0.22f, 0.13f, 1f)
+                             : by ? new Color(0.24f, 0.17f, 0.07f, 1f)
+                             : new Color(0.10f, 0.10f, 0.12f, 1f);
+                // round41: 밝은 배경에서도 또렷하도록 링 색도 짙게 — 예전 파스텔톤은 Glass 배경에
+                // 묻혀서 거의 안 보였다.
+                Color glowCol = bt ? new Color(0.06f, 0.32f, 0.62f, 1f)      // 짙은 하늘색(구매함)
+                             : pathAfford ? new Color(0.08f, 0.42f, 0.20f, 1f)  // 짙은 초록(살 수 있음)
+                             : by ? new Color(0.62f, 0.34f, 0.06f, 1f)          // 짙은 주황(부족)
+                             : new Color(0.40f, 0.42f, 0.46f, 0.8f);            // 짙은 회색(잠김)
+                if (discSprite != null)
                 {
-                    Color border = bt ? new Color(0.60f, 0.82f, 1f)          // 구매함 = 밝은 하늘색 테두리
-                                 : pathAfford ? new Color(0.49f, 0.92f, 0.62f)
-                                 : by ? new Color(0.95f, 0.68f, 0.42f)
-                                 : new Color(0.34f, 0.36f, 0.40f);
-                    float bt2 = bt ? 3f : 2f;                                 // 구매함은 더 굵게
-                    GUI.color = border;
-                    GUI.DrawTexture(new Rect(rect.x, rect.y, rect.width, bt2), Texture2D.whiteTexture);
-                    GUI.DrawTexture(new Rect(rect.x, rect.yMax - bt2, rect.width, bt2), Texture2D.whiteTexture);
-                    GUI.DrawTexture(new Rect(rect.x, rect.y, bt2, rect.height), Texture2D.whiteTexture);
-                    GUI.DrawTexture(new Rect(rect.xMax - bt2, rect.y, bt2, rect.height), Texture2D.whiteTexture);
+                    GUI.color = fillCol;
+                    GUI.DrawTexture(rect, discSprite.texture);
+                }
+                if (nodeRingTex != null)
+                {
+                    float ringPad = nodeSz * (bt ? 0.06f : 0.10f);   // 구매함은 글로우가 더 두꺼워 보이게
+                    GUI.color = glowCol;
+                    GUI.DrawTexture(new Rect(rect.x - ringPad, rect.y - ringPad, rect.width + ringPad * 2f, rect.height + ringPad * 2f), nodeRingTex);
                 }
 
                 var tex = (iconTex != null && iconTex.TryGetValue(n.icon, out var it)) ? it : (iconTex != null ? iconTex["dot"] : null);
@@ -2777,6 +3304,15 @@ namespace BlackholeGame
             float groupW = resetBtnW + btnGap + mapBtnW + (showRetry ? retryBtnW + btnGap : 0f);
             GUI.BeginGroup(new Rect(0f, Screen.height - barH, Screen.width, barH));
             {
+                // round41: 배경을 밝은 Glass 로 바꾸자 노란 보유금·흰 도움말이 거의 안 보였고, 트리 선도
+                //   이 위로 지나갔다 — 능력치 패널과 같은 어두운 판을 깔아 글씨를 살리고 트리를 가린다.
+                var gcBar = GUI.color;
+                GUI.color = new Color(0.13f, 0.14f, 0.17f, 0.92f);
+                GUI.DrawTexture(new Rect(0f, 0f, Screen.width, barH), Texture2D.whiteTexture);
+                GUI.color = new Color(0.56f, 0.62f, 0.58f, 0.55f);
+                GUI.DrawTexture(new Rect(0f, 0f, Screen.width, 2f), Texture2D.whiteTexture);
+                GUI.color = gcBar;
+
                 var goldS = new GUIStyle(sGold) { alignment = TextAnchor.UpperLeft, fontSize = Mathf.RoundToInt(18f * uiScale), fontStyle = FontStyle.Bold };
                 GUI.Label(new Rect(margin, 8f, 520f * uiScale, 30f * uiScale), Loc.F("res.have", gold.ToString("N0")), goldS);
 

@@ -69,14 +69,22 @@ class Stats:
         self.cursorRadius = 0.45
         self.bonusTimeSec = 0.0
         self.spawnIntervalMult = 1.0
-        self.spawnCount = 2
+        self.spawnCount = 1          # round42: 기본 1 (노드로 최대 10)
         self.startWave = 1
         self.autoAttack = False
+        # round42 백신 — GameConfig.cs Stats 와 동일
+        self.bombUnlocked = False
+        self.bombDmgMul = 2.0
+        self.bombRadiusMul = 1.0
+        self.bombInterval = 20.0
         for k, v in kw.items():
             setattr(self, k, v)
 
     def hit(self):
         return (self.baseAttack + self.flatBonus) * (1 + self.multBucketPercent / 100.0)
+
+    def bomb_boss_frac(self):
+        return 0.01 + min(1.0, max(0.0, (self.bombDmgMul - 2.0) / 3.0)) * 0.04
 
     def clone(self):
         s = Stats()
@@ -85,10 +93,19 @@ class Stats:
 
 
 # ---------------------------------------------------------------- sim
-class Run:
-    """One cycle: StartRun() .. timeout or boss kill."""
+# round42: GameManager 상수 미러
+ELITE_CHANCE, ELITE_HP, ELITE_GOLD = 0.07, 3.0, 5
+BOMB_BASE_R, BOMB_MAX_ALIVE, BOMB_SIZE, BOMB_HP = 2.6, 2, 1.9, 0.6
 
-    CAP = 400  # array capacity
+
+class Run:
+    """One cycle: StartRun() .. timeout or boss kill.
+
+    round42: C# AttackPulse 가 "죽은 적은 dead 표시만, 펄스 끝에 RemoveAll" 로 바뀌었다(백신 폭발 연쇄 대비).
+    여기서도 똑같이 — 펄스 안에서는 인덱스가 안 움직이고, 펄스가 끝나면 _compact() 로 한꺼번에 뺀다.
+    """
+
+    CAP = 420  # array capacity (maxEnemies 150 + 캡슐 여유)
 
     def __init__(self, stats, wcfg, rng, dt=1 / 60.0, cursor_speed=10.0, react=0.18,
                  aim_jitter=0.0):
@@ -102,9 +119,12 @@ class Run:
         self.vx = np.zeros(C); self.vy = np.zeros(C)
         self.er = np.zeros(C); self.hp = np.zeros(C)
         self.sw = np.zeros(C, dtype=np.int32)
+        self.el = np.zeros(C, dtype=bool)     # 변이개체
+        self.bm = np.zeros(C, dtype=bool)     # 백신 캡슐
+        self.dead = np.zeros(C, dtype=bool)
         self.n = 0
 
-    def _spawn(self, wave, boss=False):
+    def _spawn(self, wave, boss=False, bomb=False):
         if boss:
             if self.n >= self.CAP:
                 return
@@ -115,31 +135,41 @@ class Run:
             self.er[i] = 2.2
             self.hp[i] = self.w.bossHp
             self.sw[i] = self.w.totalWaves
+            self.el[i] = False; self.bm[i] = False; self.dead[i] = False
             self.boss_idx = i
             return
-        if self.n >= self.w.maxEnemies or self.n >= self.CAP:
+        cap = self.w.maxEnemies + (BOMB_MAX_ALIVE if bomb else 0)
+        if self.n >= cap or self.n >= self.CAP:
             return
         i = self.n; self.n += 1
-        size = self.rng.uniform(self.w.sizeLo, self.w.sizeHi)
+        elite = (not bomb) and self.rng.random() < ELITE_CHANCE
+        size = BOMB_SIZE if bomb else self.rng.uniform(self.w.sizeLo, self.w.sizeHi)
         r = self.w.enemyRadius * size
         self.er[i] = r
-        self.hp[i] = math.ceil(self.w.hp(wave) * size)
+        self.hp[i] = math.ceil(self.w.hp(wave) * size * (ELITE_HP if elite else BOMB_HP if bomb else 1.0))
         self.sw[i] = wave
+        self.el[i] = elite; self.bm[i] = bomb; self.dead[i] = False
         self.px[i] = self.rng.uniform(XMIN + r, XMAX - r)
         self.py[i] = self.rng.uniform(YMIN + r, YMAX - r)
         sp = self.rng.uniform(0.25, 0.65)
         a = self.rng.random() * 2 * math.pi
         self.vx[i] = math.cos(a) * sp; self.vy[i] = math.sin(a) * sp
 
-    def _remove(self, i):
-        """Mirror List.RemoveAt(i): shift the tail down by one."""
-        last = self.n - 1
-        if i != last:
-            for arr in (self.px, self.py, self.vx, self.vy, self.er, self.hp, self.sw):
-                arr[i:last] = arr[i + 1:last + 1]
-            if getattr(self, "boss_idx", -1) > i:
-                self.boss_idx -= 1
-        self.n = last
+    def _compact(self):
+        """C# enemies.RemoveAll(x => x.dead) — 순서 유지."""
+        n = self.n
+        keep = np.nonzero(~self.dead[:n])[0]
+        if len(keep) == n:
+            return
+        bi = getattr(self, "boss_idx", -1)
+        new_bi = -1
+        if bi >= 0 and not self.dead[bi]:
+            new_bi = int(np.searchsorted(keep, bi))
+        for arr in (self.px, self.py, self.vx, self.vy, self.er, self.hp, self.sw, self.el, self.bm, self.dead):
+            arr[:len(keep)] = arr[keep]
+        self.dead[:len(keep)] = False
+        self.n = len(keep)
+        self.boss_idx = new_bi
 
     def _pick_target(self):
         n = self.n
@@ -156,6 +186,13 @@ class Run:
         d2 = dx * dx + dy * dy
         inside = d2 <= (R[:, None] ** 2)
         cnt = inside.sum(axis=0).astype(float)
+        # 백신 캡슐은 "터뜨리면 폭발 반경 안의 적 수"만큼의 가치 — 사람도 캡슐이 떼 근처면 노린다
+        B = self.bm[:n]
+        if B.any():
+            brad = BOMB_BASE_R * self.s.bombRadiusMul
+            within = d2 <= ((brad + self.er[:n])[:, None] ** 2)
+            bval = within.sum(axis=0).astype(float)
+            cnt = np.where(B, np.maximum(cnt, bval), cnt)
         # discount travel time so the cursor doesn't teleport across the field
         dist = np.hypot(X - self.cx, Y - self.cy)
         score = cnt / (1.0 + (dist / self.cursor_speed) / 0.45)
@@ -171,41 +208,95 @@ class Run:
         s, w, rng = self.s, self.w, self.rng
         self._alloc()
         self.boss_idx = -1
-        wave = min(max(s.startWave, 1), w.totalWaves)
+        st = {"wave": min(max(s.startWave, 1), w.totalWaves - 1),   # C#: 보스 웨이브로는 시작 안 함
+              "kills": 0, "total_kills": 0, "total_gold": 0, "won": False}
+        st["quota"] = w.quota(st["wave"])
+        st["si"] = w.spawn_interval(st["wave"]) * s.spawnIntervalMult
         time_left = w.baseTimeLimit + s.bonusTimeSec
-        kills = 0
-        quota = w.quota(wave)
-        spawn_interval = w.spawn_interval(wave) * s.spawnIntervalMult
-        atk_t = 0.0; spawn_t = 0.0; react_t = 0.0
+        atk_t = 0.0; spawn_t = 0.0; react_t = 0.0; bomb_t = 0.0
         self.cx = self.cy = 0.0
         self.tx = self.ty = 0.0
-        total_kills = 0; total_gold = 0
         hit = s.hit()
         gmul = 1 + s.goldMultPercent / 100.0
-        per_spawn = max(2, s.spawnCount)
-        won = False
+        per_spawn = max(1, s.spawnCount)
         elapsed = 0.0
 
-        if wave >= w.totalWaves:
-            self._spawn(wave, boss=True)
+        def kill(i, crit):
+            """C# KillEnemy — True = 펄스 중단(보스 처치/웨이브 클리어)."""
+            if self.dead[i]:
+                return False
+            self.dead[i] = True
+            if self.bm[i]:
+                return detonate(self.px[i], self.py[i])
+            was_boss = (i == self.boss_idx)
+            g = round(w.gold(int(self.sw[i])) * gmul)
+            if self.el[i]:
+                g *= ELITE_GOLD
+            st["total_gold"] += g
+            st["kills"] += 1; st["total_kills"] += 1
+            if was_boss:
+                st["won"] = True
+                return True
+            # round43: 실제로 웨이브가 넘어갈 때만 펄스 중단 — 보스 웨이브에서 잡몹 킬마다 펄스가 끊겨
+            #   보스가 안 맞던 버그(C# KillEnemy 와 같이 고침)
+            if st["kills"] >= st["quota"] and st["wave"] < w.totalWaves:
+                st["wave"] += 1
+                st["kills"] = 0
+                st["quota"] = w.quota(st["wave"])
+                st["si"] = w.spawn_interval(st["wave"]) * s.spawnIntervalMult
+                if st["wave"] >= w.totalWaves and self.boss_idx < 0:
+                    self._spawn(st["wave"], boss=True)
+                return True
+            return False
+
+        def detonate(x, y):
+            rad = BOMB_BASE_R * s.bombRadiusMul
+            bhit = hit * s.bombDmgMul
+            for j in range(self.n - 1, -1, -1):
+                if self.dead[j]:
+                    continue
+                dx = self.px[j] - x; dy = self.py[j] - y
+                rr = rad + self.er[j]
+                if dx * dx + dy * dy > rr * rr:
+                    continue
+                if j == self.boss_idx:
+                    self.hp[j] -= w.bossHp * s.bomb_boss_frac()
+                else:
+                    self.hp[j] -= bhit
+                if self.hp[j] <= 0 and kill(j, False):
+                    return True
+            return False
+
+        if st["wave"] >= w.totalWaves:
+            self._spawn(st["wave"], boss=True)
         else:
             for _ in range(w.startEnemies):
-                self._spawn(wave)
+                self._spawn(st["wave"])
 
         dt = self.dt
         while time_left > 0:
             time_left -= dt; elapsed += dt
 
             # --- spawn  (round36: 보스 웨이브에도 계속 나온다. 간격만 bossWaveSpawnSlow 배)
-            si = spawn_interval * (w.bossWaveSpawnSlow if wave >= w.totalWaves else 1.0)
+            si = st["si"] * (w.bossWaveSpawnSlow if st["wave"] >= w.totalWaves else 1.0)
             spawn_t += dt
             g = 0
             while spawn_t >= si and g < 24:
                 spawn_t -= si; g += 1
                 for _ in range(per_spawn):
-                    self._spawn(wave)
+                    self._spawn(st["wave"])
             if self.n >= w.maxEnemies:
                 spawn_t = min(spawn_t, si)
+
+            # --- 백신 캡슐 (노드로 해금된 뒤부터, 자체 타이머)
+            if s.bombUnlocked:
+                bomb_t += dt
+                if bomb_t >= s.bombInterval:
+                    alive = int(self.bm[:self.n].sum())
+                    if alive < BOMB_MAX_ALIVE:
+                        self._spawn(st["wave"], bomb=True); bomb_t = 0.0
+                    else:
+                        bomb_t = s.bombInterval
 
             # --- move + bounce (vectorized)
             n = self.n
@@ -252,32 +343,19 @@ class Run:
                 # AttackPulse walks i = count-1 .. 0
                 for i in inrange[::-1]:
                     i = int(i)
-                    dmg = hit * (s.critMult if rng.random() < s.critChance else 1.0)
-                    self.hp[i] -= dmg
-                    if self.hp[i] <= 0:
-                        was_boss = (i == self.boss_idx)
-                        total_gold += round(w.gold(int(self.sw[i])) * gmul)
-                        self._remove(i)
-                        kills += 1; total_kills += 1
-                        if was_boss:
-                            self.boss_idx = -1
-                            won = True
-                            break
-                        if kills >= quota:
-                            if wave < w.totalWaves:
-                                wave += 1
-                                kills = 0
-                                quota = w.quota(wave)
-                                spawn_interval = w.spawn_interval(wave) * s.spawnIntervalMult
-                                if wave >= w.totalWaves and self.boss_idx < 0:
-                                    self._spawn(wave, boss=True)
-                            break
-                if won:
+                    if self.dead[i]:
+                        continue
+                    crit = rng.random() < s.critChance
+                    self.hp[i] -= hit * (s.critMult if crit else 1.0)
+                    if self.hp[i] <= 0 and kill(i, crit):
+                        break
+                self._compact()
+                if st["won"]:
                     break
-            if won:
+            if st["won"]:
                 break
 
-        return dict(kills=total_kills, gold=total_gold, wave=wave, won=won,
+        return dict(kills=st["total_kills"], gold=st["total_gold"], wave=st["wave"], won=st["won"],
                     elapsed=elapsed, enemies_left=self.n)
 
 
