@@ -37,7 +37,9 @@ def run(cmd):
 
 
 text = LOC.read_text(encoding="utf-8") + EXTRA
-need = sorted(set(ch for ch in text if ord(ch) > 0x20))
+# round45 버그: `> 0x20` 이라 공백(U+0020)이 빠졌다. 공백 글리프가 없으면 IMGUI 가 거기서 줄을
+#   끊어버려 "새로 시작" 이 "새로" 로만 보인다. 탭/개행만 빼고 공백은 반드시 넣는다.
+need = sorted(set(ch for ch in text if ord(ch) >= 0x20))
 remaining = list(need)
 parts = []
 for i, src in enumerate(CHAIN):
