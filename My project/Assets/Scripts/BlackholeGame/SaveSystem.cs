@@ -14,7 +14,7 @@ namespace BlackholeGame
         public int version = 1;
         public int stagesCleared;
         public int currentStage;
-        public int gold;
+        public long gold;   // round44: long (JsonUtility 지원)
         public int retryCount;
         public int maxScore;          // 프레스티지 보상 기준 = stagesCleared*100 + 최고 도달 웨이브
         public int bossSeenMask;      // 보스 웨이브까지 도달한 지역 비트마스크 (지도에서 보스 실루엣 → 실제 보스)
@@ -27,6 +27,7 @@ namespace BlackholeGame
         public int maxAscensionUnlocked;  // 지금까지 열어본 최고 승천치 — 선택 상한, 8지역 클리어로만 오름
         public int metaCurrency;
         public List<string> metaBought = new List<string>();
+        public List<string> repLv = new List<string>();   // round44: 반복 강화 레벨 "id:lv" (환생·새 게임이면 리셋)
 
         public bool HasProgress => stagesCleared > 0 || bought.Count > 0 || gold > 0;
     }

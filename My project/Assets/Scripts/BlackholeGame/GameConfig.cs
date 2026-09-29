@@ -81,7 +81,7 @@ namespace BlackholeGame
         public int startEnemies = 14;
         public int totalWaves = 40;            // 마지막 = 보스 웨이브
         public int maxEnemies = 150;
-        public int bossHp = 1000000;           // 40웨이브 보스 체력. 처치 = 엔딩
+        public float bossHp = 1000000f;        // 보스 체력. round44: float — 8지역 보스 × 변이 배율이 int(21억)를 넘을 수 있다
 
         public float enemyRadius = 0.28f;      // 적 기본 반지름(월드 단위)
         public Vector2 enemySizeRange = new Vector2(1f, 2f); // 스폰 시 반지름 배율 랜덤 범위 (기본 1~2배)
@@ -148,7 +148,7 @@ namespace BlackholeGame
         {
             if (level <= 0) return;
             baseEnemyHp *= Mathf.Pow(AscMobHpMul, level);
-            bossHp = Mathf.RoundToInt(bossHp * Mathf.Pow(AscBossHpMul, level));
+            bossHp = Mathf.Round(bossHp * Mathf.Pow(AscBossHpMul, level));
             goldRate *= Mathf.Pow(AscGoldMul, level);
         }
     }
@@ -166,13 +166,13 @@ namespace BlackholeGame
         public readonly float timeLimit;
         public readonly float enemyHp0;
         public readonly float hpGrowth;
-        public readonly int bossHp;
+        public readonly long bossHp;   // round44: long — 8지역 보스가 20억을 넘는다
         public readonly int quota0;
         public readonly int startEnemies;
         public readonly float goldRate;
         public readonly Color theme;
 
-        StageConfig(int i, string n, int w, float t, float hp0, float hpg, int boss,
+        StageConfig(int i, string n, int w, float t, float hp0, float hpg, long boss,
                     int q0, int se, float gr, Color th)
         {
             index = i; name = n; waves = w; timeLimit = t; enemyHp0 = hp0; hpGrowth = hpg;
@@ -194,18 +194,20 @@ namespace BlackholeGame
         //   ×1/1.8/3/3/3/3.5/4.2/9 — 지역 k 클리어 때 티어 k-1 을 30~60% 사게 (balance_sim/tune42.py).
         // round43: 보스 체력만 추가로 ×1/1.3/1.3/3.2/4/5/6/8 — 보스전 잡몹 킬마다 펄스가 끊겨 보스가 안 맞던
         //   버그를 고치자 보스전이 크게 짧아졌다(시뮬 5.3h → 2.9h). 잡몹 체력은 그대로.
+        // round44: 지역 골드 배율 = '골드/적 체력' 효율이 지역마다 ×1.2 가 되게(예전엔 2지역이 1지역의 0.2배,
+        //   8지역은 0.012배라 올라갈수록 벌이가 줄었다). 체력은 150노드 트리에 맞춰 balance_sim/autotune44(b)로.
         public static readonly StageConfig[] Stages =
         {
             // 1지역만 "튜토리얼 보정" — 잡몹 30, 골드배율 1.0, 보스 1400. (round37: 초반 골드 수급이
             // 막혀 첫 노드조차 못 사던 문제. 이 보정으로 1판마다 노드를 사고 5판이면 클리어된다.)
-            new StageConfig(0, "s.0",  4,  28f,    30f, 1.130f,       1400,  4,  8, 1.00f, new Color(0.42f,0.72f,0.46f)),
-            new StageConfig(1, "s.1",  5,  34f,   166f, 1.136f,      15678,  5,  9, 0.70f, new Color(0.36f,0.62f,0.70f)),
-            new StageConfig(2, "s.2",  7,  44f,   735f, 1.142f,      88530,  6, 10, 0.82f, new Color(0.60f,0.54f,0.36f)),
-            new StageConfig(3, "s.3",  9,  54f,   630f, 1.148f,     634560,  7, 11, 0.95f, new Color(0.40f,0.46f,0.60f)),
-            new StageConfig(4, "s.4", 11,  64f,   615f, 1.153f,    2257200,  8, 12, 1.05f, new Color(0.30f,0.58f,0.62f)),
-            new StageConfig(5, "s.5", 13,  74f,   665f, 1.158f,    9303000,  9, 13, 1.15f, new Color(0.34f,0.56f,0.34f)),
-            new StageConfig(6, "s.6", 15,  88f,  1407f, 1.163f,   38921400, 10, 14, 1.30f, new Color(0.62f,0.66f,0.72f)),
-            new StageConfig(7, "s.7", 18, 108f,  6345f, 1.168f,  338061600, 11, 15, 1.55f, new Color(0.66f,0.30f,0.34f)),
+            new StageConfig(0, "s.0",  4,  28f,      30f, 1.130f,       1400,  4,  8,   1.00f, new Color(0.42f,0.72f,0.46f)),
+            new StageConfig(1, "s.1",  5,  34f,     303f, 1.136f,      28573,  5,  9,   7.56f, new Color(0.36f,0.62f,0.70f)),
+            new StageConfig(2, "s.2",  7,  44f,    1808f, 1.142f,     217817,  6, 10,  38.94f, new Color(0.60f,0.54f,0.36f)),
+            new StageConfig(3, "s.3",  9,  54f,    1550f, 1.148f,    1561256,  7, 11,  34.13f, new Color(0.40f,0.46f,0.60f)),
+            new StageConfig(4, "s.4", 11,  64f,    2758f, 1.153f,   10121360,  8, 12,  74.01f, new Color(0.30f,0.58f,0.62f)),
+            new StageConfig(5, "s.5", 13,  74f,    7337f, 1.158f,  102634452,  9, 13, 259.15f, new Color(0.34f,0.56f,0.34f)),
+            new StageConfig(6, "s.6", 15,  88f,   34965f, 1.163f,  967233279, 10, 14, 1696.56f, new Color(0.62f,0.66f,0.72f)),
+            new StageConfig(7, "s.7", 18, 108f,   95492f, 1.168f, 5087827080, 11, 15, 7003.12f, new Color(0.66f,0.30f,0.34f)),
         };
     }
 }

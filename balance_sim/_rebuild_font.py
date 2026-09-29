@@ -1,21 +1,33 @@
 """
-PopCellKR.ttf 재생성 — Localization.cs 전체 텍스트 기준으로 KR 베이스를 서브셋하고,
-KR에 없는 문자(대개 일본어 전용 가나/신자체 한자)만 자동으로 찾아서 JP 폰트에서 패치.
-매번 수동으로 빠진 글자를 찾지 않아도 되게 전체 파이프라인을 한 스크립트로.
+PopCellKR.ttf 재생성 — Localization.cs 전체 텍스트 기준 서브셋.
+
+  round45: 게임 컨셉에 맞춘 둥근 글꼴로 교체 (사용자 승인, 2026-09-29).
+    1) Jua (한글·라틴, 둥근 손글씨풍)            — 기본
+    2) Kosugi Maru (일본어 가나·한자, 둥근 고딕)  — Jua 에 없는 글자
+    3) Noto Sans KR / 4) Noto Sans JP            — 그래도 없는 기호(×, ·, ▲▼▶, ∞ …)
+  앞 글꼴에 없는 글자만 뒤 글꼴에서 골라 서브셋한 뒤 한 파일로 합친다.
+  합치려면 unitsPerEm 이 같아야 해서(Kosugi Maru 1024) 전부 1000 으로 맞춘다.
+  IMGUI 는 글자 합성(GSUB/GPOS)을 안 쓰므로 합칠 때 충돌하는 레이아웃·세로쓰기 표는 뺀다.
+
+  ※ 에디터가 켜진 채로 폰트를 바꾸면 Unity 6 IMGUI 가 옛 글자 정보를 캐시해서 엉뚱한 글자가
+    보인다 — 폰트를 다시 만든 뒤엔 유니티를 한 번 재시작할 것(빌드는 영향 없음).
 """
-import pathlib, subprocess, sys
+import pathlib, subprocess, sys, shutil
 from fontTools.ttLib import TTFont
+from fontTools.ttLib.scaleUpem import scale_upem
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LOC = ROOT / "My project" / "Assets" / "Scripts" / "BlackholeGame" / "Localization.cs"
 OUT = ROOT / "My project" / "Assets" / "Resources" / "PopCellKR.ttf"
-SCRATCH = pathlib.Path(r"C:\Users\Administrator\Desktop\AutoClickerGame\balance_sim")
-KR_SRC = pathlib.Path(r"C:\Users\ADMINI~1\AppData\Local\Temp\claude\C--Users-Administrator-Desktop-AutoClickerGame\a9375838-d49f-4434-8fb5-09e8dacd67a7\scratchpad\NotoSansKR-Regular.ttf")
-JP_SRC = pathlib.Path(r"C:\Users\ADMINI~1\AppData\Local\Temp\claude\C--Users-Administrator-Desktop-AutoClickerGame\a9375838-d49f-4434-8fb5-09e8dacd67a7\scratchpad\NotoSansJP-Regular.ttf")
+WORK = pathlib.Path(__file__).resolve().parent
+FONTS = pathlib.Path(r"C:\Users\ADMINI~1\AppData\Local\Temp\claude\C--Users-Administrator-Desktop-AutoClickerGame\a9375838-d49f-4434-8fb5-09e8dacd67a7\scratchpad")
+CHAIN = [FONTS / "Jua-Regular.ttf", FONTS / "KosugiMaru-Regular.ttf",
+         FONTS / "NotoSansKR-Regular.ttf", FONTS / "NotoSansJP-Regular.ttf"]
+DROP = "GSUB,GPOS,GDEF,BASE,vhea,vmtx,VORG,DSIG,morx,kerx"
 
-kr_base = SCRATCH / "_kr_base.ttf"
-jp_patch = SCRATCH / "_jp_patch.ttf"
-merged = SCRATCH / "_merged.ttf"
+# Localization.cs 밖(GameManager 등)에서 코드로 직접 그리는 UI 기호들.
+EXTRA = "▲▼▶"   # ▶(U+25B6) 는 있음. ▸(U+25B8) 는 Noto KR/JP 둘 다 없음 — 쓰지 말 것
+
 
 def run(cmd):
     r = subprocess.run(cmd, capture_output=True, text=True)
@@ -23,50 +35,51 @@ def run(cmd):
         print("FAILED:", cmd, "\n", r.stdout, r.stderr)
         sys.exit(1)
 
-# Localization.cs 밖(GameManager 등)에서 코드로 직접 그리는 UI 기호들.
-# 폰트는 Localization.cs 만 보고 서브셋되므로 여기에 적어두지 않으면 두부(tofu)로 렌더된다.
-EXTRA = "▲▼▶"   # ▲ ▼ ▶ (타이틀 언어 드롭다운). ▸(U+25B8) 는 Noto KR/JP 둘 다 없음 — 쓰지 말 것
 
-subset_text = SCRATCH / "_subset_text.txt"
-subset_text.write_text(LOC.read_text(encoding="utf-8") + EXTRA, encoding="utf-8")
+text = LOC.read_text(encoding="utf-8") + EXTRA
+need = sorted(set(ch for ch in text if ord(ch) > 0x20))
+remaining = list(need)
+parts = []
+for i, src in enumerate(CHAIN):
+    if not remaining:
+        break
+    cmap = TTFont(str(src), lazy=True).getBestCmap()
+    take = [c for c in remaining if ord(c) in cmap]
+    if not take:
+        continue
+    txt = WORK / ("_sub_%d.txt" % i)
+    txt.write_text("".join(take), encoding="utf-8")
+    out = WORK / ("_sub_%d.ttf" % i)
+    run(["python", "-m", "fontTools.subset", str(src), f"--output-file={out}", f"--text-file={txt}",
+         "--glyph-names", f"--drop-tables+={DROP}", "--notdef-outline"])
+    f = TTFont(str(out))
+    if f["head"].unitsPerEm != 1000:
+        scale_upem(f, 1000)
+        f.save(str(out))
+    parts.append(out)
+    remaining = [c for c in remaining if ord(c) not in cmap]
+    print("%-24s %4d 글자" % (src.name, len(take)))
 
-# 1) KR 베이스를 현재 전체 파일 기준으로 서브셋
-run(["python", "-m", "fontTools.subset", str(KR_SRC),
-     f"--output-file={kr_base}", f"--text-file={subset_text}", "--glyph-names"])
-
-# 2) KR 베이스에서 빠진 문자 찾기
-f = TTFont(str(kr_base))
-cmap = f.getBestCmap()
-text = subset_text.read_text(encoding="utf-8")
-need = set(ch for ch in text if ord(ch) > 0x7f)
-missing = sorted(c for c in need if ord(c) not in cmap)
-print("KR 서브셋에서 빠진 문자(JP 패치 대상):", len(missing), "".join(missing))
-
-if missing:
-    miss_file = SCRATCH / "_jp_missing.txt"
-    miss_file.write_text("".join(missing), encoding="utf-8")
-    run(["python", "-m", "fontTools.subset", str(JP_SRC),
-         f"--output-file={jp_patch}", f"--text-file={miss_file}", "--glyph-names"])
-    run(["python", "-m", "fontTools.merge", str(kr_base), str(jp_patch), f"--output-file={merged}"])
-else:
-    merged = kr_base
-
-# 3) 최종 검증
-ff = TTFont(str(merged))
-cmap2 = ff.getBestCmap()
-still_missing = sorted(c for c in need if ord(c) not in cmap2)
-print("최종 결손:", len(still_missing), "".join(still_missing))
-if still_missing:
-    print("!!! 여전히 빠진 문자 있음 — JP 폰트에도 없는 글자. 수동 확인 필요.")
+if remaining:
+    print("!!! 어느 글꼴에도 없는 글자:", "".join(remaining))
     sys.exit(1)
 
-import shutil
-shutil.copy(str(merged), str(OUT))
-print("완료 ->", OUT, OUT.stat().st_size, "bytes, glyphs:", ff["maxp"].numGlyphs)
+merged = WORK / "_merged.ttf"
+if len(parts) == 1:
+    shutil.copy(str(parts[0]), str(merged))
+else:
+    run(["python", "-m", "fontTools.merge", *[str(p) for p in parts], f"--output-file={merged}"])
 
-for p in [kr_base, jp_patch, merged, SCRATCH / "_jp_missing.txt"]:
+ff = TTFont(str(merged))
+cm = ff.getBestCmap()
+still = [c for c in need if ord(c) not in cm and c not in "\t\n\r"]
+print("최종 결손:", len(still), "".join(still))
+if still:
+    sys.exit(1)
+shutil.copy(str(merged), str(OUT))
+print("완료 ->", OUT, OUT.stat().st_size, "bytes, glyphs:", ff["maxp"].numGlyphs, "family:", ff["name"].getDebugName(1))
+for p in parts + [merged] + list(WORK.glob("_sub_*.txt")):
     try:
-        if p.exists() and p != OUT:
-            p.unlink()
+        p.unlink()
     except Exception:
         pass

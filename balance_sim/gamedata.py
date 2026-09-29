@@ -8,34 +8,42 @@
   round38 기준. 이전 tree.py(CfgV2) 는 가지별 타입 순환(cyc)을 쓰던 구버전 트리라 더는 맞지 않는다.
 """
 
-# ---- UpgradeTree.cs (round42: 능력치별 가지, 300노드) ----------------------
+# ---- UpgradeTree.cs (round44: 150노드 + 가지 끝 반복 강화) -----------------
 TIERS = 8
+NODE_TIERS = 6          # 일반 노드는 티어 0~5 에 퍼진다
+REPEAT_TIER = 5         # 반복 강화는 5지역 클리어 후
 
-FLAT_BY_TIER = [10, 12, 15, 25, 44, 78, 145, 280]
-TIER_COST    = [15, 750, 1900, 40000, 110000, 240000, 1100000, 1500000]
+FLAT_BY_TIER = [20, 24, 30, 50, 88, 156]
+TIER_COST    = [15, 20419, 386738, 2784988, 15023775, 226535461]
 
 ROOT_FLAT    = 8.0
-MULT_PP, MULT_CAP        = 10.0, 300.0
-SPEED_MUL, INTERVAL_FLOOR = 0.915, 0.06
-CRITC_PP, CRIT_CAP       = 0.04, 0.80
-CRITX_ADD    = 0.08
-RANGE_ADD    = 0.10
-GOLD_PP      = 8.0
-TIME_ADD, TIME_CAP       = 6.0, 120.0
-SPAWN_MUL, SPAWN_FLOOR   = 0.93, 0.22
+MULT_PP, MULT_CAP        = 21.0, 300.0
+SPEED_MUL, INTERVAL_FLOOR = 0.826, 0.06
+CRITC_PP, CRIT_CAP       = 0.08, 0.80
+CRITX_ADD    = 0.18
+RANGE_ADD    = 0.21
+GOLD_PP      = 18.0
+TIME_ADD, TIME_CAP       = 15.0, 120.0
+SPAWN_MUL, SPAWN_FLOOR   = 0.85, 0.22
 SCOUNT_MAX   = 10
-BOMB_DMG_ADD, BOMB_DMG_MAX = 0.25, 5.0
+SKIP_ADD     = 2
+BOMB_DMG_ADD, BOMB_DMG_MAX = 0.5, 5.0
 BOMB_RAD_ADD, BOMB_RAD_MAX = 0.10, 2.0
-BOMB_INT_SUB, BOMB_INT_MIN = 1.0, 10.0
+BOMB_INT_SUB, BOMB_INT_MIN = 2.0, 10.0
 BOMB_UNLOCK_TIER = 1
 
-# 가지 정의 (타입, id 접두어, 길이, 시작 티어) — UpgradeTree.L* 와 같은 값
+# 반복 강화 1회당 (UpgradeTree.Rep*) — 가격은 flat, mult, speed, range, critx, gold 순
+REP_FLAT, REP_MULT, REP_APS, REP_RANGE, REP_CRITX, REP_GOLD = 10.0, 1.0, 0.05, 0.01, 0.02, 1.0
+REP_INTERVAL_FLOOR, REP_RANGE_MAX = 0.035, 5.0
+REP_COST = [724381438, 724381438, 724381438, 724381438, 724381438, 724381438]
+
+# 가지 정의 (타입, 길이, 시작 티어) — UpgradeTree.L* 와 같은 값
 LANES = {
-    "flat":  ("Flat", 36, 0),  "mult":  ("Mult", 30, 0),  "speed": ("Speed", 28, 0),
-    "critc": ("CritC", 20, 0), "range": ("Range", 28, 0), "critx": ("CritX", 34, 0),
-    "time":  ("Time", 20, 0),  "gold":  ("Gold", 34, 0),  "skip":  ("Skip", 6, 0),
-    "scount": ("SCount", 9, 0), "spawn": ("Spawn", 20, 0),
-    "bombdmg": ("BombDmg", 12, 1), "bombrad": ("BombRad", 10, 1), "bombfreq": ("BombFreq", 10, 1),
+    "flat":  ("Flat", 17, 0),  "mult":  ("Mult", 14, 0),  "speed": ("Speed", 13, 0),
+    "critc": ("CritC", 10, 0), "range": ("Range", 13, 0), "critx": ("CritX", 15, 0),
+    "time":  ("Time", 8, 0),   "gold":  ("Gold", 15, 0),  "skip":  ("Skip", 3, 0),
+    "scount": ("SCount", 9, 0), "spawn": ("Spawn", 9, 0),
+    "bombdmg": ("BombDmg", 6, 1), "bombrad": ("BombRad", 10, 1), "bombfreq": ("BombFreq", 5, 1),
 }
 
 # ---- GameConfig.cs : Stats 기본값 --------------------------------------
@@ -47,16 +55,17 @@ BASE_SPAWNCNT = 1   # round42
 
 # round42: 지역 체력 ×[1,1.8,3,3,3,3.5,4.2,9] (새 트리가 세서 지역 k 가 티어 k-1 을 필요로 하게)
 # round43: 보스만 ×[1,1.3,1.3,3.2,4,5,6,8] — 보스가 안 맞던 버그가 고쳐져 보스전만 짧아진 만큼
+# round44: 지역 골드 = '골드/체력' 효율이 지역마다 ×1.2 (tune42.gold_rates), 체력·가격은 autotune44(b)
 # ---- GameConfig.cs : StageConfig.Stages --------------------------------
 #            S1    S2    S3    S4    S5    S6    S7    S8
 WAVES    = [   4,    5,    7,    9,   11,   13,   15,   18]
 TLIM     = [  28,   34,   44,   54,   64,   74,   88,  108]
-HP0      = [  30,  166,  735,  630,  615,  665, 1407, 6345]
+HP0      = [30, 303, 1808, 1550, 2758, 7337, 34965, 95492]
 HPG      = [1.130, 1.136, 1.142, 1.148, 1.153, 1.158, 1.163, 1.168]
-BOSSHP   = [1400, 15678, 88530, 634560, 2257200, 9303000, 38921400, 338061600]
+BOSSHP   = [1400, 28573, 217817, 1561256, 10121360, 102634452, 967233279, 5087827080]
 QUOTA0   = [   4,    5,    6,    7,    8,    9,   10,   11]
 SE       = [   8,    9,   10,   11,   12,   13,   14,   15]
-GOLDRATE = [1.00, 0.70, 0.82, 0.95, 1.05, 1.15, 1.30, 1.55]
+GOLDRATE = [1.00, 7.56, 38.94, 34.13, 74.01, 259.15, 1696.56, 7003.12]
 
 GOLD_CURVE = [
     1, 2, 5, 10, 12, 15, 20,
@@ -87,7 +96,7 @@ def flat_at(tier):
 
 def tier_of(key, k):
     _, ln, t0 = LANES[key]
-    return t0 + (k * (TIERS - t0)) // ln
+    return t0 + (k * (NODE_TIERS - t0)) // ln
 
 
 def apply_type(t, tier, s):
@@ -113,7 +122,7 @@ def apply_type(t, tier, s):
     elif t == "SCount":
         s.spawnCount = min(SCOUNT_MAX, max(1, s.spawnCount + 1))
     elif t == "Skip":
-        s.startWave += 1
+        s.startWave += SKIP_ADD
     elif t == "Auto":
         s.autoAttack = True
     elif t == "Bomb":
@@ -124,23 +133,36 @@ def apply_type(t, tier, s):
         s.bombRadiusMul = min(BOMB_RAD_MAX, s.bombRadiusMul + BOMB_RAD_ADD)
     elif t == "BombFreq":
         s.bombInterval = max(BOMB_INT_MIN, s.bombInterval - BOMB_INT_SUB)
+    # ---- 반복 강화 ----
+    elif t == "RFlat":
+        s.flatBonus += REP_FLAT
+    elif t == "RMult":
+        s.multBucketPercent += REP_MULT
+    elif t == "RSpeed":
+        s.attackInterval = max(REP_INTERVAL_FLOOR, 1.0 / (1.0 / s.attackInterval + REP_APS))
+    elif t == "RRange":
+        s.cursorRadius = min(REP_RANGE_MAX, s.cursorRadius + REP_RANGE)
+    elif t == "RCritX":
+        s.critMult += REP_CRITX
+    elif t == "RGold":
+        s.goldMultPercent += REP_GOLD
 
 
 class Node:
-    __slots__ = ("id", "parent", "tier", "cost", "type", "lane")
+    __slots__ = ("id", "parent", "tier", "cost", "type", "lane", "repeat")
 
-    def __init__(self, nid, parent, tier, t, lane):
+    def __init__(self, nid, parent, tier, t, lane, repeat=False, cost=None):
         self.id, self.parent, self.tier, self.type, self.lane = nid, parent, tier, t, lane
-        self.cost = cost_of(tier)
+        self.repeat = repeat
+        self.cost = cost if cost is not None else cost_of(tier)
 
     def apply(self, s):
         apply_type(self.type, self.tier, s)
 
 
 def build():
-    """UpgradeTree.BuildAll 과 같은 순서·부모·티어. 루트 + 299 노드."""
-    nodes = [Node("root", None, 0, None, "root")]
-    nodes[0].cost = 0
+    """UpgradeTree.BuildAll 과 같은 순서·부모·티어. 루트 + 149 일반 + 반복 6."""
+    nodes = [Node("root", None, 0, None, "root", cost=0)]
 
     def make(nid, parent, t, tier, lane):
         nodes.append(Node(nid, parent, tier, t, lane))
@@ -151,13 +173,23 @@ def build():
             nid = "%s%d" % (key, k)
             make(nid, parent, t, tier_of(key, k), key)
             parent = nid
+        return parent
+
+    def rep(nid, parent, t, ci):
+        nodes.append(Node(nid, parent, REPEAT_TIER, t, nid, repeat=True, cost=REP_COST[ci]))
 
     make("auto", "root", "Auto", 0, "auto")
-    lane("mult", "auto"); lane("flat", "auto"); lane("speed", "auto")
+    rep("rmult", lane("mult", "auto"), "RMult", 1)
+    rep("rflat", lane("flat", "auto"), "RFlat", 0)
+    rep("rspeed", lane("speed", "auto"), "RSpeed", 2)
     make("range0", "root", "Range", tier_of("range", 0), "range")
-    lane("critc", "range0"); lane("range", "range0", 1); lane("critx", "range0")
+    lane("critc", "range0")
+    rep("rrange", lane("range", "range0", 1), "RRange", 3)
+    rep("rcritx", lane("critx", "range0"), "RCritX", 4)
     make("gold0", "root", "Gold", tier_of("gold", 0), "gold")
-    lane("time", "gold0"); lane("gold", "gold0", 1); lane("skip", "gold0")
+    lane("time", "gold0")
+    rep("rgold", lane("gold", "gold0", 1), "RGold", 5)
+    lane("skip", "gold0")
     make("spawn0", "root", "Spawn", tier_of("spawn", 0), "spawn")
     lane("scount", "spawn0"); lane("spawn", "spawn0", 1)
     make("bomb", "spawn0", "Bomb", BOMB_UNLOCK_TIER, "bomb")
@@ -193,7 +225,7 @@ def stats_upto(tier_exclusive):
     s = new_stats()
     s.flatBonus += ROOT_FLAT
     for n in build():
-        if n.type is not None and n.tier < tier_exclusive:
+        if n.type is not None and not n.repeat and n.tier < tier_exclusive:
             n.apply(s)
     return s
 
@@ -228,16 +260,16 @@ def wave_cfg(stage, asc=0):
 
 # ---- 유니티 에디터 실측값과 대조 ---------------------------------------
 # GameManager 가 살아있는 Play 모드에서 UpgradeTree.BuildAll() 로 뽑은 값 (round38).
-EXPECTED_DPS = [209, 672, 2315, 6112, 22152, 62078, 226355, 636051]
-EXPECTED_HIT = [95, 209, 420, 728, 1482, 2716, 5728, 10672]
-EXPECTED_TOTAL_COST = 105_114_350
-EXPECTED_NODES = 300
+EXPECTED_DPS = [365, 1608, 5574, 21465, 79720, 225825]
+EXPECTED_HIT = [127, 308, 593, 1209, 2302, 3806]
+EXPECTED_TOTAL_COST = 5_013_736_521   # 일반 노드만(반복 강화 제외)
+EXPECTED_NODES = 156   # 일반 150 + 반복 6
 
 
 def self_check(verbose=True):
     ok = True
     lines = [" T |   타격   기대   |     DPS     기대   | 판정"]
-    for t in range(1, TIERS + 1):
+    for t in range(1, NODE_TIERS + 1):
         s = stats_upto(t)
         h, d = avg_hit(s) / (1 + s.critChance * (s.critMult - 1)), dps(s)
         eh, ed = EXPECTED_HIT[t - 1], EXPECTED_DPS[t - 1]
@@ -245,7 +277,7 @@ def self_check(verbose=True):
         ok &= good
         lines.append("T%d | %7.0f %6d  | %9.0f %7d | %s" % (t, h, eh, d, ed, "OK" if good else "*** 불일치 ***"))
     nodes = build()
-    tot = sum(n.cost for n in nodes)
+    tot = sum(n.cost for n in nodes if not n.repeat)
     lines.append("\n트리 노드 %d개 (에디터 %d) · 총비용 %s (에디터 %s)"
                  % (len(nodes), EXPECTED_NODES, format(tot, ","), format(EXPECTED_TOTAL_COST, ",")))
     ok &= (tot == EXPECTED_TOTAL_COST) and len(nodes) == EXPECTED_NODES
