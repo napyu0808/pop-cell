@@ -1,0 +1,10 @@
+m7 25.80 rep 600000000  mins [4, 25, 52, 88, 128, 177, 270, 337]  rep {'rcritx': 50, 'rflat': 49, 'rgold': 49, 'rmult': 49, 'rrange': 49, 'rspeed': 49}  walls []
+m7 23.28 rep 600000000  mins [4, 25, 52, 88, 128, 177, 119, 407]  rep {'rcritx': 51, 'rflat': 51, 'rgold': 51, 'rmult': 51, 'rrange': 50, 'rspeed': 50}  walls []
+m7 24.54 rep 600000000  mins [4, 25, 52, 88, 128, 177, 224, 348]  rep {'rcritx': 47, 'rflat': 47, 'rgold': 47, 'rmult': 47, 'rrange': 47, 'rspeed': 47}  walls []
+m7 25.17 rep 600000000  mins [4, 25, 52, 88, 128, 177, 322, 275]  rep {'rcritx': 43, 'rflat': 43, 'rgold': 42, 'rmult': 42, 'rrange': 42, 'rspeed': 42}  walls []
+m7 24.85 rep 612372435  mins [4, 25, 52, 88, 128, 177, 283, 178]  rep {'rcritx': 27, 'rflat': 27, 'rgold': 27, 'rmult': 27, 'rrange': 27, 'rspeed': 27}  walls []
+m7 24.85 rep 958414656  mins [4, 25, 52, 88, 128, 177, 348, 490]  rep {'rcritx': 42, 'rflat': 41, 'rgold': 41, 'rmult': 41, 'rrange': 41, 'rspeed': 41}  walls []
+m7 24.85 rep 766098373  mins [4, 25, 52, 88, 128, 177, 178, 453]  rep {'rcritx': 45, 'rflat': 44, 'rgold': 44, 'rmult': 44, 'rrange': 44, 'rspeed': 44}  walls []
+m7 24.85 rep 684936147  mins [4, 25, 52, 88, 128, 177, 209, 367]  rep {'rcritx': 41, 'rflat': 41, 'rgold': 41, 'rmult': 41, 'rrange': 41, 'rspeed': 40}  walls []
+m7 24.85 rep 724381438  mins [4, 25, 52, 88, 128, 177, 344, 387]  rep {'rcritx': 47, 'rflat': 47, 'rgold': 47, 'rmult': 47, 'rrange': 47, 'rspeed': 46}  walls []
+FINAL tot 1205 sim-min = 5.3 h real  cfg {"cost": [15, 20419, 386738, 2784988, 15023775, 226535461], "rep": [724381438, 724381438, 724381438, 724381438, 724381438, 724381438], "hp": [1.0, 1.8225000000000002, 2.4603750000000004, 2.4603750000000004, 4.484033437500002, 11.032403768789068, 24.8509375, 15.05], "beta": 1.2}

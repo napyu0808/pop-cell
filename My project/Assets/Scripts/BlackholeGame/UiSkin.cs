@@ -107,11 +107,12 @@ namespace BlackholeGame
                         float ga = Mathf.Clamp01(1f - gd) * glossA * inside;
                         if (ga > 0f) c = Over(c, new Color(1f, 1f, 1f, ga * 0.9f));
 
-                        // 5) 소기관 — 세포 느낌을 주는 흰 점 3개(오른쪽에 모아둔다)
+                        // 5) 소기관 — 세포 느낌을 주는 흰 점 3개.
+                        //   9-slice 의 오른쪽 고정 칸(x > 212) 안에 둬야 버튼이 길어져도 안 늘어난다.
                         float oa = mode == 2 ? 0.18f : 0.35f;
-                        c = Over(c, Dot(fx, fy, 196f, 44f, 7f, oa, inside));
-                        c = Over(c, Dot(fx, fy, 212f, 36f, 4f, oa, inside));
-                        c = Over(c, Dot(fx, fy, 182f, 52f, 3f, oa, inside));
+                        c = Over(c, Dot(fx, fy, 224f, 45f, 6.5f, oa, inside));
+                        c = Over(c, Dot(fx, fy, 237f, 34f, 3.5f, oa, inside));
+                        c = Over(c, Dot(fx, fy, 230f, 57f, 2.5f, oa, inside));
                     }
 
                     // 6) 테두리 3px — 안쪽으로

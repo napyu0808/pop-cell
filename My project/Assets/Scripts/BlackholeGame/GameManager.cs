@@ -42,6 +42,9 @@ namespace BlackholeGame
         float newConfirmUntil = -1f;   // 세이브가 있을 때 '새로 시작'은 두 번 눌러야 — 첫 클릭 후 이 시각까지 확인 대기
         int mapIndex = 0;         // 지역 캐러셀에서 고른 칸
         float mapScroll = -1f;    // 캐러셀 부드러운 이동 (음수 = 초기화 전)
+        bool mapDragging;         // round49: 지도 캐러셀을 끌어서 넘기는 중
+        bool mapDragMoved;        // 끌었다 = 이번 클릭은 카드 선택으로 치지 않는다
+        float mapDragStartX, mapDragStartScroll;
         int metaCurrency = 0;     // 환생 재화 (shard)
         int bestScore = 0;        // 역대 최고 score
         bool everRebirth = false; // 환생이 한 번이라도 해금된 적 있으면 true(환생해도 안 꺼짐) — 메타/환생 버튼 노출용
@@ -2568,8 +2571,8 @@ namespace BlackholeGame
                 {
                     var gc = GUI.color; GUI.color = tint;
                     // 텍스처는 256x96 에 몸통(240x72)이 (8,6) — 여백만큼 바깥으로 넓혀서 몸통이 r 에 딱 맞게.
-                    // 오른쪽 테두리를 80 으로 둬서 세포 점(소기관)이 늘어나지 않고 끝부분에 붙어 있게.
-                    DrawNineSlice(new Rect(r.x - 8f * s, r.y - 6f * s, r.width + 16f * s, r.height + 24f * s), tex, 44f, 80f, 34f, 40f, s);
+                    // 좌우 테두리를 44 로 똑같이 둬야 몸통이 대칭이 된다(소기관은 44 안쪽에 그려둠).
+                    DrawNineSlice(new Rect(r.x - 8f * s, r.y - 6f * s, r.width + 16f * s, r.height + 24f * s), tex, 44f, 44f, 34f, 40f, s);
                     GUI.color = gc;
                 }
                 st = SkinTextStyle(st, down, s);
@@ -2725,16 +2728,25 @@ namespace BlackholeGame
             if (l + r > dst.width)  { float k = dst.width / (l + r);  l *= k; r *= k; }
             if (tp + b > dst.height) { float k = dst.height / (tp + b); tp *= k; b *= k; }
             float W = t.width, H = t.height;
-            float[] xs = { dst.x, dst.x + l, dst.xMax - r, dst.xMax };
-            float[] ys = { dst.y, dst.y + tp, dst.yMax - b, dst.yMax };
+            // round49: 칸 경계를 정수 픽셀에 맞춘다 — 서브픽셀 경계에서 칸 사이가 반 픽셀 비어
+            //   가느다란 흰 줄이 보이던 문제.
+            float[] xs = { Mathf.Round(dst.x), Mathf.Round(dst.x + l), Mathf.Round(dst.xMax - r), Mathf.Round(dst.xMax) };
+            float[] ys = { Mathf.Round(dst.y), Mathf.Round(dst.y + tp), Mathf.Round(dst.yMax - b), Mathf.Round(dst.yMax) };
             float[] us = { 0f, L / W, 1f - R / W, 1f };
             float[] vs = { 1f, 1f - T / H, B / H, 0f };   // uv 는 아래가 0
+            // 안쪽 UV 경계는 반 텍셀 안으로 — 늘어나는 가운데 칸이 bilinear 로 옆 칸 텍셀을
+            //   빨아들여 밝은 줄이 생기던 것도 같이 없앤다.
+            float hx = 0.5f / W, hy = 0.5f / H;
+            float[] ulo = { 0f, us[1] + hx, us[2] + hx };
+            float[] uhi = { us[1] - hx, us[2] - hx, 1f };
+            float[] vlo = { vs[1] + hy, vs[2] + hy, 0f };
+            float[] vhi = { 1f, vs[1] - hy, vs[2] - hy };
             for (int iy = 0; iy < 3; iy++)
                 for (int ix = 0; ix < 3; ix++)
                 {
                     var rr = Rect.MinMaxRect(xs[ix], ys[iy], xs[ix + 1], ys[iy + 1]);
                     if (rr.width <= 0.01f || rr.height <= 0.01f) continue;
-                    GUI.DrawTextureWithTexCoords(rr, t, Rect.MinMaxRect(us[ix], vs[iy + 1], us[ix + 1], vs[iy]));
+                    GUI.DrawTextureWithTexCoords(rr, t, Rect.MinMaxRect(ulo[ix], vlo[iy], uhi[ix], vhi[iy]));
                 }
         }
 
@@ -3008,20 +3020,18 @@ namespace BlackholeGame
             {
                 float gs = Mathf.Round(42f * s);
                 var gr = new Rect(w - gs - 22f * s, 18f * s, gs, gs);
-                bool gHover = gr.Contains(Event.current.mousePosition);
                 var gc0 = GUI.color;
-                GUI.color = new Color(0.32f, 0.36f, 0.40f, gHover ? 0.22f : 0.12f);
-                GUI.DrawTexture(gr, Texture2D.whiteTexture);
-                GUI.color = gHover ? InkDark : new Color(0.26f, 0.30f, 0.34f, 0.85f);
+                // round49: 버튼이 스킨(젤리)으로 바뀌면서 9-slice 가 톱니를 덮어버렸다.
+                //   버튼 몸통을 먼저 그리고 톱니를 그 위에 얹는다.
+                bool gPressed = UiBtn(gr, GUIContent.none.text, GUIStyle.none);
                 if (iconTex != null && iconTex.TryGetValue("gear", out var gtex) && gtex != null)
                 {
-                    float ins = gs * 0.16f;
+                    float ins = gs * 0.20f;
+                    GUI.color = UiSkin.Ink;
                     GUI.DrawTexture(new Rect(gr.x + ins, gr.y + ins, gr.width - ins * 2f, gr.height - ins * 2f), gtex);
                 }
                 GUI.color = gc0;
-                // 아이콘 위에 투명 버튼을 겹쳐서 클릭/사운드는 공용 UiBtn 규칙을 그대로 따른다
-                if (UiBtn(gr, GUIContent.none.text, GUIStyle.none))
-                { pauseReturn = State.Map; state = State.Paused; }
+                if (gPressed) { pauseReturn = State.Map; state = State.Paused; }
             }
 
             // ---- 캐러셀 ----
@@ -3031,11 +3041,42 @@ namespace BlackholeGame
             float cyMid = h * 0.50f;
             float cxMid = w * 0.5f;
 
+            // 화살표 자리를 먼저 잡아둔다 — 카드 클릭 판정에서 이 영역을 빼야 한 번 누를 때
+            //   화살표(한 칸)와 그 아래 카드(그 카드로 점프)가 같이 먹혀 두 칸씩 넘어가지 않는다.
+            float aw = 54f * s, ah = 66f * s;
+            var arrowLR = new Rect(Mathf.Max(6f, w * 0.02f), cyMid - ah * 0.5f, aw, ah);
+            var arrowRR = new Rect(Mathf.Min(w - aw - 6f, w * 0.98f - aw), cyMid - ah * 0.5f, aw, ah);
+
             var ev = Event.current;
             if (ev.type == EventType.ScrollWheel)
             { mapIndex = Mathf.Clamp(mapIndex + (ev.delta.y > 0f ? 1 : -1), 0, n - 1); ev.Use(); }
 
-            if (!Mathf.Approximately(mapScroll, mapIndex))
+            // round49: 잡고 좌우로 끌어서 넘기기. 카드 루프보다 먼저 봐야 드래그가 클릭으로 안 샌다.
+            var dragArea = new Rect(0f, cyMid - cardH * 0.75f, w, cardH * 1.5f);
+            if (ev.type == EventType.MouseDown && ev.button == 0 && dragArea.Contains(ev.mousePosition)
+                && !arrowLR.Contains(ev.mousePosition) && !arrowRR.Contains(ev.mousePosition))
+            { mapDragging = true; mapDragMoved = false; mapDragStartX = ev.mousePosition.x; mapDragStartScroll = mapScroll; }
+            if (mapDragging)
+            {
+                if (ev.type == EventType.MouseDrag)
+                {
+                    float dx = mapDragStartX - ev.mousePosition.x;
+                    if (Mathf.Abs(dx) > 5f) mapDragMoved = true;
+                    mapScroll = Mathf.Clamp(mapDragStartScroll + dx / Mathf.Max(1f, slot), 0f, n - 1);
+                    mapIndex = Mathf.Clamp(Mathf.RoundToInt(mapScroll), 0, n - 1);
+                    ev.Use();
+                }
+                else if (ev.type == EventType.MouseUp)
+                {
+                    mapDragging = false;
+                    mapIndex = Mathf.Clamp(Mathf.RoundToInt(mapScroll), 0, n - 1);   // 가장 가까운 칸으로 스냅
+                    bool moved = mapDragMoved;
+                    mapDragMoved = false;      // 여기서 바로 내려야 한다 — Use() 하면 아래 코드가 MouseUp 을 못 본다
+                    if (moved) ev.Use();       // 끌었으면 카드 클릭으로 치지 않는다
+                }
+            }
+
+            if (!mapDragging && !Mathf.Approximately(mapScroll, mapIndex))
                 mapScroll = Mathf.MoveTowards(mapScroll, mapIndex, Mathf.Max(0.05f, Time.deltaTime * 9f));
 
             // 먼 카드부터 그려서 가운데 카드가 위에 오도록
@@ -3051,7 +3092,8 @@ namespace BlackholeGame
                 var r = new Rect(cxMid + rel * slot - cw * 0.5f, cyMid - ch * 0.5f, cw, ch);
                 bool center = Mathf.Abs(rel) < 0.5f;
                 DrawStageCard(r, i, center, k);
-                if (GUI.Button(r, GUIContent.none, GUIStyle.none) && transDir == 0)
+                bool hitArrow = arrowLR.Contains(ev.mousePosition) || arrowRR.Contains(ev.mousePosition);
+                if (GUI.Button(r, GUIContent.none, GUIStyle.none) && transDir == 0 && !mapDragMoved && !hitArrow)
                 {
                     if (center && i <= stagesCleared)
                     { currentStage = i; if (sound != null) sound.Play(Sfx.Click, 0.7f); BeginTransition(StartRun); }
@@ -3063,11 +3105,9 @@ namespace BlackholeGame
             var arrow = new GUIStyle(sBig) { alignment = TextAnchor.MiddleCenter,
                 fontSize = Mathf.RoundToInt(34f * s), normal = { textColor = InkDark } };
             FlatText(arrow);
-            float aw = 54f * s, ah = 66f * s;
-            if (mapIndex > 0 && UiBtn(new Rect(Mathf.Max(6f, w * 0.02f), cyMid - ah * 0.5f, aw, ah), "<", arrow))
-                mapIndex--;
-            if (mapIndex < n - 1 && UiBtn(new Rect(Mathf.Min(w - aw - 6f, w * 0.98f - aw), cyMid - ah * 0.5f, aw, ah), ">", arrow))
-                mapIndex++;
+            if (mapIndex > 0 && UiBtn(arrowLR, "<", arrow)) mapIndex--;
+            if (mapIndex < n - 1 && UiBtn(arrowRR, ">", arrow)) mapIndex++;
+
 
             // 페이지 점
             float dotY = Mathf.Min(cyMid + cardH * 0.60f, h * 0.80f);
@@ -3850,6 +3890,9 @@ namespace BlackholeGame
             // 배율 = 전체 가지 폭이 area 가로에 딱 맞게(좌우 여백 = 노드 반 개 + 약간). 고정.
             float zoom = Mathf.Clamp(area.width / (fullW + nodeSz * 0.5f), 0.2f, 1.6f);
             pivot.y = availTop - 22f - nodeSz * 0.5f * zoom;   // 스크롤 맨 아래에서 코어가 하단 바 바로 위
+            // round49: 아래의 트리 그리기는 area 를 클립 그룹으로 깔고 그 안에서 한다 — 좌표도 그룹
+            //   기준(= area 왼쪽 위가 0)으로 맞춘다. 화면 좌표로 남겨두면 클립이 안 먹는다.
+            pivot.y -= area.yMin;
 
             npos.Clear();
             foreach (var n in nodes)
@@ -3859,8 +3902,8 @@ namespace BlackholeGame
             float minY = pivot.y;
             foreach (var n in nodes)
                 if (!n.repeat && (n.IsRoot || n.tab == treeTab) && IsRevealed(n) && npos[n.id].y < minY) minY = npos[n.id].y;   // 화면 좌표는 위로 갈수록 y가 작아짐
-            float topScreen0 = pivot.y + (minY - pivot.y) * zoom;          // 스크롤 0 일 때 가장 높은 노드의 화면 y
-            float maxPan = Mathf.Max(0f, (area.yMin + nodeSz * 0.5f * zoom + 8f) - topScreen0);
+            float topScreen0 = pivot.y + (minY - pivot.y) * zoom;          // 스크롤 0 일 때 가장 높은 노드의 y(그룹 기준)
+            float maxPan = Mathf.Max(0f, (nodeSz * 0.5f * zoom + 8f) - topScreen0);
 
             treeMaxPan = maxPan;
             if (treeZoom <= 0f)   // 들어올 때/"화면 리셋" — 지금 살 수 있는 맨 위(경계)가 보이게 끝까지 올려둔다
@@ -3924,6 +3967,10 @@ namespace BlackholeGame
             }
             else treePan = new Vector2(0f, Mathf.Clamp(treePan.y, 0f, maxPan));
 
+            // round49: 트리를 제 영역 안으로 잘라낸다. 안 그러면 노드 사이 연결선이 위로는 탭 버튼,
+            //   아래로는 하단 바까지 뻗어 버튼 위에 검은 줄로 비쳤다(둥근 버튼의 모서리 바깥으로).
+            //   그룹 안은 좌표가 밀리므로 그만큼 되돌려서 아래 계산은 화면 좌표 그대로 쓴다.
+            GUI.BeginGroup(new Rect(0f, area.yMin, Screen.width, area.height));
             Matrix4x4 saved = GUI.matrix;
             GUIUtility.ScaleAroundPivot(new Vector2(treeZoom, treeZoom), pivot);
             GUI.matrix = Matrix4x4.Translate(new Vector3(treePan.x, treePan.y, 0f)) * GUI.matrix;
@@ -3996,6 +4043,7 @@ namespace BlackholeGame
             }
 
             GUI.matrix = saved;
+            GUI.EndGroup();
 
             // round47: 커서 / 타워 탭 — 트리 영역 상단 가운데
             {
@@ -4077,6 +4125,12 @@ namespace BlackholeGame
                 // round41: 배경을 밝은 Glass 로 바꾸자 노란 보유금·흰 도움말이 거의 안 보였고, 트리 선도
                 //   이 위로 지나갔다 — 능력치 패널과 같은 어두운 판을 깔아 글씨를 살리고 트리를 가린다.
                 var gcBar = GUI.color;
+                // round49: 트리는 GUI.matrix 로 확대·이동하는데 그러면 BeginGroup 의 클립 영역까지
+                //   같이 늘어나 세로로는 안 잘린다. 그래서 하단 바는 불투명 바닥을 먼저 깔아
+                //   그 아래로 지나가는 노드·연결선을 확실히 가린다.
+                GUI.color = new Color(0.11f, 0.12f, 0.15f, 1f);
+                GUI.DrawTexture(new Rect(-40f, 0f, Screen.width + 80f, barH + 60f), Texture2D.whiteTexture);
+                GUI.color = Color.white;
                 // 스킨이면 좌우·아래로 넘치게 그려서(그룹 밖은 잘림) 위쪽 가장자리만 세포막처럼 보이게
                 if (!DrawSkinPanel(new Rect(-40f, 0f, Screen.width + 80f, barH + 60f), false))
                 {

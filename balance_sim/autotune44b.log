@@ -1,0 +1,4 @@
+iter  0 rep 596244673 m7 10.23 m8 15.05  mins [4, 25, 52, 88, 128, 177, 104, 414]  rep {'rcritx': 48, 'rflat': 48, 'rgold': 47, 'rmult': 47, 'rrange': 47, 'rspeed': 47}  walls []
+iter  1 rep 566627674 m7 30.83 m8 15.05  mins [4, 25, 52, 88, 128, 177, 361, 205]  rep {'rcritx': 41, 'rflat': 41, 'rgold': 41, 'rmult': 41, 'rrange': 41, 'rspeed': 40}  walls []
+iter  2 rep 979910506 m7 20.76 m8 15.05  mins [4, 25, 52, 88, 128, 177, 95, 735]  rep {'rcritx': 55, 'rflat': 55, 'rgold': 55, 'rmult': 55, 'rrange': 54, 'rspeed': 54}  walls []
+iter  3 rep 571567024 m7 69.47 m8 15.05  mins [4, 25, 52, 88, 128, 177, 577, 77]  rep {'rcritx': 59, 'rflat': 59, 'rgold': 58, 'rmult': 58, 'rrange': 58, 'rspeed': 58}  walls []
