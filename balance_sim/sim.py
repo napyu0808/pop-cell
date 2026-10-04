@@ -77,6 +77,11 @@ class Stats:
         self.bombDmgMul = 2.0
         self.bombRadiusMul = 1.0
         self.bombInterval = 20.0
+        # round47 자동 타워 — GameConfig.cs Stats 와 동일
+        self.towerOn = [False, False, False]
+        self.towerDmgMul = [0.5, 0.5, 0.5]
+        self.towerInterval = [1.1, 1.1, 1.1]
+        self.towerType = [0, 0, 0]
         for k, v in kw.items():
             setattr(self, k, v)
 
@@ -89,13 +94,25 @@ class Stats:
     def clone(self):
         s = Stats()
         s.__dict__.update(self.__dict__)
+        s.towerOn = list(self.towerOn)
+        s.towerDmgMul = list(self.towerDmgMul)
+        s.towerInterval = list(self.towerInterval)
+        s.towerType = list(self.towerType)
         return s
+
+    def any_tower(self):
+        return any(self.towerOn)
 
 
 # ---------------------------------------------------------------- sim
 # round42: GameManager 상수 미러
 ELITE_CHANCE, ELITE_HP, ELITE_GOLD = 0.07, 3.0, 5
 BOMB_BASE_R, BOMB_MAX_ALIVE, BOMB_SIZE, BOMB_HP = 2.6, 2, 1.9, 0.6
+# round47 자동 타워 — GameManager.cs 의 상수 미러
+TOWER_POS = [(-5.2, 0.0), (0.0, 0.0), (5.2, 0.0)]
+TOWER_SPIN, BULLET_SPEED, BULLET_LIFE, BULLET_R = 52.0, 9.0, 2.2, 0.16
+BURST_SPREAD = 11.0      # 연발 부채꼴 각도
+MAX_BULLETS = 160        # C# 은 260 — 동시에 그만큼 뜨는 일은 없어 메모리만 줄였다
 
 
 class Run:
@@ -123,6 +140,14 @@ class Run:
         self.bm = np.zeros(C, dtype=bool)     # 백신 캡슐
         self.dead = np.zeros(C, dtype=bool)
         self.n = 0
+        # 타워 탄알
+        B = MAX_BULLETS
+        self.bux = np.zeros(B); self.buy = np.zeros(B)
+        self.bvx = np.zeros(B); self.bvy = np.zeros(B)
+        self.bulife = np.zeros(B); self.budmg = np.zeros(B)
+        self.bn = 0
+        self.tw_ang = [0.0, 0.0, 0.0]
+        self.tw_t = [0.0, 0.0, 0.0]
 
     def _spawn(self, wave, boss=False, bomb=False):
         if boss:
@@ -314,6 +339,66 @@ class Run:
                 self.py[:n][m] = lo[m]; self.vy[:n][m] *= -1
                 m = self.py[:n] > hi
                 self.py[:n][m] = hi[m]; self.vy[:n][m] *= -1
+
+            # --- 자동 타워(round47): 조준하지 않고 일정 속도로 돌며 탄알을 쏜다
+            if s.any_tower():
+                for ti in range(3):
+                    if not s.towerOn[ti]:
+                        continue
+                    self.tw_ang[ti] = (self.tw_ang[ti] + TOWER_SPIN * dt) % 360.0
+                    self.tw_t[ti] += dt
+                    iv = max(0.08, s.towerInterval[ti])
+                    guard = 0
+                    while self.tw_t[ti] >= iv and guard < 8:
+                        self.tw_t[ti] -= iv; guard += 1
+                        dmg = hit * s.towerDmgMul[ti]
+                        a0 = self.tw_ang[ti]
+                        angs = (a0 - BURST_SPREAD, a0, a0 + BURST_SPREAD) if s.towerType[ti] == 1 else (a0,)
+                        for a in angs:
+                            if self.bn >= MAX_BULLETS:
+                                break
+                            k = self.bn; self.bn += 1
+                            rad = math.radians(a)
+                            self.bux[k], self.buy[k] = TOWER_POS[ti]
+                            self.bvx[k] = math.sin(rad) * BULLET_SPEED
+                            self.bvy[k] = math.cos(rad) * BULLET_SPEED
+                            self.bulife[k] = BULLET_LIFE
+                            self.budmg[k] = dmg
+
+            # --- 탄알 이동 + 명중 (한 발은 적 하나만 때리고 사라진다 — 관통 없음)
+            if self.bn:
+                m = self.bn
+                self.bux[:m] += self.bvx[:m] * dt
+                self.buy[:m] += self.bvy[:m] * dt
+                self.bulife[:m] -= dt
+                alive = ((self.bulife[:m] > 0)
+                         & (self.bux[:m] > XMIN - 1.0) & (self.bux[:m] < XMAX + 1.0)
+                         & (self.buy[:m] > YMIN - 1.0) & (self.buy[:m] < YMAX + 1.0))
+                n = self.n
+                if n:
+                    dx = self.px[:n][None, :] - self.bux[:m][:, None]
+                    dy = self.py[:n][None, :] - self.buy[:m][:, None]
+                    rr = (self.er[:n] + BULLET_R)[None, :]
+                    inside = ((dx * dx + dy * dy) <= rr * rr) & (~self.dead[:n])[None, :] & alive[:, None]
+                    for bi_ in np.nonzero(inside.any(axis=1))[0]:
+                        cols = np.nonzero(inside[bi_])[0]
+                        if len(cols) == 0:
+                            continue
+                        j = int(cols[-1])     # C# 은 enemies 를 뒤에서부터 본다
+                        alive[bi_] = False
+                        if self.dead[j]:
+                            continue
+                        self.hp[j] -= self.budmg[bi_]
+                        if self.hp[j] <= 0 and kill(j, False):
+                            break             # 웨이브 전환/보스 처치 — 이번 프레임 명중 판정 중단
+                    self._compact()
+                keep = np.nonzero(alive)[0]
+                if len(keep) != m:
+                    for arr in (self.bux, self.buy, self.bvx, self.bvy, self.bulife, self.budmg):
+                        arr[:len(keep)] = arr[keep]
+                    self.bn = int(len(keep))
+                if st["won"]:
+                    break
 
             # --- cursor
             react_t += dt

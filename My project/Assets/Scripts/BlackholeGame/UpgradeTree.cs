@@ -16,13 +16,14 @@ namespace BlackholeGame
         public readonly int tier;
         public readonly Action<Stats> apply;
         public readonly bool repeat;        // round44: 반복 강화 — 살 때마다 같은 값(cost)으로 같은 효과(apply)를 한 번 더
+        public readonly int tab;            // round47: 0 = 커서(기존 트리), 1 = 자동 타워
 
         public UpgradeNode(string id, string parentId, Vector2 dir, string icon,
-                           string label, long cost, int tier, string desc, float descArg, Action<Stats> apply, bool repeat = false)
+                           string label, long cost, int tier, string desc, float descArg, Action<Stats> apply, bool repeat = false, int tab = 0)
         {
             this.id = id; this.parentId = parentId; this.dir = dir; this.icon = icon;
             this.label = label; this.cost = cost; this.tier = tier; this.desc = desc; this.descArg = descArg; this.apply = apply;
-            this.repeat = repeat;
+            this.repeat = repeat; this.tab = tab;
         }
         public bool IsRoot => parentId == null;
     }
@@ -75,13 +76,13 @@ namespace BlackholeGame
         // ---- 반복 강화 1회당 수치·가격 (같은 값으로 같은 양) ----
         // 1회 수치는 작게 — 여러 번(수십~수백 레벨) 사게 해서 +1/+10/최대 버튼이 의미 있게
         public const float RepFlat = 10f, RepMult = 1f, RepAps = 0.05f, RepRange = 0.01f, RepCritX = 0.02f, RepGold = 1f;
-        public static readonly long[] RepCost = { 7000000, 7000000, 7000000, 7000000, 7000000, 7000000 };   // flat, mult, speed, range, critx, gold   // flat, mult, speed, range, critx, gold   // flat, mult, speed, range, critx, gold   // flat, mult, speed, range, critx, gold   // flat, mult, speed, range, critx, gold
+        public static readonly long[] RepCost = { 7000000, 7000000, 7000000, 7000000, 7000000, 7000000 };   // flat, mult, speed, range, critx, gold
 
         // tier별 노드 비용 — balance_sim(tune42)으로 맞춘다.
-        static readonly int[] TierCost = { 15, 20419, 386738, 2784988, 15023775, 60000000, 260000000, 900000000 };
-        public static int Cost(int tier) =>
+        static readonly long[] TierCost = { 24, 6268, 136418, 809270, 9640207, 93542245, 994746785, 17987095160 };
+        public static long Cost(int tier) =>
             tier >= 0 && tier < TierCost.Length ? TierCost[tier]
-            : Mathf.RoundToInt(TierCost[TierCost.Length - 1] * Mathf.Pow(2.6f, tier - TierCost.Length + 1));
+            : (long)System.Math.Round(TierCost[TierCost.Length - 1] * System.Math.Pow(2.6, tier - TierCost.Length + 1));
 
         // 공격력 노드값은 티어별 표(가지 안 높이 → 티어 → 값)
         static readonly int[] FlatByTier = { 20, 24, 30, 50, 88, 156, 290, 560 };
@@ -103,6 +104,15 @@ namespace BlackholeGame
             LSCount= L(T.SCount,"scount", 9),  LSpawn = L(T.Spawn, "spawn",  9),
             LBDmg  = L(T.BombDmg, "bombdmg", 6, 1), LBRad = L(T.BombRad, "bombrad", 10, 1), LBFreq = L(T.BombFreq, "bombfreq", 5, 1);
         public const int BombUnlockTier = 1;   // 백신은 1지역을 깬 뒤 — 기본 조작에 익숙해진 다음 새 요소
+
+        // ---- 자동 타워(round47) — 좌/중앙/우 3줄기. 줄기마다 해금 → 공격력 → 공속 → 연발 전환 ----
+        //   공격력은 "커서 타격의 배수": 0.5 에서 시작해 +0.05 씩 10번 = 1.0.
+        public const int TowerUnlockTier = 1;          // 1지역을 깬 뒤부터
+        public const float TowerDmgAdd = 0.05f, TowerDmgMax = 1.0f;
+        public const float TowerSpeedMul = 0.88f, TowerIntervalMin = 0.45f;
+        public static readonly int[] TowerTierOfStep = { 1, 1, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 7, 7 };   // 줄기 안 17칸의 티어
+        static readonly string[] TowerKey = { "twL", "twC", "twR" };
+        static readonly string[] TowerName = { "n.towerL", "n.towerC", "n.towerR" };
 
         // 가지 안 k번째(0부터) 노드의 티어 — 시작 티어부터 NodeTiers-1(5)까지 높이 비율로 고르게
         public static int TierOf(LaneDef d, int k) => d.tier0 + (k * (NodeTiers - d.tier0)) / d.len;
@@ -169,6 +179,36 @@ namespace BlackholeGame
             return parent;
         }
 
+        // 타워 한 대(줄기 하나) — [해금] → 공격력/공속 섞어서 → [연발 전환]
+        static void TowerLane(List<UpgradeNode> list, int idx, string parent)
+        {
+            string key = TowerKey[idx];
+            // 0: 해금
+            string id0 = key + 0;
+            list.Add(new UpgradeNode(id0, parent, Vector2.zero, "tower", TowerName[idx], Cost(TowerUnlockTier), TowerUnlockTier,
+                                     "nd.towerOn", 0f, s => s.towerOn[idx] = true, false, 1));
+            parent = id0;
+            // 1~16: 공격력 10 + 공속 5 + 연발 1 (티어는 TowerTierOfStep)
+            //   순서를 섞어 "공격력만 쭉"이 되지 않게. 마지막은 연발 전환.
+            string[] kind = { "d", "d", "s", "d", "d", "s", "d", "d", "s", "d", "d", "s", "d", "d", "s", "r" };
+            for (int k = 0; k < kind.Length; k++)
+            {
+                int step = k + 1;
+                int tier = TowerTierOfStep[Mathf.Min(step, TowerTierOfStep.Length - 1)];
+                string id = key + step;
+                if (kind[k] == "d")
+                    list.Add(new UpgradeNode(id, parent, Vector2.zero, "sword", TowerName[idx], Cost(tier), tier,
+                                             "nd.towerDmg", TowerDmgAdd, s => s.towerDmgMul[idx] = Mathf.Min(TowerDmgMax, s.towerDmgMul[idx] + TowerDmgAdd), false, 1));
+                else if (kind[k] == "s")
+                    list.Add(new UpgradeNode(id, parent, Vector2.zero, "bolt", TowerName[idx], Cost(tier), tier,
+                                             "nd.towerSpd", TowerSpeedMul, s => s.towerInterval[idx] = Mathf.Max(TowerIntervalMin, s.towerInterval[idx] * TowerSpeedMul), false, 1));
+                else
+                    list.Add(new UpgradeNode(id, parent, Vector2.zero, "chevrons", TowerName[idx], Cost(tier), tier,
+                                             "nd.towerBurst", 0f, s => s.towerType[idx] = 1, false, 1));
+                parent = id;
+            }
+        }
+
         // 자식 순서 = 화면 왼쪽→오른쪽. 이어지는 가지를 가운데에 둬서 머리 노드 바로 위로 곧게 뻗게.
         public static List<UpgradeNode> BuildAll()
         {
@@ -201,6 +241,9 @@ namespace BlackholeGame
             Lane(list, LBDmg, "bomb");
             Lane(list, LBRad, "bomb");
             Lane(list, LBFreq, "bomb");
+
+            // 자동 타워 — 별도 탭(tab 1). 코어에서 좌/중앙/우 3줄기.
+            for (int i = 0; i < 3; i++) TowerLane(list, i, RootId);
 
             return list;
         }

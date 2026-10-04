@@ -14,7 +14,7 @@ NODE_TIERS = 8          # round45: 일반 노드는 티어 0~7 (지역마다 새
 REPEAT_TIER = 7         # 반복 강화는 마지막 티어
 
 FLAT_BY_TIER = [20, 24, 30, 50, 88, 156, 290, 560]
-TIER_COST    = [15, 20419, 386738, 2784988, 15023775, 60000000, 260000000, 900000000]
+TIER_COST    = [24, 6268, 136418, 809270, 9640207, 93542245, 994746785, 17987095160]
 
 ROOT_FLAT    = 8.0
 MULT_PP, MULT_CAP        = 21.0, 300.0
@@ -31,6 +31,14 @@ BOMB_DMG_ADD, BOMB_DMG_MAX = 0.5, 5.0
 BOMB_RAD_ADD, BOMB_RAD_MAX = 0.10, 2.0
 BOMB_INT_SUB, BOMB_INT_MIN = 2.0, 10.0
 BOMB_UNLOCK_TIER = 1
+
+# ---- 자동 타워(round47) — UpgradeTree.cs 의 Tower* 상수 미러 ----
+TOWER_UNLOCK_TIER = 1
+TOWER_DMG_ADD, TOWER_DMG_MAX = 0.05, 1.0
+TOWER_SPEED_MUL, TOWER_INTERVAL_MIN = 0.88, 0.45
+TOWER_TIER_OF_STEP = [1, 1, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 7, 7]
+TOWER_KIND = ["d", "d", "s", "d", "d", "s", "d", "d", "s", "d", "d", "s", "d", "d", "s", "r"]
+TOWER_KEYS = ["twL", "twC", "twR"]
 
 # 반복 강화 1회당 (UpgradeTree.Rep*) — 가격은 flat, mult, speed, range, critx, gold 순
 REP_FLAT, REP_MULT, REP_APS, REP_RANGE, REP_CRITX, REP_GOLD = 10.0, 1.0, 0.05, 0.01, 0.02, 1.0
@@ -60,12 +68,12 @@ BASE_SPAWNCNT = 1   # round42
 #            S1    S2    S3    S4    S5    S6    S7    S8
 WAVES    = [   4,    5,    7,    9,   11,   13,   15,   18]
 TLIM     = [  28,   34,   44,   54,   64,   74,   88,  108]
-HP0      = [30, 183, 588, 885, 1975, 4534, 15500, 33745]
+HP0      = [29, 183, 717, 1317, 3586, 13455, 83524, 366883]
 HPG      = [1.130, 1.136, 1.142, 1.148, 1.153, 1.158, 1.163, 1.168]
-BOSSHP   = [5504, 28608, 101727, 378594, 1647498, 5333362, 21302182, 65932470]
+BOSSHP   = [5375, 28608, 124107, 563499, 2991606, 15827144, 114790270, 716831884]
 QUOTA0   = [   4,    5,    6,    7,    8,    9,   10,   11]
 SE       = [   8,    9,   10,   11,   12,   13,   14,   15]
-GOLDRATE = [1.00, 4.57, 12.66, 19.49, 53.00, 160.15, 752.09, 2474.76]
+GOLDRATE = [1.00, 4.72, 15.98, 30.00, 99.55, 491.64, 4192.48, 27833.97]
 
 GOLD_CURVE = [
     1, 2, 5, 10, 12, 15, 20,
@@ -146,6 +154,17 @@ def apply_type(t, tier, s):
         s.critMult += REP_CRITX
     elif t == "RGold":
         s.goldMultPercent += REP_GOLD
+    # ---- 자동 타워 (타입 문자열 끝 한 글자가 줄기 번호) ----
+    elif t.startswith("Tw"):
+        i = int(t[-1]); kind = t[2:-1]
+        if kind == "On":
+            s.towerOn[i] = True
+        elif kind == "Dmg":
+            s.towerDmgMul[i] = min(TOWER_DMG_MAX, s.towerDmgMul[i] + TOWER_DMG_ADD)
+        elif kind == "Spd":
+            s.towerInterval[i] = max(TOWER_INTERVAL_MIN, s.towerInterval[i] * TOWER_SPEED_MUL)
+        elif kind == "Burst":
+            s.towerType[i] = 1
 
 
 class Node:
@@ -194,6 +213,17 @@ def build():
     lane("scount", "spawn0"); lane("spawn", "spawn0", 1)
     make("bomb", "spawn0", "Bomb", BOMB_UNLOCK_TIER, "bomb")
     lane("bombdmg", "bomb"); lane("bombrad", "bomb"); lane("bombfreq", "bomb")
+    # 자동 타워 — 코어에서 좌/중앙/우 3줄기(별도 탭)
+    for i in range(3):
+        key = TOWER_KEYS[i]
+        make(key + "0", "root", "TwOn%d" % i, TOWER_UNLOCK_TIER, key)
+        parent = key + "0"
+        for k, kind in enumerate(TOWER_KIND):
+            step = k + 1
+            tier = TOWER_TIER_OF_STEP[min(step, len(TOWER_TIER_OF_STEP) - 1)]
+            t = {"d": "TwDmg%d", "s": "TwSpd%d", "r": "TwBurst%d"}[kind] % i
+            make(key + str(step), parent, t, tier, key)
+            parent = key + str(step)
     return nodes
 
 
@@ -262,8 +292,8 @@ def wave_cfg(stage, asc=0):
 # GameManager 가 살아있는 Play 모드에서 UpgradeTree.BuildAll() 로 뽑은 값 (round38).
 EXPECTED_DPS = [256, 894, 2286, 6642, 23705, 65041, 220748, 578355]
 EXPECTED_HIT = [111, 232, 420, 706, 1335, 2562, 5050, 9748]
-EXPECTED_TOTAL_COST = 17_225_756_910   # 일반 노드만(반복 강화 제외)
-EXPECTED_NODES = 156   # 일반 150 + 반복 6
+EXPECTED_TOTAL_COST = 351_551_594_517  # 일반 노드만(반복 제외) — round48 가격 재조정 후, 에디터 실측과 일치
+EXPECTED_NODES = 207   # 루트+일반 150 + 타워 51 + 반복 6
 
 
 def self_check(verbose=True):

@@ -105,6 +105,8 @@ namespace BlackholeGame
                 ["skip"]      = Make(px => { Ln(px, 6, 6, 14, 14, 1); Ln(px, 14, 14, 6, 22, 1); Ln(px, 14, 6, 22, 14, 1); Ln(px, 22, 14, 14, 22, 1); Ln(px, 24, 5, 24, 23, 0); }),
                 // 코어(루트) — 육각형
                 ["hex"]       = Make(px => { const float r = 10f; for (int k = 0; k < 6; k++) { float a0 = k / 6f * 6.2832f, a1 = (k + 1) / 6f * 6.2832f; Ln(px, 14 + Mathf.Cos(a0) * r, 14 + Mathf.Sin(a0) * r, 14 + Mathf.Cos(a1) * r, 14 + Mathf.Sin(a1) * r, 1); } Dot(px, 14, 14, 2); }),
+                // 자동 타워 — 받침 + 총열
+                ["tower"]     = Make(px => { Ring(px, 14, 17, 7, 1); Dot(px, 14, 17, 2); Ln(px, 14, 17, 14, 4, 1); Dot(px, 14, 5, 2); }),
                 // 폴백
                 ["dot"]       = Make(px => { Dot(px, 14, 14, 3); }),
                 // 설정(톱니바퀴) — 지도 화면 우측 상단 메뉴 버튼용(노드 아님, 그대로)

@@ -67,6 +67,7 @@ namespace BlackholeGame
         HashSet<string> bought = new HashSet<string>();
         // round44: 반복 강화 레벨. 한 번이라도 산 반복 노드는 bought 에도 들어간다(연결선·공개 판정용).
         readonly Dictionary<string, int> repLv = new Dictionary<string, int>();
+        int treeTab;                // round47: 0 = 커서 강화, 1 = 자동 타워
         float treeMaxPan;           // 트리 세로 스크롤 최대치(맨 위) — 하단 '맨 위로' 버튼이 쓴다
         bool treeBarDrag;           // 스크롤바 핸들을 잡고 있는 중
         float treeBarGrabOff;       // 핸들 안에서 잡은 지점(위에서부터) — 드래그가 튀지 않게
@@ -98,6 +99,21 @@ namespace BlackholeGame
             public float shieldTimer;  // 다음 무적 페이즈까지 남은 시간(또는 무적 페이즈 남은 시간)
         }
         readonly List<Enemy> enemies = new List<Enemy>();
+
+        // ---- 자동 타워(round47) ----
+        //   조준하지 않는다: 제자리에서 일정 속도로 돌며 총구가 향한 쪽으로 쏜다.
+        class Bullet { public Transform tr; public SpriteRenderer sr; public Vector2 pos, vel; public float life, dmg, r; }
+        readonly List<Bullet> bullets = new List<Bullet>();
+        Transform[] towerTr = new Transform[Stats.TowerCount];
+        SpriteRenderer[] towerBarrelSr = new SpriteRenderer[Stats.TowerCount];
+        readonly float[] towerAngle = new float[Stats.TowerCount];
+        readonly float[] towerTimer = new float[Stats.TowerCount];
+        Sprite towerBaseSprite, towerBarrelSprite, bulletSprite;
+        static readonly Vector2[] TowerPos = { new Vector2(-5.2f, 0f), new Vector2(0f, 0f), new Vector2(5.2f, 0f) };
+        const float TowerSpin = 52f;      // 초당 회전 각도
+        const float BulletSpeed = 9f;
+        const float BulletLife = 2.2f;
+        const int MaxBullets = 260;
         Enemy boss;          // 30웨이브 보스 (없으면 null)
         float bossTeleportTimer;                  // 이 값이 0 이하가 되면 보스가 맵 어딘가로 순간이동
         const float BossTeleportInterval = 4.5f;   // 후반에 커서가 너무 커져서 그냥 쫓아가기만 하면 잡히는 문제 완화
@@ -686,6 +702,75 @@ namespace BlackholeGame
                 }
             tex.SetPixels32(px); tex.Apply();
             return Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), size, 0, SpriteMeshType.FullRect);
+        }
+
+        // 알파 버퍼(0~1) → 흰색 스프라이트. 색은 SpriteRenderer.color 로 입힌다(다른 절차 생성과 같은 규약).
+        static Sprite SpriteFromAlpha(float[] a, int size)
+        {
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false)
+            { filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
+            var px = new Color32[size * size];
+            for (int i = 0; i < px.Length; i++)
+                px[i] = new Color32(255, 255, 255, (byte)(Mathf.Clamp01(a[i]) * 255f));
+            tex.SetPixels32(px); tex.Apply();
+            return Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), size, 0, SpriteMeshType.FullRect);
+        }
+
+        // 타워 받침 — 두꺼운 고리 + 가운데 코어
+        // 가장자리가 또렷한 띠 하나(안쪽 0, 띠 1, 바깥 0) — 흐릿한 blob 대신 "기계"로 읽히게.
+        static float Band(float d, float lo, float hi)
+        {
+            const float aa = 0.012f;   // 안티에일리어싱 폭(반지름 비율)
+            return Mathf.SmoothStep(0f, 1f, (d - lo) / aa) * (1f - Mathf.SmoothStep(0f, 1f, (d - hi) / aa));
+        }
+
+        // 타워 받침 — 바깥 테 + 네 다리 + 가운데 코어. 또렷한 실루엣이라 세포들 사이에서 바로 구분된다.
+        Sprite BuildTowerBaseSprite()
+        {
+            const int S = 96;
+            var a = new float[S * S];
+            float c = S * 0.5f, R = S * 0.5f;
+            for (int y = 0; y < S; y++)
+                for (int x = 0; x < S; x++)
+                {
+                    float dx = x + 0.5f - c, dy = y + 0.5f - c;
+                    float d = Mathf.Sqrt(dx * dx + dy * dy) / R;
+                    float v = Band(d, 0.74f, 0.96f);                       // 바깥 테
+                    // 유니티 Mathf.SmoothStep 은 from..to 보간이라 경계 함수로 쓰려면 t 를 직접 정규화해야 한다
+                    v = Mathf.Max(v, 1f - Mathf.SmoothStep(0f, 1f, (d - 0.30f) / 0.03f));   // 가운데 코어
+                    // 다리 4개 — 코어와 테를 잇는 짧은 살
+                    float ang = Mathf.Atan2(dy, dx);
+                    float spoke = Mathf.Abs(Mathf.Cos(ang * 2f));
+                    if (d > 0.28f && d < 0.80f && spoke > 0.965f) v = 1f;
+                    a[y * S + x] = Mathf.Clamp01(v);
+                }
+            return SpriteFromAlpha(a, S);
+        }
+
+        // 총열 — 중심에서 위쪽으로 뻗은 막대 + 총구. 스프라이트를 회전시켜 방향을 잡는다.
+        Sprite BuildTowerBarrelSprite()
+        {
+            const int S = 96;
+            var a = new float[S * S];
+            // 총열은 가장자리가 또렷해야 "돌고 있다"가 읽힌다 — 사각 막대 + 총구 블록으로 직접 찍는다.
+            float cx = S * 0.5f;
+            for (int y = 0; y < S; y++)
+                for (int x = 0; x < S; x++)
+                {
+                    float fx = x + 0.5f, fy = y + 0.5f;
+                    bool shaft  = Mathf.Abs(fx - cx) <= S * 0.065f && fy >= S * 0.42f && fy <= S * 0.90f;
+                    bool muzzle = Mathf.Abs(fx - cx) <= S * 0.115f && fy >= S * 0.82f && fy <= S * 0.97f;
+                    if (shaft || muzzle) a[y * S + x] = 1f;
+                }
+            return SpriteFromAlpha(a, S);
+        }
+
+        Sprite BuildBulletSprite()
+        {
+            const int S = 32;
+            var a = new float[S * S];
+            StampBlob(a, S, S * 0.5f, S * 0.5f, S * 0.38f);
+            return SpriteFromAlpha(a, S);
         }
 
         Sprite BuildDiscSprite()
@@ -1384,8 +1469,131 @@ namespace BlackholeGame
             state = State.Map;
         }
 
+        // 타워 3개를 씬에 만들어 두고, 해금 여부에 따라 보이기만 토글한다.
+        void EnsureTowers()
+        {
+            if (spriteMat == null) spriteMat = new Material(FindSpriteShader());
+            if (towerBaseSprite == null) towerBaseSprite = BuildTowerBaseSprite();
+            if (towerBarrelSprite == null) towerBarrelSprite = BuildTowerBarrelSprite();
+            for (int i = 0; i < Stats.TowerCount; i++)
+            {
+                if (towerTr[i] == null)
+                {
+                    var go = new GameObject("Tower" + i);
+                    var sr = go.AddComponent<SpriteRenderer>();
+                    sr.sprite = towerBaseSprite; sr.sharedMaterial = spriteMat; sr.sortingOrder = 8;
+                    sr.color = new Color(0.66f, 0.84f, 1f);
+                    go.transform.position = TowerPos[i];
+                    go.transform.localScale = Vector3.one * 1.5f;
+                    towerTr[i] = go.transform;
+
+                    var bg = new GameObject("Barrel");
+                    bg.transform.SetParent(go.transform, false);
+                    var bsr = bg.AddComponent<SpriteRenderer>();
+                    bsr.sprite = towerBarrelSprite; bsr.sharedMaterial = spriteMat; bsr.sortingOrder = 9;
+                    bsr.color = new Color(0.88f, 0.96f, 1f);
+                    towerBarrelSr[i] = bsr;
+                }
+                bool on = stats != null && stats.towerOn[i];
+                towerTr[i].gameObject.SetActive(on);
+            }
+        }
+
+        void ClearBullets()
+        {
+            foreach (var b in bullets) if (b.tr) Destroy(b.tr.gameObject);
+            bullets.Clear();
+        }
+
+        void SpawnBullet(Vector2 pos, float angDeg, float dmg)
+        {
+            if (bullets.Count >= MaxBullets) return;
+            if (bulletSprite == null) bulletSprite = BuildBulletSprite();
+            if (spriteMat == null) spriteMat = new Material(FindSpriteShader());
+            var go = new GameObject("Bullet");
+            var sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = bulletSprite; sr.sharedMaterial = spriteMat; sr.sortingOrder = 13;
+            sr.color = new Color(0.70f, 0.95f, 1f);   // 골드 드랍(노란 점)과 구분되는 하늘색
+            float rad = angDeg * Mathf.Deg2Rad;
+            var dir = new Vector2(Mathf.Sin(rad), Mathf.Cos(rad));   // 0도 = 위쪽
+            var b = new Bullet { tr = go.transform, sr = sr, pos = pos, vel = dir * BulletSpeed, life = BulletLife, dmg = dmg, r = 0.16f };
+            go.transform.position = pos;
+            go.transform.localScale = Vector3.one * (b.r * 2f);
+            bullets.Add(b);
+        }
+
+        // 타워 회전 + 발사. 조준하지 않는다 — 총구가 향한 방향으로 그냥 쏜다.
+        void UpdateTowers(float dt)
+        {
+            if (stats == null || !stats.AnyTower) return;
+            float hit = stats.GetHitDamage();
+            for (int i = 0; i < Stats.TowerCount; i++)
+            {
+                if (!stats.towerOn[i]) continue;
+                towerAngle[i] = Mathf.Repeat(towerAngle[i] + TowerSpin * dt, 360f);
+                if (towerBarrelSr[i] != null)
+                    towerBarrelSr[i].transform.localRotation = Quaternion.Euler(0f, 0f, -towerAngle[i]);
+
+                towerTimer[i] += dt;
+                float iv = Mathf.Max(0.08f, stats.towerInterval[i]);
+                int guard = 0;
+                while (towerTimer[i] >= iv && guard++ < 8)
+                {
+                    towerTimer[i] -= iv;
+                    float dmg = hit * stats.towerDmgMul[i];
+                    if (stats.towerType[i] == 1)
+                    {   // 연발 — 총구 양옆으로 3발 부채꼴
+                        SpawnBullet(TowerPos[i], towerAngle[i] - 11f, dmg);
+                        SpawnBullet(TowerPos[i], towerAngle[i], dmg);
+                        SpawnBullet(TowerPos[i], towerAngle[i] + 11f, dmg);
+                    }
+                    else SpawnBullet(TowerPos[i], towerAngle[i], dmg);
+                    if (sound != null && i == 0) sound.Play(Sfx.Pulse, 0.18f, 1.5f);
+                }
+            }
+        }
+
+        // 탄알 이동 + 명중. 맞은 적 하나에만 피해를 주고 사라진다(관통 없음).
+        void UpdateBullets(float dt)
+        {
+            if (bullets.Count == 0) return;
+            var fr = FieldRect;
+            bool stop = false;
+            for (int i = bullets.Count - 1; i >= 0; i--)
+            {
+                var b = bullets[i];
+                b.life -= dt;
+                b.pos += b.vel * dt;
+                if (b.life <= 0f || b.pos.x < fr.xMin - 1f || b.pos.x > fr.xMax + 1f || b.pos.y < fr.yMin - 1f || b.pos.y > fr.yMax + 1f)
+                { if (b.tr) Destroy(b.tr.gameObject); bullets.RemoveAt(i); continue; }
+                if (b.tr) b.tr.position = b.pos;
+
+                if (stop) continue;
+                for (int j = enemies.Count - 1; j >= 0; j--)
+                {
+                    var e = enemies[j];
+                    if (e.dead) continue;
+                    float dx = e.tr.position.x - b.pos.x, dy = e.tr.position.y - b.pos.y;
+                    float rr = e.r + b.r;
+                    if (dx * dx + dy * dy > rr * rr) continue;
+                    bool isBoss = e == boss;
+                    if (!(isBoss && e.shielded))
+                    {
+                        e.hp -= b.dmg;
+                        e.flash = 0.06f;
+                        if (e.hp <= 0f && KillEnemy(e, false)) stop = true;
+                    }
+                    if (b.tr) Destroy(b.tr.gameObject);
+                    bullets.RemoveAt(i);
+                    break;
+                }
+            }
+            enemies.RemoveAll(x => x.dead);
+        }
+
         void PurgeSpawnedObjects()
         {
+            ClearBullets();
             enemies.Clear();
             bursts.Clear();
             splats.Clear();
@@ -1408,6 +1616,8 @@ namespace BlackholeGame
 
         void StartRun()
         {
+            EnsureTowers();
+            ClearBullets();
             wave.LoadStage(currentStage);   // 지역 파라미터 적용
             wave.ApplyAscension(ascensionLevel);   // 승천 배율(적/보스 체력↑, 골드↓)
             ApplyFieldLook();               // 변이 단계만큼 감염된 전장 색
@@ -1791,6 +2001,9 @@ namespace BlackholeGame
                 }
             }
 
+            UpdateTowers(dt);
+            UpdateBullets(dt);
+
             attackTimer += dt;
             guard = 0;
             if (stats.autoAttack)
@@ -2164,7 +2377,8 @@ namespace BlackholeGame
 
         string[] StatLabels => new[]
         { Loc.T("stat.dmg"), Loc.T("stat.crit"), Loc.T("stat.aspd"), Loc.T("stat.range"),
-          Loc.T("stat.gold"), Loc.T("stat.spawn"), Loc.T("stat.time"), Loc.T("stat.startWave"), Loc.T("stat.bomb") };
+          Loc.T("stat.gold"), Loc.T("stat.spawn"), Loc.T("stat.time"), Loc.T("stat.startWave"), Loc.T("stat.bomb"),
+          Loc.T("stat.tower") };
 
         string[] StatValues(Stats s)
         {
@@ -2182,7 +2396,18 @@ namespace BlackholeGame
                 s.bombUnlocked
                     ? Loc.F("stat.bombVal", s.bombDmgMul.ToString("0.0#"), s.bombRadiusMul.ToString("0.0"), s.bombInterval.ToString("0"))
                     : Loc.T("stat.bombOff"),
+                TowerStatText(s),
             };
+        }
+
+        // 자동 타워 요약 — "설치 대수 · 평균 공격 배율 · 평균 발사 간격"
+        static string TowerStatText(Stats s)
+        {
+            int n = 0; float mul = 0f, iv = 0f;
+            for (int i = 0; i < Stats.TowerCount; i++)
+                if (s.towerOn[i]) { n++; mul += s.towerDmgMul[i]; iv += s.towerInterval[i]; }
+            if (n == 0) return Loc.T("stat.towerOff");
+            return Loc.F("stat.towerVal", n.ToString(), (mul / n).ToString("0.0#"), (iv / n).ToString("0.0#"));
         }
 
         // 트리 화면 좌측 능력치 패널. 반환값 = 패널이 차지한 폭(트리를 그 오른쪽에 배치하기 위해)
@@ -2325,7 +2550,9 @@ namespace BlackholeGame
         int RegularBoughtCount() { int c = 0; if (nodes != null) foreach (var n in nodes) if (!n.repeat && bought.Contains(n.id)) c++; return c; }
 
         // 라벨 버튼 전부 이걸 통해 그린다 — 클릭음이 한 곳에서 붙도록
-        bool UiBtn(Rect r, string label, GUIStyle st)
+        bool UiBtn(Rect r, string label, GUIStyle st) => UiBtn(r, label, st, Color.white);
+
+        bool UiBtn(Rect r, string label, GUIStyle st, Color tint)
         {
             LoadUiSkin();
             if (uiBtnN != null)
@@ -2339,7 +2566,7 @@ namespace BlackholeGame
                 float s = r.height / 72f;   // 텍스처 몸통 높이 72px 가 버튼 높이에 맞게
                 if (Event.current.type == EventType.Repaint)
                 {
-                    var gc = GUI.color; GUI.color = Color.white;
+                    var gc = GUI.color; GUI.color = tint;
                     // 텍스처는 256x96 에 몸통(240x72)이 (8,6) — 여백만큼 바깥으로 넓혀서 몸통이 r 에 딱 맞게.
                     // 오른쪽 테두리를 80 으로 둬서 세포 점(소기관)이 늘어나지 않고 끝부분에 붙어 있게.
                     DrawNineSlice(new Rect(r.x - 8f * s, r.y - 6f * s, r.width + 16f * s, r.height + 24f * s), tex, 44f, 80f, 34f, 40f, s);
@@ -2479,14 +2706,16 @@ namespace BlackholeGame
         {
             if (uiSkinLoaded) return;
             uiSkinLoaded = true;
-            uiBtnN = Resources.Load<Texture2D>("UI/btn_normal");
-            uiBtnH = Resources.Load<Texture2D>("UI/btn_hover");
-            uiBtnP = Resources.Load<Texture2D>("UI/btn_pressed");
-            uiBtnD = Resources.Load<Texture2D>("UI/btn_disabled");
-            uiPanel = Resources.Load<Texture2D>("UI/panel_dark");
-            uiPanelGold = Resources.Load<Texture2D>("UI/panel_gold");
-            uiLogo = Resources.Load<Texture2D>("UI/logo");
-            uiBg = Resources.Load<Texture2D>("UI/bg_glass");
+            // round48: Resources/UI/*.png 가 있으면 그쪽을 쓰고(디자이너 교체용),
+            //   없으면 UiSkin 이 같은 사양으로 절차 생성한다 — 더는 유니티 기본 회색 버튼이 아니다.
+            uiBtnN = Resources.Load<Texture2D>("UI/btn_normal")   ?? UiSkin.BtnNormal;
+            uiBtnH = Resources.Load<Texture2D>("UI/btn_hover")    ?? UiSkin.BtnHover;
+            uiBtnP = Resources.Load<Texture2D>("UI/btn_pressed")  ?? UiSkin.BtnPressed;
+            uiBtnD = Resources.Load<Texture2D>("UI/btn_disabled") ?? UiSkin.BtnDisabled;
+            uiPanel = Resources.Load<Texture2D>("UI/panel_dark")  ?? UiSkin.PanelDark;
+            uiPanelGold = Resources.Load<Texture2D>("UI/panel_gold") ?? UiSkin.PanelGold;
+            uiLogo = Resources.Load<Texture2D>("UI/logo");   // 없으면 글자로 그린다(DrawLogo)
+            uiBg = Resources.Load<Texture2D>("UI/bg_glass");  // 없으면 절차 배경(DrawSkinBackground)
         }
 
         // 9-slice — L/R/T/B 는 텍스처 픽셀, s = 화면 픽셀 / 텍스처 픽셀. 모서리는 늘어나지 않는다.
@@ -2526,19 +2755,62 @@ namespace BlackholeGame
         bool DrawSkinBackground()
         {
             LoadUiSkin();
-            if (uiBg == null) return false;
             var gc = GUI.color; GUI.color = Color.white;
-            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), uiBg, ScaleMode.ScaleAndCrop);
+            if (uiBg != null)
+            {
+                GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), uiBg, ScaleMode.ScaleAndCrop);
+                GUI.color = gc;
+                return true;
+            }
+            // 절차 배경 — 위아래 청록 그라데이션 + 느리게 떠다니는 세포 + 비네트.
+            float w = Screen.width, h = Screen.height;
+            GUI.DrawTexture(new Rect(0, 0, w, h), UiSkin.VGrad);
+
+            //   값은 Figma bg_glass 의 배치를 화면 비율로 옮긴 것. (x, y, 지름, 알파)
+            float tt = Application.isPlaying ? Time.unscaledTime : 0f;
+            for (int i = 0; i < BgCells.Length; i++)
+            {
+                var b = BgCells[i];
+                float drift = Mathf.Sin(tt * 0.11f + i * 1.7f) * 10f * uiScale;      // 아주 느린 부유
+                float d = b.z * h;
+                float cx = b.x * w, cy = b.y * h + drift;
+                GUI.color = new Color(0.78f, 0.95f, 0.95f, b.w * 0.95f);
+                GUI.DrawTexture(new Rect(cx - d * 0.5f, cy - d * 0.5f, d, d), UiSkin.Bubble);
+                // 핵 — 가운데에서 살짝 비낀 작은 원
+                float nd = d * 0.26f;
+                GUI.color = new Color(0.62f, 0.88f, 0.90f, b.w * 1.05f);
+                GUI.DrawTexture(new Rect(cx - nd * 0.5f + d * 0.08f, cy - nd * 0.5f + d * 0.06f, nd, nd), UiSkin.Bubble);
+            }
+            GUI.color = Color.white;
+            GUI.DrawTexture(new Rect(0, 0, w, h), UiSkin.Vignette);
             GUI.color = gc;
             return true;
         }
 
+        // 배경 세포 배치 — (가로비, 세로비, 지름(화면높이 비), 알파)
+        static readonly Vector4[] BgCells =
+        {
+            new Vector4(0.09f, 0.19f, 0.38f, 0.30f), new Vector4(0.86f, 0.12f, 0.36f, 0.26f),
+            new Vector4(0.77f, 0.78f, 0.52f, 0.24f), new Vector4(0.17f, 0.82f, 0.34f, 0.28f),
+            new Vector4(0.51f, 0.11f, 0.18f, 0.22f), new Vector4(0.39f, 0.65f, 0.21f, 0.24f),
+            new Vector4(0.62f, 0.46f, 0.14f, 0.26f), new Vector4(0.27f, 0.42f, 0.12f, 0.22f),
+            new Vector4(0.94f, 0.52f, 0.16f, 0.20f), new Vector4(0.04f, 0.52f, 0.14f, 0.22f),
+        };
+
         // 스킨 버튼 위에 얹을 글자 전용 스타일 — 배경은 비우고 글자만 진한 청록
         static GUIStyle SkinTextStyle(GUIStyle st, bool down, float s)
         {
-            var t = new GUIStyle(st);
-            t.normal.background = t.hover.background = t.active.background = t.focused.background = null;
-            t.onNormal.background = t.onHover.background = t.onActive.background = t.onFocused.background = null;
+            // GUI.skin.button 파생 스타일은 background 를 비워도 scaledBackgrounds(HiDPI) 가 남아
+            //   기본 회색 칩이 9-slice 스킨 위에 덮인다. 배경이 아예 없는 GUIStyle.none 에서 글자만 가져온다.
+            var t = new GUIStyle(GUIStyle.none)
+            {
+                font = st.font,
+                fontSize = st.fontSize,
+                alignment = st.alignment == TextAnchor.UpperLeft ? TextAnchor.MiddleCenter : st.alignment,
+                wordWrap = st.wordWrap,
+                clipping = TextClipping.Overflow,
+                padding = new RectOffset(0, 0, 0, 0),
+            };
             t.normal.textColor = t.hover.textColor = t.active.textColor = t.focused.textColor = SkinInk;
             t.onNormal.textColor = t.onHover.textColor = t.onActive.textColor = t.onFocused.textColor = SkinInk;
             t.fontStyle = FontStyle.Bold;
@@ -2856,16 +3128,22 @@ namespace BlackholeGame
             bool bossSeen = unlocked && (bossSeenMask & (1 << i)) != 0;
             var gc = GUI.color;
 
-            GUI.color = unlocked ? new Color(st.theme.r, st.theme.g, st.theme.b, cleared ? 0.55f : 0.92f)
-                                 : new Color(0.50f, 0.52f, 0.55f, 0.5f);
-            GUI.DrawTexture(r, Texture2D.whiteTexture);
+            // round48: 각진 사각형 -> 둥근 "세포막" 카드. 고른 카드는 바깥에 청록 글로우가 번진다.
+            if (center)
+            {
+                float gw = 16f * s;
+                GUI.color = new Color(0.35f, 0.88f, 0.82f, 0.38f);
+                DrawNineSlice(new Rect(r.x - gw, r.y - gw, r.width + gw * 2f, r.height + gw * 2f),
+                              UiSkin.CardEdge, 26f, 26f, 26f, 26f, 1f + gw / 26f);
+            }
+            GUI.color = unlocked ? new Color(st.theme.r, st.theme.g, st.theme.b, cleared ? 0.62f : 0.95f)
+                                 : new Color(0.50f, 0.52f, 0.55f, 0.55f);
+            DrawNineSlice(r, UiSkin.CardFill, 26f, 26f, 26f, 26f, 1f);
 
-            GUI.color = center ? new Color(1f, 1f, 1f, 0.95f) : new Color(0f, 0f, 0f, 0.22f);
-            float bt = center ? 4f : 2f;
-            GUI.DrawTexture(new Rect(r.x, r.y, r.width, bt), Texture2D.whiteTexture);
-            GUI.DrawTexture(new Rect(r.x, r.yMax - bt, r.width, bt), Texture2D.whiteTexture);
-            GUI.DrawTexture(new Rect(r.x, r.y, bt, r.height), Texture2D.whiteTexture);
-            GUI.DrawTexture(new Rect(r.xMax - bt, r.y, bt, r.height), Texture2D.whiteTexture);
+            GUI.color = center ? new Color(1f, 1f, 1f, 0.95f)
+                      : unlocked ? new Color(0.06f, 0.24f, 0.26f, 0.30f)
+                                 : new Color(0.06f, 0.10f, 0.12f, 0.22f);
+            DrawNineSlice(r, UiSkin.CardEdge, 26f, 26f, 26f, 26f, center ? 1.5f : 1f);
             GUI.color = gc;
 
             // 보스 그림자 / 살아있는 보스
@@ -2979,6 +3257,56 @@ namespace BlackholeGame
                 state = State.Map;
         }
 
+        // 로고 — Figma UI 키트의 "POP Cell"(흰 외곽선 + 진한 청록 글자 + 주변 세포)을 글자로 재현.
+        //   PNG 를 안 쓰므로 어느 해상도에서도 또렷하다.
+        void DrawLogo(float cx, float cy, float fs)
+        {
+            var st = new GUIStyle(sBig)
+            { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(fs), fontStyle = FontStyle.Bold };
+            if (uiFont != null) st.font = uiFont;
+            FlatText(st);
+
+            const string TXT = "POP Cell";
+            float halfW = fs * 6f, halfH = fs * 0.9f;
+            var baseRect = new Rect(cx - halfW, cy - halfH, halfW * 2f, halfH * 2f);
+            var gc = GUI.color;
+
+            // 글자 뒤 세포 — 로고 주변에 흩어진 민트 거품
+            for (int i = 0; i < LogoCells.Length; i++)
+            {
+                var b = LogoCells[i];
+                float d = b.z * fs;
+                GUI.color = new Color(0.55f, 0.88f, 0.82f, b.w);
+                GUI.DrawTexture(new Rect(cx + b.x * fs - d * 0.5f, cy + b.y * fs - d * 0.5f, d, d), UiSkin.Bubble);
+            }
+
+            GUI.color = Color.white;   // 거품 틴트가 글자에 묻지 않게
+
+            void Put(float dx, float dy, Color col)
+            {
+                st.normal.textColor = col; FlatText(st);
+                GUI.Label(new Rect(baseRect.x + dx, baseRect.y + dy, baseRect.width, baseRect.height), TXT, st);
+            }
+
+            Put(0f, fs * 0.08f, new Color(0.05f, 0.28f, 0.27f, 0.30f));          // 그림자
+            float o = Mathf.Max(2f, fs * 0.055f);                                 // 흰 외곽선 8방향
+            for (int k = 0; k < 8; k++)
+            {
+                float a = k * Mathf.PI * 0.25f;
+                Put(Mathf.Cos(a) * o, Mathf.Sin(a) * o, Color.white);
+            }
+            Put(0f, 0f, UiSkin.BtnEdge);                                          // 본문(진한 청록)
+            GUI.color = gc;
+        }
+
+        // 로고 주변 세포 — (글자 크기 기준 x, y, 지름, 알파)
+        static readonly Vector4[] LogoCells =
+        {
+            new Vector4(-5.3f, -0.55f, 0.62f, 0.55f), new Vector4(4.9f, -0.60f, 0.46f, 0.50f),
+            new Vector4(5.4f,  0.38f, 0.28f, 0.45f), new Vector4(-5.8f, 0.52f, 0.24f, 0.45f),
+            new Vector4(4.5f,  0.72f, 0.18f, 0.40f),
+        };
+
         void DrawTitle()
         {
             if (!DrawSkinBackground()) FillScreen(Glass);
@@ -2999,7 +3327,7 @@ namespace BlackholeGame
                 GUI.DrawTexture(new Rect(w * 0.5f - lw * 0.5f, cy - lh * 0.5f, lw, lh), uiLogo, ScaleMode.ScaleToFit);
                 GUI.color = gcL;
             }
-            else GUI.Label(new Rect(0, h * 0.13f, w, Mathf.RoundToInt(90f * uiScale)), "POP Cell", tt);
+            else DrawLogo(w * 0.5f, h * 0.13f + 45f * uiScale, 76f * uiScale);
             var sub = new GUIStyle(sLabel)
             { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(15f * uiScale),
               normal = { textColor = new Color(0.16f, 0.20f, 0.24f) } };
@@ -3417,6 +3745,20 @@ namespace BlackholeGame
             }
         }
 
+        // round47: 기준 가로 칸 수 = 커서 탭(가장 넓은 탭)의 가지 끝 개수. 탭이 바뀌어도 노드 크기와
+        //   행 간격이 그대로이게 하는 기준값 — 노드 목록은 세션 내내 안 변하니 한 번만 센다.
+        int treeRefCols;
+        int TreeRefCols()
+        {
+            if (treeRefCols > 0 || nodes == null) return Mathf.Max(1, treeRefCols);
+            var parents = new HashSet<string>();
+            foreach (var n in nodes) if (!n.repeat && n.tab == 0) parents.Add(n.parentId);
+            int leaves = 0;
+            foreach (var n in nodes) if (!n.repeat && n.tab == 0 && !n.IsRoot && !parents.Contains(n.id)) leaves++;
+            treeRefCols = Mathf.Max(1, leaves);
+            return treeRefCols;
+        }
+
         void DrawTree()
         {
             // round41: 어두운 배경 -> 타이틀/지도와 같은 밝은 유리 톤으로 통일
@@ -3436,7 +3778,9 @@ namespace BlackholeGame
             float availTop = Screen.height - barH;
             // round43: 가로는 고정 — 가지 14개 전부가 능력치 패널 왼쪽 공간에 딱 들어오는 배율로 두고,
             //   확대/축소 대신 휠·우클릭 드래그로 위아래 스크롤만 한다(사용자 요청).
-            Rect area = new Rect(16f, 16f, Mathf.Max(240f, statRect.xMin - 32f), Mathf.Max(120f, availTop - 32f));
+            float tabBarH = 42f * uiScale;   // round47: 상단 커서/타워 탭 바
+            Rect area = new Rect(16f, 16f + tabBarH, Mathf.Max(240f, statRect.xMin - 32f),
+                                 Mathf.Max(120f, availTop - 32f - tabBarH));
             Vector2 pivot = new Vector2(area.center.x, availTop - 20f);   // y 는 배율 계산 뒤 다시 잡는다
 
             var childrenOf = new Dictionary<string, List<UpgradeNode>>();
@@ -3445,6 +3789,7 @@ namespace BlackholeGame
             {
                 if (n.IsRoot) { rootNode = n; continue; }
                 if (n.repeat) continue;   // round45: 반복 강화는 트리가 아니라 능력치 패널 아래 고정 패널에
+                if (n.tab != treeTab) continue;   // round47: 지금 보고 있는 탭의 노드만
                 if (!childrenOf.TryGetValue(n.parentId, out var list)) { list = new List<UpgradeNode>(); childrenOf[n.parentId] = list; }
                 list.Add(n);
             }
@@ -3483,25 +3828,37 @@ namespace BlackholeGame
                     cursor += w;
                 }
             }
+            float fullW = (rootNode != null ? weightOf[rootNode.id] : 1) * colUnit;
             if (rootNode != null)
             {
                 float rootHalfW = weightOf[rootNode.id] * colUnit * 0.5f;
                 AssignX(rootNode, -rootHalfW, rootHalfW);
+
+                // round47: 타워 탭은 줄기가 3개뿐이라 그대로 두면 배율이 커서 탭보다 훨씬 커져
+                //   노드가 거대해지고 행 간격도 벌어진다. 좁은 탭은 가로로만 늘려서
+                //   두 탭의 노드 크기·행 간격이 똑같게 맞춘다.
+                float refW = TreeRefCols() * colUnit;
+                if (fullW > 1f && fullW < refW - 1f)
+                {
+                    float k = refW / fullW;
+                    var xKeys = new List<string>(xOf.Keys);
+                    foreach (var xk in xKeys) xOf[xk] *= k;
+                    fullW = refW;
+                }
             }
 
             // 배율 = 전체 가지 폭이 area 가로에 딱 맞게(좌우 여백 = 노드 반 개 + 약간). 고정.
-            float fullW = (rootNode != null ? weightOf[rootNode.id] : 1) * colUnit;
             float zoom = Mathf.Clamp(area.width / (fullW + nodeSz * 0.5f), 0.2f, 1.6f);
             pivot.y = availTop - 22f - nodeSz * 0.5f * zoom;   // 스크롤 맨 아래에서 코어가 하단 바 바로 위
 
             npos.Clear();
             foreach (var n in nodes)
-                if (!n.repeat) npos[n.id] = new Vector2(pivot.x + xOf[n.id], pivot.y - depthOf[n.id] * rowSpacing);
+                if (!n.repeat && (n.IsRoot || n.tab == treeTab)) npos[n.id] = new Vector2(pivot.x + xOf[n.id], pivot.y - depthOf[n.id] * rowSpacing);
 
             // 위로는 "지금까지 드러난 것"까지만 올라간다 — 뚫을수록 더 위까지 볼 수 있다(round41 규칙 유지).
             float minY = pivot.y;
             foreach (var n in nodes)
-                if (!n.repeat && IsRevealed(n) && npos[n.id].y < minY) minY = npos[n.id].y;   // 화면 좌표는 위로 갈수록 y가 작아짐
+                if (!n.repeat && (n.IsRoot || n.tab == treeTab) && IsRevealed(n) && npos[n.id].y < minY) minY = npos[n.id].y;   // 화면 좌표는 위로 갈수록 y가 작아짐
             float topScreen0 = pivot.y + (minY - pivot.y) * zoom;          // 스크롤 0 일 때 가장 높은 노드의 화면 y
             float maxPan = Mathf.Max(0f, (area.yMin + nodeSz * 0.5f * zoom + 8f) - topScreen0);
 
@@ -3580,7 +3937,7 @@ namespace BlackholeGame
             Color lineOn  = new Color(0.10f, 0.62f, 0.18f, 1f);      // 초록 — 뚫음
             for (int pass = 0; pass < 2; pass++)
                 foreach (var n in nodes)
-                    if (!n.IsRoot && !n.repeat && IsRevealed(n) && IsBought(n.id) == (pass == 1))
+                    if (!n.IsRoot && !n.repeat && n.tab == treeTab && IsRevealed(n) && IsBought(n.id) == (pass == 1))
                         DrawConnector(npos[n.parentId], npos[n.id], lineW, pass == 1 ? lineOn : lineOff);
 
             // 노드 — 아이콘만. 효과는 마우스 오버 툴팁으로.
@@ -3588,6 +3945,7 @@ namespace BlackholeGame
             foreach (var n in nodes)
             {
                 if (n.repeat) continue;         // 반복 강화는 아래 고정 패널에서 따로 그린다
+                if (!n.IsRoot && n.tab != treeTab) continue; // 다른 탭의 노드
                 if (!IsRevealed(n)) continue;   // 아직 자라지 않은 가지는 그리지 않는다
                 Vector2 p = npos[n.id];
                 var rect = new Rect(p.x - nodeSz * 0.5f, p.y - nodeSz * 0.5f, nodeSz, nodeSz);
@@ -3639,8 +3997,37 @@ namespace BlackholeGame
 
             GUI.matrix = saved;
 
+            // round47: 커서 / 타워 탭 — 트리 영역 상단 가운데
+            {
+                float tw2 = Mathf.Min(150f * uiScale, area.width * 0.3f), th2 = 34f * uiScale, tgap = 8f * uiScale;
+                float tx0 = area.center.x - (tw2 * 2f + tgap) * 0.5f, ty0 = area.yMin - tabBarH + 4f;
+                var tabSt = Btn(Mathf.RoundToInt(14f * uiScale));
+                for (int i = 0; i < 2; i++)
+                {
+                    var r = new Rect(tx0 + i * (tw2 + tgap), ty0, tw2, th2);
+                    bool on = treeTab == i;
+                    // 배경 없는 글자 스타일 — 몸통은 UiBtn 의 스킨(젤리 버튼)이 그린다.
+                    var ts2 = new GUIStyle(GUIStyle.none)
+                    {
+                        font = tabSt.font,
+                        fontSize = tabSt.fontSize,
+                        fontStyle = on ? FontStyle.Bold : FontStyle.Normal,
+                        alignment = TextAnchor.MiddleCenter,
+                        wordWrap = false,
+                        clipping = TextClipping.Overflow,
+                    };
+                    var col = on ? UiSkin.Ink : new Color(0.22f, 0.36f, 0.38f, 0.85f);
+                    ts2.normal.textColor = ts2.hover.textColor = ts2.active.textColor = ts2.focused.textColor = col;
+                    FlatText(ts2);
+                    // 고른 탭은 그대로, 안 고른 탭은 흐리게 — 색만으로 구분한다
+                    if (UiBtn(r, Loc.T(i == 0 ? "tree.tabCursor" : "tree.tabTower"), ts2,
+                              on ? Color.white : new Color(0.72f, 0.78f, 0.78f, 0.75f)) && treeTab != i)
+                    { treeTab = i; treeZoom = 0f; treePan = Vector2.zero; }
+                }
+            }
+
             DrawStatPanel(statRect, hovered);
-            DrawRepeatPanel(statRect);
+            if (treeTab == 0) DrawRepeatPanel(statRect);
 
             // 마우스 오버 툴팁 (스크린 좌표)
             if (hovered != null)
