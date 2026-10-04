@@ -67,8 +67,9 @@ namespace BlackholeGame
         HashSet<string> bought = new HashSet<string>();
         // round44: 반복 강화 레벨. 한 번이라도 산 반복 노드는 bought 에도 들어간다(연결선·공개 판정용).
         readonly Dictionary<string, int> repLv = new Dictionary<string, int>();
-        string repPopupId;          // 지금 +1/+10/+MAX 창이 열린 반복 노드
-        Rect repPopupRect;          // 그 창의 화면 사각형(창 밖 클릭 = 닫기 판정용)
+        float treeMaxPan;           // 트리 세로 스크롤 최대치(맨 위) — 하단 '맨 위로' 버튼이 쓴다
+        bool treeBarDrag;           // 스크롤바 핸들을 잡고 있는 중
+        float treeBarGrabOff;       // 핸들 안에서 잡은 지점(위에서부터) — 드래그가 튀지 않게
         List<UpgradeNode> nodes;
         readonly Dictionary<string, Vector2> npos = new Dictionary<string, Vector2>();
 
@@ -1360,9 +1361,15 @@ namespace BlackholeGame
             gold = 0;
             bought.Clear();
             repLv.Clear();
+            // round45: 메타(샤드) 강화도 같이 지운다 — "새로 시작"은 완전 초기화인데 예전엔 metaLv/
+            //   metaCurrency 를 안 건드려서, 세이브를 지워도 영구 강화가 그대로 남아 있었다.
+            //   지운 뒤 RebuildBaseStats() 로 순정 baseStats 를 다시 만들어야 능력치에서도 빠진다.
+            metaLv.Clear();
+            metaCurrency = 0;
+            RebuildBaseStats();
             stats = baseStats != null ? baseStats.Clone() : stats;
             GrabRoot();
-            gold = 2000 * MetaLv("m_start");
+            gold = 2000 * MetaLv("m_start");   // 메타를 지웠으니 0
             currentStage = 0;
             stagesCleared = 0;
             retryCount = 0;
@@ -1401,7 +1408,6 @@ namespace BlackholeGame
 
         void StartRun()
         {
-            repPopupId = null;   // 트리에서 열어둔 반복 강화 창은 판을 시작하면 닫는다
             wave.LoadStage(currentStage);   // 지역 파라미터 적용
             wave.ApplyAscension(ascensionLevel);   // 승천 배율(적/보스 체력↑, 골드↓)
             ApplyFieldLook();               // 변이 단계만큼 감염된 전장 색
@@ -1660,7 +1666,7 @@ namespace BlackholeGame
                 else if (state == State.Map)     { pauseReturn = State.Map; state = State.Paused; }   // 톱니바퀴와 같은 메뉴
                 else if (state == State.Meta)    { state = State.Map; }
                 else if (state == State.Result)  { state = State.Map; }
-                else if (state == State.Tree)    { state = State.Map; repPopupId = null; }
+                else if (state == State.Tree)    { state = State.Map; }
             }
 
             // ---- 치트키 (round45) — Shift + 숫자. 누르면 화면 위에 잠깐 표시되고 바로 저장된다 ----
@@ -3326,50 +3332,88 @@ namespace BlackholeGame
             DrawAxisLine(new Vector2(b.x, midY), b, w, col);
         }
 
-        // round44: 반복 강화 +1 / +10 / 최대 — 노드 바로 위에 뜨는 작은 창. 가격은 버튼 안에.
-        void DrawRepeatPopup(Vector2 pivot)
+        // round45: 반복 강화 — 트리 안이 아니라 능력치 패널 바로 아래 고정 패널.
+        //   트리를 스크롤해도 자리가 안 바뀌어서 "지금 뭘 몇 레벨 올렸는지" 가 항상 같은 위치에 보인다.
+        void DrawRepeatPanel(Rect statRect)
         {
-            if (repPopupId == null) return;
-            var n = NodeById(repPopupId);
-            if (n == null || !n.repeat || !IsRevealed(n) || n.tier > stagesCleared) { repPopupId = null; return; }
+            if (nodes == null) return;
+            var list = new List<UpgradeNode>();
+            foreach (var n in nodes) if (n.repeat) list.Add(n);
+            if (list.Count == 0) return;
 
-            Vector2 p = npos[n.id];
-            Vector2 sp = pivot + (p - pivot) * treeZoom + treePan;   // 노드 중심의 화면 좌표
-            float nodeHalf = 40f * treeZoom;
-
-            float bw = 118f * uiScale, bh = 54f * uiScale, gap = 6f * uiScale, pad = 8f * uiScale;
-            float w = bw * 3f + gap * 2f + pad * 2f, h = bh + pad * 2f;
-            float x = Mathf.Clamp(sp.x - w * 0.5f, 8f, Screen.width - w - 8f);
-            float y = sp.y - nodeHalf - 12f - h;
-            if (y < 8f) y = sp.y + nodeHalf + 12f;                 // 위에 자리가 없으면 아래로
-            repPopupRect = new Rect(x, y, w, h);
-
-            var gc = GUI.color;
-            if (!DrawSkinPanel(repPopupRect, true))
+            // round46: 우측 하단 고정 — 능력치 패널(우측 상단)과 짝을 이루고, 트리를 스크롤해도 자리가 같다.
+            float pad = 12f * uiScale, rowH = 46f * uiScale, head = 26f * uiScale;
+            float w = statRect.width;
+            float x = statRect.x;
+            float h = pad + head + rowH * list.Count + pad;
+            float bottom = Screen.height - 118f * uiScale - 12f;   // 하단 바 바로 위
+            float top = statRect.yMax + 10f * uiScale;             // 능력치 패널과는 겹치지 않게
+            if (h > bottom - top) { rowH = Mathf.Max(28f * uiScale, (bottom - top - pad * 2f - head) / list.Count); h = pad + head + rowH * list.Count + pad; }
+            float y = bottom - h;
+            var area = new Rect(x, y, w, h);
+            if (!DrawSkinPanel(area, true))
             {
-                GUI.color = new Color(0.13f, 0.14f, 0.17f, 0.96f);
-                GUI.DrawTexture(repPopupRect, Texture2D.whiteTexture);
+                var gcP = GUI.color;
+                GUI.color = new Color(0.13f, 0.14f, 0.17f, 0.94f);
+                GUI.DrawTexture(area, Texture2D.whiteTexture);
                 GUI.color = new Color(0.90f, 0.64f, 0.08f, 1f);
                 GUI.DrawTexture(new Rect(x, y, w, 2f), Texture2D.whiteTexture);
+                GUI.color = gcP;
             }
-            GUI.color = gc;
 
-            long cost = n.cost;
-            int maxN = (int)System.Math.Min(int.MaxValue, gold / System.Math.Max(1L, cost));
-            var bst = Btn(Mathf.RoundToInt(13f * uiScale));
-            int[] counts = { 1, 10, maxN };
-            for (int i = 0; i < 3; i++)
+            var hs = new GUIStyle(sLabel) { fontSize = Mathf.RoundToInt(15f * uiScale), fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft };
+            hs.normal.textColor = new Color(1f, 0.82f, 0.30f); FlatText(hs);
+            GUI.Label(new Rect(x + pad, y + pad * 0.6f, w - pad * 2f, head), Loc.T("tree.repTitle"), hs);
+
+            var ns = new GUIStyle(sLabel) { fontSize = Mathf.RoundToInt(12f * uiScale), alignment = TextAnchor.MiddleLeft };
+            ns.normal.textColor = Ink; FlatText(ns);
+            var ls = new GUIStyle(ns) { alignment = TextAnchor.MiddleRight, fontStyle = FontStyle.Bold };
+            ls.normal.textColor = new Color(1f, 0.82f, 0.30f); FlatText(ls);
+            var bst = Btn(Mathf.RoundToInt(11f * uiScale));
+
+            float rowY = y + pad + head;
+            foreach (var n in list)
             {
-                int cnt = counts[i];
-                bool ok = i == 2 ? maxN >= 1 : maxN >= cnt;
-                string head = i == 2 ? Loc.F("tree.repMax", Mathf.Max(0, maxN)) : "+" + cnt;
-                string price = "$" + ((long)Mathf.Max(1, cnt) * cost).ToString("N0");
-                var r = new Rect(x + pad + i * (bw + gap), y + pad, bw, bh);
-                bool prev = GUI.enabled;
-                GUI.enabled = ok && transDir == 0;
-                if (UiBtn(r, head + "\n" + price, bst))
-                    BuyRepeat(n, i == 2 ? maxN : cnt);
-                GUI.enabled = prev;
+                bool locked = n.tier > stagesCleared;
+                bool open = IsBuyable(n);   // 부모 가지를 다 뚫어야 열린다
+                float iconSz = Mathf.Min(rowH - 8f * uiScale, 26f * uiScale);
+                var ir = new Rect(x + pad, rowY + (rowH - iconSz) * 0.5f, iconSz, iconSz);
+                var tex = (iconTex != null && iconTex.TryGetValue(n.icon, out var it)) ? it : null;
+                var gc0 = GUI.color;
+                if (tex != null)
+                {
+                    GUI.color = locked || !open ? new Color(1f, 1f, 1f, 0.28f) : new Color(1f, 0.86f, 0.42f);
+                    GUI.DrawTexture(ir, tex, ScaleMode.ScaleToFit);
+                }
+                GUI.color = gc0;
+
+                float tx = ir.xMax + 6f * uiScale;
+                float btnW = 40f * uiScale, btnH2 = Mathf.Min(22f * uiScale, rowH * 0.46f), bgap = 4f * uiScale;
+                float btnsW = btnW * 3f + bgap * 2f;
+                float nameW = Mathf.Max(30f, w - pad * 2f - (ir.width + 6f * uiScale) - btnsW - 6f * uiScale);
+                GUI.Label(new Rect(tx, rowY, nameW, rowH * 0.55f), Loc.T(n.label), ns);
+                string sub = locked ? Loc.F("tree.lockTier", n.tier)
+                           : !open ? Loc.T("tree.repLocked")
+                           : "Lv " + RepLevel(n.id) + " · $" + n.cost.ToString("N0");
+                var ss = new GUIStyle(ns) { fontSize = Mathf.RoundToInt(10f * uiScale) };
+                ss.normal.textColor = new Color(0.72f, 0.74f, 0.78f); FlatText(ss);
+                GUI.Label(new Rect(tx, rowY + rowH * 0.48f, nameW, rowH * 0.5f), sub, ss);
+
+                if (!locked && open)
+                {
+                    int maxN = (int)System.Math.Min(int.MaxValue, gold / System.Math.Max(1L, n.cost));
+                    int[] counts = { 1, 10, maxN };
+                    for (int i = 0; i < 3; i++)
+                    {
+                        int cnt = counts[i];
+                        var r = new Rect(x + w - pad - btnsW + i * (btnW + bgap), rowY + (rowH - btnH2) * 0.5f, btnW, btnH2);
+                        bool prev = GUI.enabled;
+                        GUI.enabled = (i == 2 ? maxN >= 1 : maxN >= cnt) && transDir == 0;
+                        if (UiBtn(r, i == 2 ? Loc.T("tree.repMaxShort") : "+" + cnt, bst)) BuyRepeat(n, i == 2 ? maxN : cnt);
+                        GUI.enabled = prev;
+                    }
+                }
+                rowY += rowH;
             }
         }
 
@@ -3400,6 +3444,7 @@ namespace BlackholeGame
             foreach (var n in nodes)
             {
                 if (n.IsRoot) { rootNode = n; continue; }
+                if (n.repeat) continue;   // round45: 반복 강화는 트리가 아니라 능력치 패널 아래 고정 패널에
                 if (!childrenOf.TryGetValue(n.parentId, out var list)) { list = new List<UpgradeNode>(); childrenOf[n.parentId] = list; }
                 list.Add(n);
             }
@@ -3451,15 +3496,16 @@ namespace BlackholeGame
 
             npos.Clear();
             foreach (var n in nodes)
-                npos[n.id] = new Vector2(pivot.x + xOf[n.id], pivot.y - depthOf[n.id] * rowSpacing);
+                if (!n.repeat) npos[n.id] = new Vector2(pivot.x + xOf[n.id], pivot.y - depthOf[n.id] * rowSpacing);
 
             // 위로는 "지금까지 드러난 것"까지만 올라간다 — 뚫을수록 더 위까지 볼 수 있다(round41 규칙 유지).
             float minY = pivot.y;
             foreach (var n in nodes)
-                if (IsRevealed(n) && npos[n.id].y < minY) minY = npos[n.id].y;   // 화면 좌표는 위로 갈수록 y가 작아짐
+                if (!n.repeat && IsRevealed(n) && npos[n.id].y < minY) minY = npos[n.id].y;   // 화면 좌표는 위로 갈수록 y가 작아짐
             float topScreen0 = pivot.y + (minY - pivot.y) * zoom;          // 스크롤 0 일 때 가장 높은 노드의 화면 y
             float maxPan = Mathf.Max(0f, (area.yMin + nodeSz * 0.5f * zoom + 8f) - topScreen0);
 
+            treeMaxPan = maxPan;
             if (treeZoom <= 0f)   // 들어올 때/"화면 리셋" — 지금 살 수 있는 맨 위(경계)가 보이게 끝까지 올려둔다
                 treePan = new Vector2(0f, maxPan);
             treeZoom = zoom;
@@ -3469,12 +3515,57 @@ namespace BlackholeGame
             { treePan.y -= ev.delta.y * 45f; ev.Use(); }   // 휠 위로 = 트리의 위쪽(더 뚫은 곳)으로
             else if (ev.type == EventType.MouseDrag && (ev.button == 1 || ev.button == 2))
             { treePan.y += ev.delta.y; ev.Use(); }
-            treePan = new Vector2(0f, Mathf.Clamp(treePan.y, 0f, maxPan));
 
-            // round44: 반복 강화 창 — 창 밖을 누르면 닫는다(이벤트는 안 먹어서 다른 노드 클릭은 그대로 동작).
-            //   창 아래 깔린 노드 버튼이 클릭을 가로채지 않게, 마우스가 창 위면 노드 버튼을 안 만든다.
-            bool mouseInPopup = repPopupId != null && repPopupRect.Contains(ev.mousePosition);
-            if (repPopupId != null && ev.type == EventType.MouseDown && !mouseInPopup) repPopupId = null;
+            // round46: 웹페이지식 세로 스크롤바 — 트리 영역 오른쪽 끝. 트랙을 누르면 그 위치로 점프,
+            //   핸들은 끌어서 이동. treePan.y 는 0(맨 아래) ~ maxPan(맨 위) 이라 화면과는 방향이 반대다.
+            if (maxPan > 1f)
+            {
+                float barW = 14f * uiScale;
+                var track = new Rect(area.xMax - barW, area.yMin, barW, area.height);
+                // 핸들 크기 = 보이는 높이 / 전체 높이
+                float viewH = area.height;
+                float totalH = viewH + maxPan;
+                float handH = Mathf.Max(36f * uiScale, track.height * (viewH / totalH));
+                float tRaw = 1f - treePan.y / maxPan;            // 0 = 맨 위(스크롤 최대), 1 = 맨 아래
+                float handY = track.y + (track.height - handH) * tRaw;
+                var handle = new Rect(track.x, handY, barW, handH);
+
+                if (ev.type == EventType.MouseDown && ev.button == 0 && track.Contains(ev.mousePosition))
+                {
+                    if (handle.Contains(ev.mousePosition)) { treeBarDrag = true; treeBarGrabOff = ev.mousePosition.y - handle.y; }
+                    else   // 트랙 클릭 = 그 지점으로
+                    {
+                        treeBarDrag = true; treeBarGrabOff = handH * 0.5f;
+                        float t2 = Mathf.Clamp01((ev.mousePosition.y - treeBarGrabOff - track.y) / Mathf.Max(1f, track.height - handH));
+                        treePan.y = (1f - t2) * maxPan;
+                    }
+                    ev.Use();
+                }
+                if (treeBarDrag)
+                {
+                    if (ev.type == EventType.MouseDrag)
+                    {
+                        float t2 = Mathf.Clamp01((ev.mousePosition.y - treeBarGrabOff - track.y) / Mathf.Max(1f, track.height - handH));
+                        treePan.y = (1f - t2) * maxPan;
+                        ev.Use();
+                    }
+                    else if (ev.type == EventType.MouseUp) { treeBarDrag = false; ev.Use(); }
+                }
+
+                treePan = new Vector2(0f, Mathf.Clamp(treePan.y, 0f, maxPan));
+                // 다시 계산(드래그로 바뀌었을 수 있음)
+                tRaw = 1f - treePan.y / maxPan;
+                handle.y = track.y + (track.height - handH) * tRaw;
+
+                var gcB = GUI.color;
+                GUI.color = new Color(0.20f, 0.26f, 0.30f, 0.30f);
+                GUI.DrawTexture(track, Texture2D.whiteTexture);
+                bool hot = treeBarDrag || handle.Contains(ev.mousePosition);
+                GUI.color = hot ? new Color(0.22f, 0.40f, 0.46f, 0.95f) : new Color(0.28f, 0.46f, 0.52f, 0.75f);
+                GUI.DrawTexture(handle, Texture2D.whiteTexture);
+                GUI.color = gcB;
+            }
+            else treePan = new Vector2(0f, Mathf.Clamp(treePan.y, 0f, maxPan));
 
             Matrix4x4 saved = GUI.matrix;
             GUIUtility.ScaleAroundPivot(new Vector2(treeZoom, treeZoom), pivot);
@@ -3489,13 +3580,14 @@ namespace BlackholeGame
             Color lineOn  = new Color(0.10f, 0.62f, 0.18f, 1f);      // 초록 — 뚫음
             for (int pass = 0; pass < 2; pass++)
                 foreach (var n in nodes)
-                    if (!n.IsRoot && IsRevealed(n) && IsBought(n.id) == (pass == 1))
+                    if (!n.IsRoot && !n.repeat && IsRevealed(n) && IsBought(n.id) == (pass == 1))
                         DrawConnector(npos[n.parentId], npos[n.id], lineW, pass == 1 ? lineOn : lineOff);
 
             // 노드 — 아이콘만. 효과는 마우스 오버 툴팁으로.
             UpgradeNode hovered = null;
             foreach (var n in nodes)
             {
+                if (n.repeat) continue;         // 반복 강화는 아래 고정 패널에서 따로 그린다
                 if (!IsRevealed(n)) continue;   // 아직 자라지 않은 가지는 그리지 않는다
                 Vector2 p = npos[n.id];
                 var rect = new Rect(p.x - nodeSz * 0.5f, p.y - nodeSz * 0.5f, nodeSz, nodeSz);
@@ -3517,11 +3609,6 @@ namespace BlackholeGame
                              : pathAfford ? new Color(0.08f, 0.42f, 0.20f, 1f)  // 짙은 초록(살 수 있음)
                              : by ? new Color(0.62f, 0.34f, 0.06f, 1f)          // 짙은 주황(부족)
                              : new Color(0.40f, 0.42f, 0.46f, 0.8f);            // 짙은 회색(잠김)
-                if (n.repeat && !locked)
-                {
-                    fillCol = pathAfford ? new Color(0.30f, 0.22f, 0.04f, 1f) : new Color(0.18f, 0.14f, 0.07f, 1f);
-                    glowCol = pathAfford ? new Color(0.90f, 0.64f, 0.08f, 1f) : new Color(0.58f, 0.44f, 0.14f, 1f);
-                }
                 if (discSprite != null)
                 {
                     GUI.color = fillCol;
@@ -3545,49 +3632,22 @@ namespace BlackholeGame
                 }
                 GUI.color = c0;
 
-                if (n.repeat && bt)
-                {
-                    // 레벨 배지 — 노드 오른쪽 위 작은 알약
-                    int lvN = RepLevel(n.id);
-                    var bs = new GUIStyle(sLabel) { fontSize = 20, alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold };
-                    bs.normal.textColor = Color.white; FlatText(bs);
-                    string lvTxt = "Lv " + lvN;
-                    float bw0 = Mathf.Max(44f, bs.CalcSize(new GUIContent(lvTxt)).x + 14f);
-                    var br = new Rect(rect.xMax - bw0 * 0.55f, rect.y - 12f, bw0, 28f);
-                    GUI.color = new Color(0.55f, 0.36f, 0.02f, 1f);
-                    GUI.DrawTexture(br, Texture2D.whiteTexture);
-                    GUI.color = c0;
-                    GUI.Label(br, lvTxt, bs);
-                }
-
                 if (rect.Contains(Event.current.mousePosition)) hovered = n;
-                if (!locked && !mouseInPopup && transDir == 0)
-                {
-                    if (n.repeat)
-                    {
-                        if (by && GUI.Button(rect, GUIContent.none, GUIStyle.none))
-                            repPopupId = repPopupId == n.id ? null : n.id;
-                    }
-                    else if (!bt && GUI.Button(rect, GUIContent.none, GUIStyle.none))
-                        BuyNode(n);
-                }
+                if (!locked && !bt && transDir == 0 && GUI.Button(rect, GUIContent.none, GUIStyle.none))
+                    BuyNode(n);
             }
 
             GUI.matrix = saved;
 
-            DrawRepeatPopup(pivot);
-
             DrawStatPanel(statRect, hovered);
+            DrawRepeatPanel(statRect);
 
             // 마우스 오버 툴팁 (스크린 좌표)
             if (hovered != null)
             {
                 bool bt = IsBought(hovered.id);
                 string status;
-                if (hovered.repeat)
-                    status = hovered.tier > stagesCleared ? Loc.F("tree.lockTier", hovered.tier)
-                           : Loc.F("tree.repStatus", RepLevel(hovered.id), hovered.cost.ToString("N0"));
-                else if (bt) status = Loc.T("tree.owned");
+                if (bt) status = Loc.T("tree.owned");
                 else if (hovered.IsRoot) status = Loc.T("tree.free");
                 else if (hovered.tier > stagesCleared) status = Loc.F("tree.lockTier", hovered.tier);
                 else status = $"${hovered.cost:N0}";
@@ -3620,10 +3680,11 @@ namespace BlackholeGame
             float resetBtnW = Mathf.Min(116f * uiScale, Screen.width * 0.15f);
             float retryBtnW = Mathf.Min(110f * uiScale, Screen.width * 0.14f);
             float mapBtnW   = Mathf.Min(130f * uiScale, Screen.width * 0.16f);
+            float jumpBtnW  = Mathf.Min(92f * uiScale, Screen.width * 0.11f);   // round45: 맨 위로 / 맨 아래로
             float btnH = 34f * uiScale;
             float margin = 20f, btnGap = 10f * uiScale;
             bool showRetry = treeFromResult;   // 전투 직후에 들어온 경우에만 재도전
-            float groupW = resetBtnW + btnGap + mapBtnW + (showRetry ? retryBtnW + btnGap : 0f);
+            float groupW = jumpBtnW * 2f + btnGap * 2f + resetBtnW + btnGap + mapBtnW + (showRetry ? retryBtnW + btnGap : 0f);
             GUI.BeginGroup(new Rect(0f, Screen.height - barH, Screen.width, barH));
             {
                 // round41: 배경을 밝은 Glass 로 바꾸자 노란 보유금·흰 도움말이 거의 안 보였고, 트리 선도
@@ -3655,6 +3716,12 @@ namespace BlackholeGame
 
                 var bst = Btn(Mathf.RoundToInt(14f * uiScale));
                 float btnY = barH - btnH - margin;
+                // 맨 위로 / 맨 아래로 — 150노드를 휠로 훑지 않아도 되게
+                if (UiBtn(new Rect(bx1, btnY, jumpBtnW, btnH), Loc.T("tree.toTop"), bst))
+                { treePan = new Vector2(0f, treeMaxPan); }
+                if (UiBtn(new Rect(bx1 + jumpBtnW + btnGap, btnY, jumpBtnW, btnH), Loc.T("tree.toBottom"), bst))
+                { treePan = Vector2.zero; }
+                bx1 += (jumpBtnW + btnGap) * 2f;
                 float bx2 = bx1 + resetBtnW + btnGap;
                 float bx3 = bx2 + retryBtnW + btnGap;
                 if (UiBtn(new Rect(bx1, btnY, resetBtnW, btnH), Loc.T("tree.reset"), bst))
@@ -3662,7 +3729,7 @@ namespace BlackholeGame
                 if (showRetry && UiBtn(new Rect(bx2, btnY, retryBtnW, btnH), Loc.T("res.retry"), bst))
                 { BeginTransition(StartRun); }
                 if (UiBtn(new Rect(showRetry ? bx3 : bx2, btnY, mapBtnW, btnH), Loc.T("common.toMap"), bst))
-                { state = State.Map; repPopupId = null; }
+                { state = State.Map; }
             }
             GUI.EndGroup();
         }

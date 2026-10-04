@@ -43,8 +43,10 @@ namespace BlackholeGame
     {
         public const string RootId = "root";
         public const int Tiers = 8;                 // 8지역
-        public const int NodeTiers = 6;             // 일반 노드가 퍼지는 티어 수(0~5) — 그 뒤는 반복 강화
-        public const int RepeatTier = 5;            // 반복 강화가 열리는 티어(5지역 클리어 후 = 6지역부터)
+        // round45: 티어 6 → 8. 예전엔 6·7·8지역에 새 노드가 없어서 그 구간이 "성장 없이 그냥 깨는" 판이
+        //   됐다(7지역 2판, 8지역 1판). 지역마다 새 티어가 열려야 살 이유와 성장 곡선이 이어진다.
+        public const int NodeTiers = 8;             // 일반 노드가 퍼지는 티어 수(0~7) = 지역 수
+        public const int RepeatTier = 7;            // 반복 강화는 마지막 티어 — 8지역 구간의 추가 성장
 
         // ---- 상한 ----
         public const float MultCap = 300f;          // 배수 버킷(%p) — 가지 노드만. 반복 강화는 상한 없음
@@ -73,16 +75,16 @@ namespace BlackholeGame
         // ---- 반복 강화 1회당 수치·가격 (같은 값으로 같은 양) ----
         // 1회 수치는 작게 — 여러 번(수십~수백 레벨) 사게 해서 +1/+10/최대 버튼이 의미 있게
         public const float RepFlat = 10f, RepMult = 1f, RepAps = 0.05f, RepRange = 0.01f, RepCritX = 0.02f, RepGold = 1f;
-        public static readonly long[] RepCost = { 724381438, 724381438, 724381438, 724381438, 724381438, 724381438 };   // flat, mult, speed, range, critx, gold
+        public static readonly long[] RepCost = { 7000000, 7000000, 7000000, 7000000, 7000000, 7000000 };   // flat, mult, speed, range, critx, gold   // flat, mult, speed, range, critx, gold   // flat, mult, speed, range, critx, gold   // flat, mult, speed, range, critx, gold   // flat, mult, speed, range, critx, gold
 
         // tier별 노드 비용 — balance_sim(tune42)으로 맞춘다.
-        static readonly int[] TierCost = { 15, 20419, 386738, 2784988, 15023775, 226535461 };
+        static readonly int[] TierCost = { 15, 20419, 386738, 2784988, 15023775, 60000000, 260000000, 900000000 };
         public static int Cost(int tier) =>
             tier >= 0 && tier < TierCost.Length ? TierCost[tier]
             : Mathf.RoundToInt(TierCost[TierCost.Length - 1] * Mathf.Pow(2.6f, tier - TierCost.Length + 1));
 
         // 공격력 노드값은 티어별 표(가지 안 높이 → 티어 → 값)
-        static readonly int[] FlatByTier = { 20, 24, 30, 50, 88, 156 };
+        static readonly int[] FlatByTier = { 20, 24, 30, 50, 88, 156, 290, 560 };
         public static int FlatAt(int tier) =>
             tier >= 0 && tier < FlatByTier.Length ? FlatByTier[tier]
             : Mathf.RoundToInt(FlatByTier[FlatByTier.Length - 1] * Mathf.Pow(1.9f, tier - FlatByTier.Length + 1));

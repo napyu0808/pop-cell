@@ -196,18 +196,20 @@ namespace BlackholeGame
         //   버그를 고치자 보스전이 크게 짧아졌다(시뮬 5.3h → 2.9h). 잡몹 체력은 그대로.
         // round44: 지역 골드 배율 = '골드/적 체력' 효율이 지역마다 ×1.2 가 되게(예전엔 2지역이 1지역의 0.2배,
         //   8지역은 0.012배라 올라갈수록 벌이가 줄었다). 체력은 150노드 트리에 맞춰 balance_sim/autotune44(b)로.
+        // round45: 체력은 '그 지역까지 열린 일반 노드를 다 산 DPS' 기준 — 반복 강화 없이도 깰 수 있게.
+        //   (round44 튜닝은 반복 강화 40~50레벨을 전제해서 8지역 보스가 209배 초과였다)
         public static readonly StageConfig[] Stages =
         {
             // 1지역만 "튜토리얼 보정" — 잡몹 30, 골드배율 1.0, 보스 1400. (round37: 초반 골드 수급이
             // 막혀 첫 노드조차 못 사던 문제. 이 보정으로 1판마다 노드를 사고 5판이면 클리어된다.)
-            new StageConfig(0, "s.0",  4,  28f,      30f, 1.130f,       1400,  4,  8,   1.00f, new Color(0.42f,0.72f,0.46f)),
-            new StageConfig(1, "s.1",  5,  34f,     303f, 1.136f,      28573,  5,  9,   7.56f, new Color(0.36f,0.62f,0.70f)),
-            new StageConfig(2, "s.2",  7,  44f,    1808f, 1.142f,     217817,  6, 10,  38.94f, new Color(0.60f,0.54f,0.36f)),
-            new StageConfig(3, "s.3",  9,  54f,    1550f, 1.148f,    1561256,  7, 11,  34.13f, new Color(0.40f,0.46f,0.60f)),
-            new StageConfig(4, "s.4", 11,  64f,    2758f, 1.153f,   10121360,  8, 12,  74.01f, new Color(0.30f,0.58f,0.62f)),
-            new StageConfig(5, "s.5", 13,  74f,    7337f, 1.158f,  102634452,  9, 13, 259.15f, new Color(0.34f,0.56f,0.34f)),
-            new StageConfig(6, "s.6", 15,  88f,   34965f, 1.163f,  967233279, 10, 14, 1696.56f, new Color(0.62f,0.66f,0.72f)),
-            new StageConfig(7, "s.7", 18, 108f,   95492f, 1.168f, 5087827080, 11, 15, 7003.12f, new Color(0.66f,0.30f,0.34f)),
+            new StageConfig(0, "s.0",  4,  28f,      30f, 1.130f,       5504,  4,  8,   1.00f, new Color(0.42f,0.72f,0.46f)),
+            new StageConfig(1, "s.1",  5,  34f,     183f, 1.136f,      28608,  5,  9,   4.57f, new Color(0.36f,0.62f,0.70f)),
+            new StageConfig(2, "s.2",  7,  44f,     588f, 1.142f,     101727,  6, 10,  12.66f, new Color(0.60f,0.54f,0.36f)),
+            new StageConfig(3, "s.3",  9,  54f,     885f, 1.148f,     378594,  7, 11,  19.49f, new Color(0.40f,0.46f,0.60f)),
+            new StageConfig(4, "s.4", 11,  64f,    1975f, 1.153f,    1647498,  8, 12,  53.00f, new Color(0.30f,0.58f,0.62f)),
+            new StageConfig(5, "s.5", 13,  74f,    4534f, 1.158f,    5333362,  9, 13, 160.15f, new Color(0.34f,0.56f,0.34f)),
+            new StageConfig(6, "s.6", 15,  88f,   15500f, 1.163f,   21302182, 10, 14, 752.09f, new Color(0.62f,0.66f,0.72f)),
+            new StageConfig(7, "s.7", 18, 108f,   33745f, 1.168f,   65932470, 11, 15, 2474.76f, new Color(0.66f,0.30f,0.34f)),
         };
     }
 }
