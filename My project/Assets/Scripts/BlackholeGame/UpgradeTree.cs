@@ -116,7 +116,7 @@ namespace BlackholeGame
 
         public const float TowerDmgAdd = 0.10f;                     // 단계마다 5개 = +0.5
         public static readonly float[] TowerDmgMaxAt = { 1.0f, 1.5f, 2.0f, 2.4f };   // 단계별 상한
-        public const float TowerSpeedMul = 0.88f, TowerIntervalMin = 0.25f;
+        public const float TowerSpeedMul = 0.85f, TowerIntervalMin = 0.10f;   // round51: 풀강 초당 4발 -> 10발
         public const float TowerSpinAdd = 14f, TowerSpinMax = 300f;
 
         const int TwPerBranch = 5;                                   // 갈래 하나당 노드 수
@@ -151,7 +151,21 @@ namespace BlackholeGame
                                              s => s.UnlockPattern(idx, pat), false, 1,
                                              new[] { stem + "d", stem + "p" }));
                     stem = morph;
-                    if (st == 3) break;     // 저격은 변신만 하고 갈래를 더 두지 않는다
+                    if (st == 3)
+                    {
+                        // 저격 — 변신 뒤에 "표적 +1" 둘. 보스만 때리던 걸 잡몹까지 같이 걷어내게.
+                        string prevT = morph;
+                        for (int k = 0; k < 2; k++)
+                        {
+                            string tid = key + "tgt" + k;
+                            int ttier = Mathf.Min(NodeTiers - 1, TwMorphTier[3] + k);
+                            list.Add(new UpgradeNode(tid, prevT, Vector2.zero, "scope", TowerName[idx], Cost(ttier), ttier,
+                                                     "nd.towerTarget", 0f,
+                                                     s => s.towerTargets[idx] = Mathf.Min(3, s.towerTargets[idx] + 1), false, 1));
+                            prevT = tid;
+                        }
+                        break;
+                    }
                 }
 
                 int tier0 = TwStageTier[st];
@@ -185,6 +199,14 @@ namespace BlackholeGame
                     list.Add(new UpgradeNode(stem + "burst", stem + "s", Vector2.zero, "chevrons", TowerName[idx],
                                              Cost(TwStageTier[0] + 1), TwStageTier[0] + 1, "nd.towerBurst", 0f,
                                              s => s.UnlockPattern(idx, Stats.PatBurst), false, 1));
+                else
+                {
+                    // 화염·레이저가 동시에 뻗는 방향을 하나 늘린다(2 = 위아래, 3 = 원을 셋으로 나눈 각도).
+                    int bt = Mathf.Min(NodeTiers - 1, TwStageTier[st] + 1);
+                    list.Add(new UpgradeNode(stem + "beam", stem + "d", Vector2.zero, "blastring", TowerName[idx],
+                                             Cost(bt), bt, "nd.towerBeam", 0f,
+                                             s => s.towerBeams[idx] = Mathf.Min(3, s.towerBeams[idx] + 1), false, 1));
+                }
             }
         }
 

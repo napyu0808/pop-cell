@@ -37,7 +37,7 @@ BOMB_UNLOCK_TIER = 1
 TOWER_UNLOCK_TIER = 1
 TOWER_DMG_ADD = 0.10
 TOWER_DMG_MAX_AT = [1.0, 1.5, 2.0, 2.4]
-TOWER_SPEED_MUL, TOWER_INTERVAL_MIN = 0.88, 0.25
+TOWER_SPEED_MUL, TOWER_INTERVAL_MIN = 0.85, 0.10
 TOWER_SPIN_ADD, TOWER_SPIN_MAX = 14.0, 300.0
 TW_PER_BRANCH = 5
 TW_STAGE_TIER = [2, 4, 5, 7]
@@ -73,12 +73,12 @@ BASE_SPAWNCNT = 1   # round42
 #            S1    S2    S3    S4    S5    S6    S7    S8
 WAVES    = [   4,    5,    7,    9,   11,   13,   15,   18]
 TLIM     = [  28,   34,   44,   54,   64,   74,   88,  108]
-HP0      = [29, 183, 717, 1317, 3586, 13455, 83524, 366883]
+HP0      = [29, 183, 717, 1317, 4841, 25564, 283982, 2568181]
 HPG      = [1.130, 1.136, 1.142, 1.148, 1.153, 1.158, 1.163, 1.168]
-BOSSHP   = [5375, 28608, 124107, 563499, 2991606, 15827144, 114790270, 716831884]
+BOSSHP   = [5375, 28608, 124107, 563499, 4038668, 30071574, 390286918, 5017823188]
 QUOTA0   = [   4,    5,    6,    7,    8,    9,   10,   11]
 SE       = [   8,    9,   10,   11,   12,   13,   14,   15]
-GOLDRATE = [1.00, 4.72, 15.98, 30.00, 99.55, 491.64, 4192.48, 27833.97]
+GOLDRATE = [1.00, 4.72, 15.98, 30.00, 134.39, 934.09, 14254.46, 194837.80]
 
 GOLD_CURVE = [
     1, 2, 5, 10, 12, 15, 20,
@@ -234,6 +234,14 @@ def build():
                                   fn=morph_fn, also=[stem + "d", stem + "p"]))
                 stem = morph
                 if st == 3:
+                    prevt = morph
+                    for k in range(2):      # 저격 표적 +1 둘
+                        def tf(s, i=i):
+                            s.towerTargets[i] = min(3, s.towerTargets[i] + 1)
+                        ttier = min(NODE_TIERS - 1, TW_MORPH_TIER[3] + k)
+                        tid = key + "tgt" + str(k)
+                        nodes.append(Node(tid, prevt, ttier, "TwTgt", key, fn=tf))
+                        prevt = tid
                     break
 
             tier0 = TW_STAGE_TIER[st]
@@ -259,6 +267,11 @@ def build():
                     s.towerPatMask[i] |= 1 << PAT_BURST
                     s.towerPattern[i] = PAT_BURST
                 nodes.append(Node(stem + "burst", stem + "s", TW_STAGE_TIER[0] + 1, "TwBurst", key, fn=burst))
+            else:
+                def bf(s, i=i):             # 화염·레이저 분사구 +1
+                    s.towerBeams[i] = min(3, s.towerBeams[i] + 1)
+                bt = min(NODE_TIERS - 1, TW_STAGE_TIER[st] + 1)
+                nodes.append(Node(stem + "beam", stem + "d", bt, "TwBeam", key, fn=bf))
     return nodes
 
 
@@ -327,8 +340,8 @@ def wave_cfg(stage, asc=0):
 # GameManager 가 살아있는 Play 모드에서 UpgradeTree.BuildAll() 로 뽑은 값 (round38).
 EXPECTED_DPS = [256, 894, 2286, 6642, 23705, 65041, 220748, 578355]
 EXPECTED_HIT = [111, 232, 420, 706, 1335, 2562, 5050, 9748]
-EXPECTED_TOTAL_COST = 262_413_374_448  # 일반 노드만(반복 제외) — round50 타워 개편 후, 에디터 실측과 일치
-EXPECTED_NODES = 306   # 루트+커서 150 + 타워 150 + 반복 6
+EXPECTED_TOTAL_COST = 322_623_767_373  # 일반 노드만(반복 제외) — round51 분사구·표적 노드 추가 후
+EXPECTED_NODES = 318   # 루트+커서 150 + 타워 162 + 반복 6
 
 
 def self_check(verbose=True):

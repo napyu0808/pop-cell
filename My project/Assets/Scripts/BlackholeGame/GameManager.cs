@@ -1560,7 +1560,7 @@ namespace BlackholeGame
         }
 
         // kind: 0 화염 · 1 레이저 · 2 저격
-        void SpawnTowerFx(int i, int kind, float len)
+        void SpawnTowerFx(int i, int kind, float len, float angDeg)
         {
             if (towerFx.Count > 24) return;
             if (coneSprite == null) coneSprite = BuildConeSprite();
@@ -1577,7 +1577,7 @@ namespace BlackholeGame
                                 : new Color(1f, 0.92f, 0.45f);
             sr.color = col;
             go.transform.position = TowerPos[i];
-            go.transform.localRotation = Quaternion.Euler(0f, 0f, -towerAngle[i]);
+            go.transform.localRotation = Quaternion.Euler(0f, 0f, -angDeg);
             float wide = kind == 0 ? len : (kind == 1 ? 0.95f : 0.5f);
             go.transform.localScale = new Vector3(wide, Mathf.Max(0.4f, len), 1f);
             float life = kind == 0 ? 0.10f : kind == 1 ? 0.09f : 0.16f;
@@ -1659,7 +1659,7 @@ namespace BlackholeGame
                             break;
                         case Stats.PatFlame:  ConeHit(i, dmg * 0.42f); break;
                         case Stats.PatLaser:  BeamHit(i, dmg * 1.1f);  break;
-                        case Stats.PatSniper: SniperShot(i, dmg * 6f); break;
+                        case Stats.PatSniper: SniperShot(i, dmg * 20f); break;   // round51: 8지역 잡몹도 못 뚫어서 대폭 상향
                         default:              SpawnBullet(TowerPos[i], towerAngle[i], dmg); break;
                     }
                     if (sound != null && i == 0) sound.Play(Sfx.Pulse, 0.18f, 1.5f);
@@ -1685,8 +1685,17 @@ namespace BlackholeGame
         // 화염방사 — 총구 앞 부채꼴(사거리 4.2, 반각 26도) 안의 적 전부를 지진다.
         void ConeHit(int i, float dmg)
         {
+            int beams = Mathf.Clamp(stats.towerBeams[i], 1, 3);
+            for (int b = 0; b < beams; b++) ConeHitOne(i, dmg, towerAngle[i] + BeamOffset(beams, b));
+        }
+
+        // 방향이 2개면 위아래(180도), 3개면 원을 셋으로 나눈 각(120도)
+        static float BeamOffset(int beams, int b) => beams <= 1 ? 0f : b * (360f / beams);
+
+        void ConeHitOne(int i, float dmg, float angDeg)
+        {
             const float Range = 4.2f, HalfAng = 26f;
-            float rad = towerAngle[i] * Mathf.Deg2Rad;
+            float rad = angDeg * Mathf.Deg2Rad;
             var dir = new Vector2(Mathf.Sin(rad), Mathf.Cos(rad));
             bool stop = false;
             for (int j = enemies.Count - 1; j >= 0; j--)
@@ -1702,14 +1711,20 @@ namespace BlackholeGame
                 if (e.hp <= 0f && KillEnemy(e, false)) stop = true;
             }
             enemies.RemoveAll(x => x.dead);
-            SpawnTowerFx(i, 0, Range);
+            SpawnTowerFx(i, 0, Range, angDeg);
         }
 
         // 레이저 — 총구 방향 직선(반폭 0.42)을 끝까지 꿰뚫는다.
         void BeamHit(int i, float dmg)
         {
+            int beams = Mathf.Clamp(stats.towerBeams[i], 1, 3);
+            for (int b = 0; b < beams; b++) BeamHitOne(i, dmg, towerAngle[i] + BeamOffset(beams, b));
+        }
+
+        void BeamHitOne(int i, float dmg, float angDeg)
+        {
             const float Range = 11f, HalfW = 0.42f;
-            float rad = towerAngle[i] * Mathf.Deg2Rad;
+            float rad = angDeg * Mathf.Deg2Rad;
             var dir = new Vector2(Mathf.Sin(rad), Mathf.Cos(rad));
             bool stop = false;
             for (int j = enemies.Count - 1; j >= 0; j--)
@@ -1726,7 +1741,7 @@ namespace BlackholeGame
                 if (e.hp <= 0f && KillEnemy(e, false)) stop = true;
             }
             enemies.RemoveAll(x => x.dead);
-            SpawnTowerFx(i, 1, Range);
+            SpawnTowerFx(i, 1, Range, angDeg);
         }
 
         // 저격 — 조준이 맞았을 때만 한 발. 느리지만 아주 세다.
@@ -1734,16 +1749,37 @@ namespace BlackholeGame
         {
             int tgt = SniperTarget();
             if (tgt < 0) return;
-            var e = enemies[tgt];
-            Vector2 d = (Vector2)e.tr.position - TowerPos[i];
-            float want = Mathf.Atan2(d.x, d.y) * Mathf.Rad2Deg;
+            var lead = enemies[tgt];
+            Vector2 d0 = (Vector2)lead.tr.position - TowerPos[i];
+            float want = Mathf.Atan2(d0.x, d0.y) * Mathf.Rad2Deg;
             if (Mathf.Abs(Mathf.DeltaAngle(towerAngle[i], want)) > 6f) { towerTimer[i] = Mathf.Max(towerTimer[i], 0f); return; }
-            if (e == boss && e.shielded) return;
-            e.hp -= dmg; e.flash = 0.10f;
-            if (e.hp <= 0f) KillEnemy(e, true);
+
+            // round51: 표적 수만큼 — 1순위(보스) 다음은 체력이 많이 남은 순서로 같이 때린다.
+            int want2 = Mathf.Clamp(stats.towerTargets[i], 1, 3);
+            sniperPick.Clear();
+            sniperPick.Add(lead);
+            while (sniperPick.Count < want2)
+            {
+                Enemy best = null; float bestHp = 0f;
+                foreach (var e2 in enemies)
+                {
+                    if (e2.dead || e2.bomb || sniperPick.Contains(e2)) continue;
+                    if (e2.hp > bestHp) { bestHp = e2.hp; best = e2; }
+                }
+                if (best == null) break;
+                sniperPick.Add(best);
+            }
+            foreach (var e in sniperPick)
+            {
+                if (e.dead || (e == boss && e.shielded)) continue;
+                e.hp -= dmg; e.flash = 0.10f;
+                if (e.hp <= 0f) KillEnemy(e, true);
+                SpawnTowerFx(i, 2, ((Vector2)e.tr.position - TowerPos[i]).magnitude,
+                             Mathf.Atan2(e.tr.position.x - TowerPos[i].x, e.tr.position.y - TowerPos[i].y) * Mathf.Rad2Deg);
+            }
             enemies.RemoveAll(x => x.dead);
-            SpawnTowerFx(i, 2, d.magnitude);
         }
+        readonly List<Enemy> sniperPick = new List<Enemy>();
 
         // 탄알 이동 + 명중. 맞은 적 하나에만 피해를 주고 사라진다(관통 없음).
         void UpdateBullets(float dt)
@@ -3984,13 +4020,13 @@ namespace BlackholeGame
             if (list.Count == 0) return;
 
             // round46: 우측 하단 고정 — 능력치 패널(우측 상단)과 짝을 이루고, 트리를 스크롤해도 자리가 같다.
-            float pad = 12f * uiScale, rowH = 46f * uiScale, head = 26f * uiScale;
+            float pad = 12f * uiScale, rowH = 56f * uiScale, head = 26f * uiScale;   // round51: 효과 설명 줄이 늘어 3줄
             float w = statRect.width;
             float x = statRect.x;
             float h = pad + head + rowH * list.Count + pad;
             float bottom = Screen.height - 118f * uiScale - 12f;   // 하단 바 바로 위
             float top = statRect.yMax + 10f * uiScale;             // 능력치 패널과는 겹치지 않게
-            if (h > bottom - top) { rowH = Mathf.Max(28f * uiScale, (bottom - top - pad * 2f - head) / list.Count); h = pad + head + rowH * list.Count + pad; }
+            if (h > bottom - top) { rowH = Mathf.Max(34f * uiScale, (bottom - top - pad * 2f - head) / list.Count); h = pad + head + rowH * list.Count + pad; }
             float y = bottom - h;
             var area = new Rect(x, y, w, h);
             if (!DrawSkinPanel(area, true))
@@ -4033,13 +4069,21 @@ namespace BlackholeGame
                 float btnW = 40f * uiScale, btnH2 = Mathf.Min(22f * uiScale, rowH * 0.46f), bgap = 4f * uiScale;
                 float btnsW = btnW * 3f + bgap * 2f;
                 float nameW = Mathf.Max(30f, w - pad * 2f - (ir.width + 6f * uiScale) - btnsW - 6f * uiScale);
-                GUI.Label(new Rect(tx, rowY, nameW, rowH * 0.55f), Loc.T(n.label), ns);
+                GUI.Label(new Rect(tx, rowY, nameW, rowH * 0.38f), Loc.T(n.label), ns);
+
+                // round51: 한 번 사면 얼마나 오르는지 — 이게 없어서 뭘 올려주는지 알 수 없었다.
+                var es = new GUIStyle(ns) { fontSize = Mathf.RoundToInt(11f * uiScale) };
+                es.normal.textColor = locked || !open ? new Color(0.58f, 0.60f, 0.64f) : new Color(0.55f, 0.88f, 0.70f);
+                FlatText(es);
+                string eff = n.desc != null && n.desc.StartsWith("nd.") ? Loc.F("rs." + n.desc.Substring(3), n.descArg) : "";
+                GUI.Label(new Rect(tx, rowY + rowH * 0.34f, nameW, rowH * 0.32f), eff, es);
+
                 string sub = locked ? Loc.F("tree.lockTier", n.tier)
                            : !open ? Loc.T("tree.repLocked")
                            : "Lv " + RepLevel(n.id) + " · $" + n.cost.ToString("N0");
                 var ss = new GUIStyle(ns) { fontSize = Mathf.RoundToInt(10f * uiScale) };
                 ss.normal.textColor = new Color(0.72f, 0.74f, 0.78f); FlatText(ss);
-                GUI.Label(new Rect(tx, rowY + rowH * 0.48f, nameW, rowH * 0.5f), sub, ss);
+                GUI.Label(new Rect(tx, rowY + rowH * 0.64f, nameW, rowH * 0.34f), sub, ss);
 
                 if (!locked && open)
                 {

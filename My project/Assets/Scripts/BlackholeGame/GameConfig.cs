@@ -43,6 +43,8 @@ namespace BlackholeGame
         public float[] towerDmgMul = { 0.5f, 0.5f, 0.5f };     // 커서 타격 대비 배율
         public float[] towerInterval = { 1.1f, 1.1f, 1.1f };   // 발사 간격(초) — 단발/연발/저격만 쓴다
         public float[] towerSpin = { 52f, 52f, 52f };          // 회전 속도(도/초)
+        public int[] towerBeams = { 1, 1, 1 };                 // round51: 화염·레이저가 동시에 뻗는 방향 수(최대 3)
+        public int[] towerTargets = { 1, 1, 1 };               // round51: 저격이 한 번에 노리는 표적 수(최대 3)
         public int[] towerPattern = new int[TowerCount];       // 지금 고른 패턴
         public int[] towerPatMask = { 1, 1, 1 };               // 해금한 패턴 비트마스크(0번=단발은 기본)
         public bool AnyTower { get { for (int i = 0; i < TowerCount; i++) if (towerOn[i]) return true; return false; } }
@@ -69,6 +71,7 @@ namespace BlackholeGame
             towerOn = (bool[])towerOn.Clone(), towerDmgMul = (float[])towerDmgMul.Clone(),
             towerInterval = (float[])towerInterval.Clone(), towerSpin = (float[])towerSpin.Clone(),
             towerPattern = (int[])towerPattern.Clone(), towerPatMask = (int[])towerPatMask.Clone(),
+            towerBeams = (int[])towerBeams.Clone(), towerTargets = (int[])towerTargets.Clone(),
         };
 
         // 치명타는 타격 시점에 공식 바깥에서 롤
@@ -226,14 +229,14 @@ namespace BlackholeGame
         {
             // 1지역만 "튜토리얼 보정" — 잡몹 30, 골드배율 1.0, 보스 1400. (round37: 초반 골드 수급이
             // 막혀 첫 노드조차 못 사던 문제. 이 보정으로 1판마다 노드를 사고 5판이면 클리어된다.)
-            new StageConfig(0, "s.0",  4,  28f,       29f, 1.130f,        5375,  4,  8,    1.00f, new Color(0.42f,0.72f,0.46f)),
-            new StageConfig(1, "s.1",  5,  34f,      183f, 1.136f,       28608,  5,  9,    4.72f, new Color(0.36f,0.62f,0.70f)),
-            new StageConfig(2, "s.2",  7,  44f,      717f, 1.142f,      124107,  6, 10,   15.98f, new Color(0.60f,0.54f,0.36f)),
-            new StageConfig(3, "s.3",  9,  54f,     1317f, 1.148f,      563499,  7, 11,   30.00f, new Color(0.40f,0.46f,0.60f)),
-            new StageConfig(4, "s.4", 11,  64f,     3586f, 1.153f,     2991606,  8, 12,   99.55f, new Color(0.30f,0.58f,0.62f)),
-            new StageConfig(5, "s.5", 13,  74f,    13455f, 1.158f,    15827144,  9, 13,  491.64f, new Color(0.34f,0.56f,0.34f)),
-            new StageConfig(6, "s.6", 15,  88f,    83524f, 1.163f,   114790270, 10, 14, 4192.48f, new Color(0.62f,0.66f,0.72f)),
-            new StageConfig(7, "s.7", 18, 108f,   366883f, 1.168f,   716831884, 11, 15, 27833.97f, new Color(0.66f,0.30f,0.34f)),
+            new StageConfig(0, "s.0",  4,  28f,        29f, 1.130f,         5375,  4,  8,     1.00f, new Color(0.42f,0.72f,0.46f)),
+            new StageConfig(1, "s.1",  5,  34f,       183f, 1.136f,        28608,  5,  9,     4.72f, new Color(0.36f,0.62f,0.70f)),
+            new StageConfig(2, "s.2",  7,  44f,       717f, 1.142f,       124107,  6, 10,    15.98f, new Color(0.60f,0.54f,0.36f)),
+            new StageConfig(3, "s.3",  9,  54f,      1317f, 1.148f,       563499,  7, 11,    30.00f, new Color(0.40f,0.46f,0.60f)),
+            new StageConfig(4, "s.4", 11,  64f,      4841f, 1.153f,      4038668,  8, 12,   134.39f, new Color(0.30f,0.58f,0.62f)),
+            new StageConfig(5, "s.5", 13,  74f,     25564f, 1.158f,     30071574,  9, 13,   934.09f, new Color(0.34f,0.56f,0.34f)),
+            new StageConfig(6, "s.6", 15,  88f,    283982f, 1.163f,    390286918, 10, 14, 14254.46f, new Color(0.62f,0.66f,0.72f)),
+            new StageConfig(7, "s.7", 18, 108f,   2568181f, 1.168f,   5017823188, 11, 15, 194837.80f, new Color(0.66f,0.30f,0.34f)),
         };
     }
 }

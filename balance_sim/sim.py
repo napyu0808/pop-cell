@@ -84,6 +84,8 @@ class Stats:
         self.towerSpin = [52.0, 52.0, 52.0]
         self.towerPattern = [0, 0, 0]
         self.towerPatMask = [1, 1, 1]
+        self.towerBeams = [1, 1, 1]
+        self.towerTargets = [1, 1, 1]
         for k, v in kw.items():
             setattr(self, k, v)
 
@@ -102,6 +104,8 @@ class Stats:
         s.towerSpin = list(self.towerSpin)
         s.towerPattern = list(self.towerPattern)
         s.towerPatMask = list(self.towerPatMask)
+        s.towerBeams = list(self.towerBeams)
+        s.towerTargets = list(self.towerTargets)
         return s
 
     def any_tower(self):
@@ -210,10 +214,10 @@ class Run:
                 best_hp = self.hp[j]; best = j
         return best
 
-    def _area_hit(self, ti, dmg, shape, kill):
+    def _area_hit(self, ti, dmg, shape, kill, ang_off=0.0):
         """화염(부채꼴) / 레이저(직선) — 닿는 적 전부. True = 펄스 중단."""
         tx, ty = TOWER_POS[ti]
-        rad = math.radians(self.tw_ang[ti])
+        rad = math.radians(self.tw_ang[ti] + ang_off)
         dx_, dy_ = math.sin(rad), math.cos(rad)
         for j in range(self.n - 1, -1, -1):
             if self.dead[j]:
@@ -238,7 +242,7 @@ class Run:
                 return True
         return False
 
-    def _sniper_shot(self, ti, dmg, kill):
+    def _sniper_shot(self, ti, dmg, kill, targets=1):
         j = self._sniper_target()
         if j < 0:
             return False
@@ -246,9 +250,23 @@ class Run:
         want = math.degrees(math.atan2(self.px[j] - tx, self.py[j] - ty))
         if abs((want - self.tw_ang[ti] + 540.0) % 360.0 - 180.0) > 6.0:
             return False
-        self.hp[j] -= dmg
-        if self.hp[j] <= 0 and kill(j, False):
-            return True
+        picked = [j]
+        while len(picked) < targets:
+            best, best_hp = -1, 0.0
+            for k in range(self.n):
+                if self.dead[k] or self.bm[k] or k in picked:
+                    continue
+                if self.hp[k] > best_hp:
+                    best_hp = self.hp[k]; best = k
+            if best < 0:
+                break
+            picked.append(best)
+        for k in picked:
+            if self.dead[k]:
+                continue
+            self.hp[k] -= dmg
+            if self.hp[k] <= 0 and kill(k, False):
+                return True
         return False
 
     def _compact(self):
@@ -439,14 +457,19 @@ class Run:
                             a0 = self.tw_ang[ti]
                             for a in (a0 - BURST_SPREAD, a0, a0 + BURST_SPREAD):
                                 self._fire(ti, a, dmg * 0.6)
-                        elif pat == PAT_FLAME:
-                            if self._area_hit(ti, dmg * 0.42, "cone", kill):
-                                break
-                        elif pat == PAT_LASER:
-                            if self._area_hit(ti, dmg * 1.1, "beam", kill):
+                        elif pat in (PAT_FLAME, PAT_LASER):
+                            shape = "cone" if pat == PAT_FLAME else "beam"
+                            mul = 0.42 if pat == PAT_FLAME else 1.1
+                            nb = max(1, min(3, s.towerBeams[ti]))
+                            done = False
+                            for b in range(nb):
+                                off = 0.0 if nb <= 1 else b * (360.0 / nb)
+                                if self._area_hit(ti, dmg * mul, shape, kill, off):
+                                    done = True; break
+                            if done:
                                 break
                         elif pat == PAT_SNIPER:
-                            if self._sniper_shot(ti, dmg * 6.0, kill):
+                            if self._sniper_shot(ti, dmg * 20.0, kill, max(1, min(3, s.towerTargets[ti]))):
                                 break
                         else:
                             self._fire(ti, self.tw_ang[ti], dmg)
