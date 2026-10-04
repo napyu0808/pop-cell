@@ -17,13 +17,15 @@ namespace BlackholeGame
         public readonly Action<Stats> apply;
         public readonly bool repeat;        // round44: 반복 강화 — 살 때마다 같은 값(cost)으로 같은 효과(apply)를 한 번 더
         public readonly int tab;            // round47: 0 = 커서(기존 트리), 1 = 자동 타워
+        public readonly string[] alsoNeed;  // round50: 부모 말고 추가로 뚫어야 하는 노드(타워 변신)
 
         public UpgradeNode(string id, string parentId, Vector2 dir, string icon,
-                           string label, long cost, int tier, string desc, float descArg, Action<Stats> apply, bool repeat = false, int tab = 0)
+                           string label, long cost, int tier, string desc, float descArg, Action<Stats> apply,
+                           bool repeat = false, int tab = 0, string[] alsoNeed = null)
         {
             this.id = id; this.parentId = parentId; this.dir = dir; this.icon = icon;
             this.label = label; this.cost = cost; this.tier = tier; this.desc = desc; this.descArg = descArg; this.apply = apply;
-            this.repeat = repeat; this.tab = tab;
+            this.repeat = repeat; this.tab = tab; this.alsoNeed = alsoNeed;
         }
         public bool IsRoot => parentId == null;
     }
@@ -105,14 +107,86 @@ namespace BlackholeGame
             LBDmg  = L(T.BombDmg, "bombdmg", 6, 1), LBRad = L(T.BombRad, "bombrad", 10, 1), LBFreq = L(T.BombFreq, "bombfreq", 5, 1);
         public const int BombUnlockTier = 1;   // 백신은 1지역을 깬 뒤 — 기본 조작에 익숙해진 다음 새 요소
 
-        // ---- 자동 타워(round47) — 좌/중앙/우 3줄기. 줄기마다 해금 → 공격력 → 공속 → 연발 전환 ----
-        //   공격력은 "커서 타격의 배수": 0.5 에서 시작해 +0.05 씩 10번 = 1.0.
-        public const int TowerUnlockTier = 1;          // 1지역을 깬 뒤부터
-        public const float TowerDmgAdd = 0.05f, TowerDmgMax = 1.0f;
-        public const float TowerSpeedMul = 0.88f, TowerIntervalMin = 0.45f;
-        public static readonly int[] TowerTierOfStep = { 1, 1, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 7, 7 };   // 줄기 안 17칸의 티어
-        static readonly string[] TowerKey = { "twL", "twC", "twR" };
+        // ---- 자동 타워(round50 개편) ---------------------------------------------------
+        //   줄기(좌·중앙·우)마다: 해금 → [공격력 / 공속 / 회전속도] 3갈래 → 셋 다 뚫으면 변신 노드.
+        //   변신은 화염방사 → 레이저 → 저격 순. 변신해도 스펙(공격력·공속·회전)은 그대로 쌓이고
+        //   공격 패턴만 늘어난다 — 타워 탭에서 뚫은 패턴 중 아무거나 골라 쓴다.
+        //   3~6지역에서 힘이 되게 티어를 잡았고, 저격은 보스가 단단해지는 7~8지역용이다.
+        public const int TowerUnlockTier = 1;
+
+        public const float TowerDmgAdd = 0.10f;                     // 단계마다 5개 = +0.5
+        public static readonly float[] TowerDmgMaxAt = { 1.0f, 1.5f, 2.0f, 2.4f };   // 단계별 상한
+        public const float TowerSpeedMul = 0.88f, TowerIntervalMin = 0.25f;
+        public const float TowerSpinAdd = 14f, TowerSpinMax = 300f;
+
+        const int TwPerBranch = 5;                                   // 갈래 하나당 노드 수
+        //  단계: 0 기본(단발) · 1 화염방사 · 2 레이저 · 3 저격
+        static readonly int[] TwStageTier  = { 2, 4, 5, 7 };          // 그 단계 갈래 노드의 시작 티어
+        static readonly int[] TwMorphTier  = { 0, 4, 5, 6 };          // 변신 노드 티어(0 단계는 변신 없음)
+        static readonly string[] TowerKey  = { "twL", "twC", "twR" };
         static readonly string[] TowerName = { "n.towerL", "n.towerC", "n.towerR" };
+
+        // 줄기 하나
+        static void TowerLane(List<UpgradeNode> list, int idx, string parent)
+        {
+            string key = TowerKey[idx];
+            string unlock = key + "0";
+            list.Add(new UpgradeNode(unlock, parent, Vector2.zero, "tower", TowerName[idx],
+                                     Cost(TowerUnlockTier), TowerUnlockTier, "nd.towerOn", 0f,
+                                     s => s.towerOn[idx] = true, false, 1));
+
+            string stem = unlock;
+            for (int st = 0; st < 4; st++)
+            {
+                if (st > 0)
+                {
+                    // 변신 — 바로 아래 세 갈래 끝을 전부 뚫어야 열린다(가운데 갈래를 부모로)
+                    int pat = st == 1 ? Stats.PatFlame : st == 2 ? Stats.PatLaser : Stats.PatSniper;
+                    string icon = st == 1 ? "flame" : st == 2 ? "laser" : "scope";
+                    string desc = st == 1 ? "nd.towerFlame" : st == 2 ? "nd.towerLaser" : "nd.towerSniper";
+                    string mid = stem + "s"; // 직전 단계의 공속 갈래 끝
+                    string morph = key + "m" + st;
+                    list.Add(new UpgradeNode(morph, mid, Vector2.zero, icon, TowerName[idx],
+                                             Cost(TwMorphTier[st]), TwMorphTier[st], desc, 0f,
+                                             s => s.UnlockPattern(idx, pat), false, 1,
+                                             new[] { stem + "d", stem + "p" }));
+                    stem = morph;
+                    if (st == 3) break;     // 저격은 변신만 하고 갈래를 더 두지 않는다
+                }
+
+                int tier0 = TwStageTier[st];
+                float dmgMax = TowerDmgMaxAt[st];
+                // 세 갈래 — d 공격력 · s 공속 · p 회전속도. 각각 TwPerBranch 칸.
+                for (int b = 0; b < 3; b++)
+                {
+                    string bk = b == 0 ? "d" : b == 1 ? "s" : "p";
+                    string bp = stem;
+                    for (int k = 0; k < TwPerBranch; k++)
+                    {
+                        int tier = Mathf.Min(NodeTiers - 1, tier0 + (k >= TwPerBranch - 2 ? 1 : 0));
+                        string id = stem + bk + (k == TwPerBranch - 1 ? "" : k.ToString());
+                        if (b == 0)
+                            list.Add(new UpgradeNode(id, bp, Vector2.zero, "sword", TowerName[idx], Cost(tier), tier,
+                                                     "nd.towerDmg", TowerDmgAdd,
+                                                     s => s.towerDmgMul[idx] = Mathf.Min(dmgMax, s.towerDmgMul[idx] + TowerDmgAdd), false, 1));
+                        else if (b == 1)
+                            list.Add(new UpgradeNode(id, bp, Vector2.zero, "bolt", TowerName[idx], Cost(tier), tier,
+                                                     "nd.towerSpd", TowerSpeedMul,
+                                                     s => s.towerInterval[idx] = Mathf.Max(TowerIntervalMin, s.towerInterval[idx] * TowerSpeedMul), false, 1));
+                        else
+                            list.Add(new UpgradeNode(id, bp, Vector2.zero, "spin", TowerName[idx], Cost(tier), tier,
+                                                     "nd.towerSpin", TowerSpinAdd,
+                                                     s => s.towerSpin[idx] = Mathf.Min(TowerSpinMax, s.towerSpin[idx] + TowerSpinAdd), false, 1));
+                        bp = id;
+                    }
+                }
+                // 공속 갈래 끝에 연발 — 기본 타워의 변형이라 변신 단계로 두지 않았다
+                if (st == 0)
+                    list.Add(new UpgradeNode(stem + "burst", stem + "s", Vector2.zero, "chevrons", TowerName[idx],
+                                             Cost(TwStageTier[0] + 1), TwStageTier[0] + 1, "nd.towerBurst", 0f,
+                                             s => s.UnlockPattern(idx, Stats.PatBurst), false, 1));
+            }
+        }
 
         // 가지 안 k번째(0부터) 노드의 티어 — 시작 티어부터 NodeTiers-1(5)까지 높이 비율로 고르게
         public static int TierOf(LaneDef d, int k) => d.tier0 + (k * (NodeTiers - d.tier0)) / d.len;
@@ -177,36 +251,6 @@ namespace BlackholeGame
                 parent = id;
             }
             return parent;
-        }
-
-        // 타워 한 대(줄기 하나) — [해금] → 공격력/공속 섞어서 → [연발 전환]
-        static void TowerLane(List<UpgradeNode> list, int idx, string parent)
-        {
-            string key = TowerKey[idx];
-            // 0: 해금
-            string id0 = key + 0;
-            list.Add(new UpgradeNode(id0, parent, Vector2.zero, "tower", TowerName[idx], Cost(TowerUnlockTier), TowerUnlockTier,
-                                     "nd.towerOn", 0f, s => s.towerOn[idx] = true, false, 1));
-            parent = id0;
-            // 1~16: 공격력 10 + 공속 5 + 연발 1 (티어는 TowerTierOfStep)
-            //   순서를 섞어 "공격력만 쭉"이 되지 않게. 마지막은 연발 전환.
-            string[] kind = { "d", "d", "s", "d", "d", "s", "d", "d", "s", "d", "d", "s", "d", "d", "s", "r" };
-            for (int k = 0; k < kind.Length; k++)
-            {
-                int step = k + 1;
-                int tier = TowerTierOfStep[Mathf.Min(step, TowerTierOfStep.Length - 1)];
-                string id = key + step;
-                if (kind[k] == "d")
-                    list.Add(new UpgradeNode(id, parent, Vector2.zero, "sword", TowerName[idx], Cost(tier), tier,
-                                             "nd.towerDmg", TowerDmgAdd, s => s.towerDmgMul[idx] = Mathf.Min(TowerDmgMax, s.towerDmgMul[idx] + TowerDmgAdd), false, 1));
-                else if (kind[k] == "s")
-                    list.Add(new UpgradeNode(id, parent, Vector2.zero, "bolt", TowerName[idx], Cost(tier), tier,
-                                             "nd.towerSpd", TowerSpeedMul, s => s.towerInterval[idx] = Mathf.Max(TowerIntervalMin, s.towerInterval[idx] * TowerSpeedMul), false, 1));
-                else
-                    list.Add(new UpgradeNode(id, parent, Vector2.zero, "chevrons", TowerName[idx], Cost(tier), tier,
-                                             "nd.towerBurst", 0f, s => s.towerType[idx] = 1, false, 1));
-                parent = id;
-            }
         }
 
         // 자식 순서 = 화면 왼쪽→오른쪽. 이어지는 가지를 가운데에 둬서 머리 노드 바로 위로 곧게 뻗게.

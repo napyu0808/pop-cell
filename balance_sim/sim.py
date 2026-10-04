@@ -81,7 +81,9 @@ class Stats:
         self.towerOn = [False, False, False]
         self.towerDmgMul = [0.5, 0.5, 0.5]
         self.towerInterval = [1.1, 1.1, 1.1]
-        self.towerType = [0, 0, 0]
+        self.towerSpin = [52.0, 52.0, 52.0]
+        self.towerPattern = [0, 0, 0]
+        self.towerPatMask = [1, 1, 1]
         for k, v in kw.items():
             setattr(self, k, v)
 
@@ -97,7 +99,9 @@ class Stats:
         s.towerOn = list(self.towerOn)
         s.towerDmgMul = list(self.towerDmgMul)
         s.towerInterval = list(self.towerInterval)
-        s.towerType = list(self.towerType)
+        s.towerSpin = list(self.towerSpin)
+        s.towerPattern = list(self.towerPattern)
+        s.towerPatMask = list(self.towerPatMask)
         return s
 
     def any_tower(self):
@@ -112,6 +116,9 @@ BOMB_BASE_R, BOMB_MAX_ALIVE, BOMB_SIZE, BOMB_HP = 2.6, 2, 1.9, 0.6
 TOWER_POS = [(-5.2, 0.0), (0.0, 0.0), (5.2, 0.0)]
 TOWER_SPIN, BULLET_SPEED, BULLET_LIFE, BULLET_R = 52.0, 9.0, 2.2, 0.16
 BURST_SPREAD = 11.0      # 연발 부채꼴 각도
+PAT_SHOT, PAT_BURST, PAT_FLAME, PAT_LASER, PAT_SNIPER = 0, 1, 2, 3, 4
+FLAME_RANGE, FLAME_HALF_ANG = 4.2, 26.0
+LASER_RANGE, LASER_HALF_W = 11.0, 0.42
 MAX_BULLETS = 160        # C# 은 260 — 동시에 그만큼 뜨는 일은 없어 메모리만 줄였다
 
 
@@ -179,6 +186,70 @@ class Run:
         sp = self.rng.uniform(0.25, 0.65)
         a = self.rng.random() * 2 * math.pi
         self.vx[i] = math.cos(a) * sp; self.vy[i] = math.sin(a) * sp
+
+    def _fire(self, ti, ang, dmg):
+        if self.bn >= MAX_BULLETS:
+            return
+        k = self.bn; self.bn += 1
+        rad = math.radians(ang)
+        self.bux[k], self.buy[k] = TOWER_POS[ti]
+        self.bvx[k] = math.sin(rad) * BULLET_SPEED
+        self.bvy[k] = math.cos(rad) * BULLET_SPEED
+        self.bulife[k] = BULLET_LIFE
+        self.budmg[k] = dmg
+
+    def _sniper_target(self):
+        bi = getattr(self, "boss_idx", -1)
+        if bi >= 0 and not self.dead[bi]:
+            return bi
+        best, best_hp = -1, 0.0
+        for j in range(self.n):
+            if self.dead[j] or self.bm[j]:
+                continue
+            if self.hp[j] > best_hp:
+                best_hp = self.hp[j]; best = j
+        return best
+
+    def _area_hit(self, ti, dmg, shape, kill):
+        """화염(부채꼴) / 레이저(직선) — 닿는 적 전부. True = 펄스 중단."""
+        tx, ty = TOWER_POS[ti]
+        rad = math.radians(self.tw_ang[ti])
+        dx_, dy_ = math.sin(rad), math.cos(rad)
+        for j in range(self.n - 1, -1, -1):
+            if self.dead[j]:
+                continue
+            ex, ey = self.px[j] - tx, self.py[j] - ty
+            if shape == "cone":
+                dist = math.hypot(ex, ey)
+                if dist > FLAME_RANGE + self.er[j]:
+                    continue
+                if dist > 0.01:
+                    cosang = (ex * dx_ + ey * dy_) / dist
+                    if math.degrees(math.acos(max(-1.0, min(1.0, cosang)))) > FLAME_HALF_ANG:
+                        continue
+            else:
+                along = ex * dx_ + ey * dy_
+                if along < 0.0 or along > LASER_RANGE:
+                    continue
+                if abs(ex * dy_ - ey * dx_) > LASER_HALF_W + self.er[j]:
+                    continue
+            self.hp[j] -= dmg
+            if self.hp[j] <= 0 and kill(j, False):
+                return True
+        return False
+
+    def _sniper_shot(self, ti, dmg, kill):
+        j = self._sniper_target()
+        if j < 0:
+            return False
+        tx, ty = TOWER_POS[ti]
+        want = math.degrees(math.atan2(self.px[j] - tx, self.py[j] - ty))
+        if abs((want - self.tw_ang[ti] + 540.0) % 360.0 - 180.0) > 6.0:
+            return False
+        self.hp[j] -= dmg
+        if self.hp[j] <= 0 and kill(j, False):
+            return True
+        return False
 
     def _compact(self):
         """C# enemies.RemoveAll(x => x.dead) — 순서 유지."""
@@ -340,30 +411,50 @@ class Run:
                 m = self.py[:n] > hi
                 self.py[:n][m] = hi[m]; self.vy[:n][m] *= -1
 
-            # --- 자동 타워(round47): 조준하지 않고 일정 속도로 돌며 탄알을 쏜다
+            # --- 자동 타워(round50) — 패턴마다 다르게 때린다
             if s.any_tower():
                 for ti in range(3):
                     if not s.towerOn[ti]:
                         continue
-                    self.tw_ang[ti] = (self.tw_ang[ti] + TOWER_SPIN * dt) % 360.0
+                    pat = s.towerPattern[ti]
+                    tx, ty = TOWER_POS[ti]
+
+                    if pat == PAT_SNIPER:
+                        j = self._sniper_target()
+                        if j >= 0:
+                            want = math.degrees(math.atan2(self.px[j] - tx, self.py[j] - ty))
+                            step = max(90.0, s.towerSpin[ti] * 3.0) * dt
+                            d = (want - self.tw_ang[ti] + 540.0) % 360.0 - 180.0
+                            self.tw_ang[ti] += max(-step, min(step, d))
+                    else:
+                        self.tw_ang[ti] = (self.tw_ang[ti] + s.towerSpin[ti] * dt) % 360.0
+
+                    iv = max(0.05, s.attackInterval) if pat in (PAT_FLAME, PAT_LASER)                          else max(0.08, s.towerInterval[ti])
                     self.tw_t[ti] += dt
-                    iv = max(0.08, s.towerInterval[ti])
                     guard = 0
                     while self.tw_t[ti] >= iv and guard < 8:
                         self.tw_t[ti] -= iv; guard += 1
                         dmg = hit * s.towerDmgMul[ti]
-                        a0 = self.tw_ang[ti]
-                        angs = (a0 - BURST_SPREAD, a0, a0 + BURST_SPREAD) if s.towerType[ti] == 1 else (a0,)
-                        for a in angs:
-                            if self.bn >= MAX_BULLETS:
+                        if pat == PAT_BURST:
+                            a0 = self.tw_ang[ti]
+                            for a in (a0 - BURST_SPREAD, a0, a0 + BURST_SPREAD):
+                                self._fire(ti, a, dmg * 0.6)
+                        elif pat == PAT_FLAME:
+                            if self._area_hit(ti, dmg * 0.42, "cone", kill):
                                 break
-                            k = self.bn; self.bn += 1
-                            rad = math.radians(a)
-                            self.bux[k], self.buy[k] = TOWER_POS[ti]
-                            self.bvx[k] = math.sin(rad) * BULLET_SPEED
-                            self.bvy[k] = math.cos(rad) * BULLET_SPEED
-                            self.bulife[k] = BULLET_LIFE
-                            self.budmg[k] = dmg
+                        elif pat == PAT_LASER:
+                            if self._area_hit(ti, dmg * 1.1, "beam", kill):
+                                break
+                        elif pat == PAT_SNIPER:
+                            if self._sniper_shot(ti, dmg * 6.0, kill):
+                                break
+                        else:
+                            self._fire(ti, self.tw_ang[ti], dmg)
+                    if st["won"]:
+                        break
+                self._compact()
+                if st["won"]:
+                    break
 
             # --- 탄알 이동 + 명중 (한 발은 적 하나만 때리고 사라진다 — 관통 없음)
             if self.bn:

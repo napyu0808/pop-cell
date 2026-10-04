@@ -32,13 +32,18 @@ BOMB_RAD_ADD, BOMB_RAD_MAX = 0.10, 2.0
 BOMB_INT_SUB, BOMB_INT_MIN = 2.0, 10.0
 BOMB_UNLOCK_TIER = 1
 
-# ---- 자동 타워(round47) — UpgradeTree.cs 의 Tower* 상수 미러 ----
+# ---- 자동 타워(round50 개편) — UpgradeTree.cs 의 Tw* 상수 미러 ----
+#   줄기마다 해금 → [공격력/공속/회전] 3갈래 → 셋 다 뚫으면 변신(화염 → 레이저 → 저격).
 TOWER_UNLOCK_TIER = 1
-TOWER_DMG_ADD, TOWER_DMG_MAX = 0.05, 1.0
-TOWER_SPEED_MUL, TOWER_INTERVAL_MIN = 0.88, 0.45
-TOWER_TIER_OF_STEP = [1, 1, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 7, 7]
-TOWER_KIND = ["d", "d", "s", "d", "d", "s", "d", "d", "s", "d", "d", "s", "d", "d", "s", "r"]
+TOWER_DMG_ADD = 0.10
+TOWER_DMG_MAX_AT = [1.0, 1.5, 2.0, 2.4]
+TOWER_SPEED_MUL, TOWER_INTERVAL_MIN = 0.88, 0.25
+TOWER_SPIN_ADD, TOWER_SPIN_MAX = 14.0, 300.0
+TW_PER_BRANCH = 5
+TW_STAGE_TIER = [2, 4, 5, 7]
+TW_MORPH_TIER = [0, 4, 5, 6]
 TOWER_KEYS = ["twL", "twC", "twR"]
+PAT_SHOT, PAT_BURST, PAT_FLAME, PAT_LASER, PAT_SNIPER = 0, 1, 2, 3, 4
 
 # 반복 강화 1회당 (UpgradeTree.Rep*) — 가격은 flat, mult, speed, range, critx, gold 순
 REP_FLAT, REP_MULT, REP_APS, REP_RANGE, REP_CRITX, REP_GOLD = 10.0, 1.0, 0.05, 0.01, 0.02, 1.0
@@ -154,29 +159,23 @@ def apply_type(t, tier, s):
         s.critMult += REP_CRITX
     elif t == "RGold":
         s.goldMultPercent += REP_GOLD
-    # ---- 자동 타워 (타입 문자열 끝 한 글자가 줄기 번호) ----
-    elif t.startswith("Tw"):
-        i = int(t[-1]); kind = t[2:-1]
-        if kind == "On":
-            s.towerOn[i] = True
-        elif kind == "Dmg":
-            s.towerDmgMul[i] = min(TOWER_DMG_MAX, s.towerDmgMul[i] + TOWER_DMG_ADD)
-        elif kind == "Spd":
-            s.towerInterval[i] = max(TOWER_INTERVAL_MIN, s.towerInterval[i] * TOWER_SPEED_MUL)
-        elif kind == "Burst":
-            s.towerType[i] = 1
 
 
 class Node:
-    __slots__ = ("id", "parent", "tier", "cost", "type", "lane", "repeat")
+    __slots__ = ("id", "parent", "tier", "cost", "type", "lane", "repeat", "fn", "also")
 
-    def __init__(self, nid, parent, tier, t, lane, repeat=False, cost=None):
+    def __init__(self, nid, parent, tier, t, lane, repeat=False, cost=None, fn=None, also=None):
         self.id, self.parent, self.tier, self.type, self.lane = nid, parent, tier, t, lane
         self.repeat = repeat
         self.cost = cost if cost is not None else cost_of(tier)
+        self.fn = fn            # 타워처럼 효과가 표로 안 떨어지는 노드
+        self.also = also        # 추가 선행 조건(변신)
 
     def apply(self, s):
-        apply_type(self.type, self.tier, s)
+        if self.fn is not None:
+            self.fn(s)
+        else:
+            apply_type(self.type, self.tier, s)
 
 
 def build():
@@ -216,14 +215,50 @@ def build():
     # 자동 타워 — 코어에서 좌/중앙/우 3줄기(별도 탭)
     for i in range(3):
         key = TOWER_KEYS[i]
-        make(key + "0", "root", "TwOn%d" % i, TOWER_UNLOCK_TIER, key)
-        parent = key + "0"
-        for k, kind in enumerate(TOWER_KIND):
-            step = k + 1
-            tier = TOWER_TIER_OF_STEP[min(step, len(TOWER_TIER_OF_STEP) - 1)]
-            t = {"d": "TwDmg%d", "s": "TwSpd%d", "r": "TwBurst%d"}[kind] % i
-            make(key + str(step), parent, t, tier, key)
-            parent = key + str(step)
+        unlock = key + "0"
+
+        def on(s, i=i):
+            s.towerOn[i] = True
+        nodes.append(Node(unlock, "root", TOWER_UNLOCK_TIER, "TwOn", key, fn=on))
+
+        stem = unlock
+        for st in range(4):
+            if st > 0:
+                pat = PAT_FLAME if st == 1 else PAT_LASER if st == 2 else PAT_SNIPER
+
+                def morph_fn(s, i=i, pat=pat):
+                    s.towerPatMask[i] |= 1 << pat
+                    s.towerPattern[i] = pat
+                morph = key + "m" + str(st)
+                nodes.append(Node(morph, stem + "s", TW_MORPH_TIER[st], "TwMorph", key,
+                                  fn=morph_fn, also=[stem + "d", stem + "p"]))
+                stem = morph
+                if st == 3:
+                    break
+
+            tier0 = TW_STAGE_TIER[st]
+            dmg_max = TOWER_DMG_MAX_AT[st]
+            for b, bk in enumerate(("d", "s", "p")):
+                bp = stem
+                for k in range(TW_PER_BRANCH):
+                    tier = min(NODE_TIERS - 1, tier0 + (1 if k >= TW_PER_BRANCH - 2 else 0))
+                    nid = stem + bk + ("" if k == TW_PER_BRANCH - 1 else str(k))
+                    if b == 0:
+                        def f(s, i=i, m=dmg_max):
+                            s.towerDmgMul[i] = min(m, s.towerDmgMul[i] + TOWER_DMG_ADD)
+                    elif b == 1:
+                        def f(s, i=i):
+                            s.towerInterval[i] = max(TOWER_INTERVAL_MIN, s.towerInterval[i] * TOWER_SPEED_MUL)
+                    else:
+                        def f(s, i=i):
+                            s.towerSpin[i] = min(TOWER_SPIN_MAX, s.towerSpin[i] + TOWER_SPIN_ADD)
+                    nodes.append(Node(nid, bp, tier, "Tw" + bk, key, fn=f))
+                    bp = nid
+            if st == 0:
+                def burst(s, i=i):
+                    s.towerPatMask[i] |= 1 << PAT_BURST
+                    s.towerPattern[i] = PAT_BURST
+                nodes.append(Node(stem + "burst", stem + "s", TW_STAGE_TIER[0] + 1, "TwBurst", key, fn=burst))
     return nodes
 
 
@@ -292,8 +327,8 @@ def wave_cfg(stage, asc=0):
 # GameManager 가 살아있는 Play 모드에서 UpgradeTree.BuildAll() 로 뽑은 값 (round38).
 EXPECTED_DPS = [256, 894, 2286, 6642, 23705, 65041, 220748, 578355]
 EXPECTED_HIT = [111, 232, 420, 706, 1335, 2562, 5050, 9748]
-EXPECTED_TOTAL_COST = 351_551_594_517  # 일반 노드만(반복 제외) — round48 가격 재조정 후, 에디터 실측과 일치
-EXPECTED_NODES = 207   # 루트+일반 150 + 타워 51 + 반복 6
+EXPECTED_TOTAL_COST = 262_413_374_448  # 일반 노드만(반복 제외) — round50 타워 개편 후, 에디터 실측과 일치
+EXPECTED_NODES = 306   # 루트+커서 150 + 타워 150 + 반복 6
 
 
 def self_check(verbose=True):

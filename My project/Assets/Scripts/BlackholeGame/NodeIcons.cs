@@ -107,6 +107,34 @@ namespace BlackholeGame
                 ["hex"]       = Make(px => { const float r = 10f; for (int k = 0; k < 6; k++) { float a0 = k / 6f * 6.2832f, a1 = (k + 1) / 6f * 6.2832f; Ln(px, 14 + Mathf.Cos(a0) * r, 14 + Mathf.Sin(a0) * r, 14 + Mathf.Cos(a1) * r, 14 + Mathf.Sin(a1) * r, 1); } Dot(px, 14, 14, 2); }),
                 // 자동 타워 — 받침 + 총열
                 ["tower"]     = Make(px => { Ring(px, 14, 17, 7, 1); Dot(px, 14, 17, 2); Ln(px, 14, 17, 14, 4, 1); Dot(px, 14, 5, 2); }),
+                // 화염방사 — 갈라지는 불길
+                ["flame"]     = Make(px => {
+                    Ln(px, 14, 26, 14, 10, 1);
+                    Ln(px, 14, 10, 9, 4, 1); Ln(px, 14, 10, 19, 4, 1);
+                    Ln(px, 8, 22, 6, 14, 0); Ln(px, 20, 22, 22, 14, 0);
+                    Dot(px, 14, 20, 2);
+                }),
+                // 레이저 — 가운데를 꿰뚫는 빔
+                ["laser"]     = Make(px => {
+                    Ln(px, 14, 2, 14, 26, 2);
+                    Ln(px, 8, 8, 8, 20, 0); Ln(px, 20, 8, 20, 20, 0);
+                    Dot(px, 14, 14, 3);
+                }),
+                // 저격 — 조준경
+                ["scope"]     = Make(px => {
+                    Ring(px, 14, 14, 9, 1);
+                    Ln(px, 14, 0, 14, 5, 0); Ln(px, 14, 23, 14, 28, 0);
+                    Ln(px, 0, 14, 5, 14, 0); Ln(px, 23, 14, 28, 14, 0);
+                    Dot(px, 14, 14, 1);
+                }),
+                // 회전 속도 — 도는 화살표
+                ["spin"]      = Make(px => {
+                    for (int k = 0; k < 22; k++) {
+                        float a = -0.5f + k / 22f * 5.2f;
+                        Dot(px, Mathf.RoundToInt(14 + Mathf.Cos(a) * 9f), Mathf.RoundToInt(14 + Mathf.Sin(a) * 9f), 1);
+                    }
+                    Ln(px, 19, 5, 23, 8, 1); Ln(px, 23, 8, 18, 11, 1);
+                }),
                 // 폴백
                 ["dot"]       = Make(px => { Dot(px, 14, 14, 3); }),
                 // 설정(톱니바퀴) — 지도 화면 우측 상단 메뉴 버튼용(노드 아님, 그대로)

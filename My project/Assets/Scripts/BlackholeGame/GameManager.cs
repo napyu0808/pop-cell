@@ -42,8 +42,8 @@ namespace BlackholeGame
         float newConfirmUntil = -1f;   // 세이브가 있을 때 '새로 시작'은 두 번 눌러야 — 첫 클릭 후 이 시각까지 확인 대기
         int mapIndex = 0;         // 지역 캐러셀에서 고른 칸
         float mapScroll = -1f;    // 캐러셀 부드러운 이동 (음수 = 초기화 전)
-        bool mapDragging;         // round49: 지도 캐러셀을 끌어서 넘기는 중
-        bool mapDragMoved;        // 끌었다 = 이번 클릭은 카드 선택으로 치지 않는다
+        bool mapPressValid;       // round49: 캐러셀 위에서 눌렀다(화살표 위가 아니라) — 끌 수 있는 상태
+        bool mapDragMoved;        // 실제로 끌었다 = 이번 클릭은 카드 선택으로 치지 않는다
         float mapDragStartX, mapDragStartScroll;
         int metaCurrency = 0;     // 환생 재화 (shard)
         int bestScore = 0;        // 역대 최고 score
@@ -107,6 +107,11 @@ namespace BlackholeGame
         //   조준하지 않는다: 제자리에서 일정 속도로 돌며 총구가 향한 쪽으로 쏜다.
         class Bullet { public Transform tr; public SpriteRenderer sr; public Vector2 pos, vel; public float life, dmg, r; }
         readonly List<Bullet> bullets = new List<Bullet>();
+
+        // round50: 화염·레이저·저격의 잔상 — 아주 짧게 떴다 사라진다
+        class TowerFx { public Transform tr; public SpriteRenderer sr; public float life, maxLife; public Color col; }
+        readonly List<TowerFx> towerFx = new List<TowerFx>();
+        Sprite coneSprite, beamSprite;
         Transform[] towerTr = new Transform[Stats.TowerCount];
         SpriteRenderer[] towerBarrelSr = new SpriteRenderer[Stats.TowerCount];
         readonly float[] towerAngle = new float[Stats.TowerCount];
@@ -766,6 +771,50 @@ namespace BlackholeGame
                     if (shaft || muzzle) a[y * S + x] = 1f;
                 }
             return SpriteFromAlpha(a, S);
+        }
+
+        // 화염 부채꼴 — 아래 가운데에서 위로 퍼진다(기준점 (0.5, 0)).
+        Sprite BuildConeSprite()
+        {
+            const int S = 128;
+            var a = new float[S * S];
+            float cx = S * 0.5f;
+            for (int y = 0; y < S; y++)
+                for (int x = 0; x < S; x++)
+                {
+                    float dx = x + 0.5f - cx, dy = y + 0.5f;
+                    float dist = Mathf.Sqrt(dx * dx + dy * dy) / S;
+                    if (dist > 1f) continue;
+                    float ang = Mathf.Abs(Mathf.Atan2(dx, dy) * Mathf.Rad2Deg);
+                    if (ang > 26f) continue;
+                    float edge = Mathf.Clamp01((26f - ang) / 9f);          // 가장자리는 옅게
+                    a[y * S + x] = edge * Mathf.Clamp01(1f - dist * 0.85f);
+                }
+            var tex = new Texture2D(S, S, TextureFormat.RGBA32, false)
+            { filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
+            var px = new Color32[S * S];
+            for (int i = 0; i < px.Length; i++) px[i] = new Color32(255, 255, 255, (byte)(Mathf.Clamp01(a[i]) * 255f));
+            tex.SetPixels32(px); tex.Apply();
+            return Sprite.Create(tex, new Rect(0, 0, S, S), new Vector2(0.5f, 0f), S, 0, SpriteMeshType.FullRect);
+        }
+
+        // 레이저·저격 빔 — 세로 막대, 기준점 (0.5, 0). 가운데가 밝고 가장자리가 옅다.
+        Sprite BuildBeamSprite()
+        {
+            const int W = 32, H = 128;
+            var tex = new Texture2D(W, H, TextureFormat.RGBA32, false)
+            { filterMode = FilterMode.Bilinear, wrapMode = TextureWrapMode.Clamp };
+            var px = new Color32[W * H];
+            for (int y = 0; y < H; y++)
+                for (int x = 0; x < W; x++)
+                {
+                    float dx = Mathf.Abs(x + 0.5f - W * 0.5f) / (W * 0.5f);
+                    float a = Mathf.Clamp01(1f - dx * dx);
+                    a *= Mathf.Clamp01(1f - y / (float)H * 0.35f);          // 끝으로 갈수록 살짝 옅게
+                    px[y * W + x] = new Color32(255, 255, 255, (byte)(a * 255f));
+                }
+            tex.SetPixels32(px); tex.Apply();
+            return Sprite.Create(tex, new Rect(0, 0, W, H), new Vector2(0.5f, 0f), H, 0, SpriteMeshType.FullRect);
         }
 
         Sprite BuildBulletSprite()
@@ -1506,6 +1555,45 @@ namespace BlackholeGame
         {
             foreach (var b in bullets) if (b.tr) Destroy(b.tr.gameObject);
             bullets.Clear();
+            foreach (var f in towerFx) if (f.tr) Destroy(f.tr.gameObject);
+            towerFx.Clear();
+        }
+
+        // kind: 0 화염 · 1 레이저 · 2 저격
+        void SpawnTowerFx(int i, int kind, float len)
+        {
+            if (towerFx.Count > 24) return;
+            if (coneSprite == null) coneSprite = BuildConeSprite();
+            if (beamSprite == null) beamSprite = BuildBeamSprite();
+            if (spriteMat == null) spriteMat = new Material(FindSpriteShader());
+
+            var go = new GameObject("TowerFx");
+            var sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = kind == 0 ? coneSprite : beamSprite;
+            sr.sharedMaterial = spriteMat;
+            sr.sortingOrder = 12;
+            var col = kind == 0 ? new Color(1f, 0.62f, 0.25f)
+                    : kind == 1 ? new Color(0.72f, 0.55f, 1f)
+                                : new Color(1f, 0.92f, 0.45f);
+            sr.color = col;
+            go.transform.position = TowerPos[i];
+            go.transform.localRotation = Quaternion.Euler(0f, 0f, -towerAngle[i]);
+            float wide = kind == 0 ? len : (kind == 1 ? 0.95f : 0.5f);
+            go.transform.localScale = new Vector3(wide, Mathf.Max(0.4f, len), 1f);
+            float life = kind == 0 ? 0.10f : kind == 1 ? 0.09f : 0.16f;
+            towerFx.Add(new TowerFx { tr = go.transform, sr = sr, life = life, maxLife = life, col = col });
+        }
+
+        void UpdateTowerFx(float dt)
+        {
+            for (int i = towerFx.Count - 1; i >= 0; i--)
+            {
+                var f = towerFx[i];
+                f.life -= dt;
+                if (f.life <= 0f) { if (f.tr) Destroy(f.tr.gameObject); towerFx.RemoveAt(i); continue; }
+                float k = f.life / Mathf.Max(0.0001f, f.maxLife);
+                if (f.sr != null) f.sr.color = new Color(f.col.r, f.col.g, f.col.b, k * 0.85f);
+            }
         }
 
         void SpawnBullet(Vector2 pos, float angDeg, float dmg)
@@ -1533,27 +1621,128 @@ namespace BlackholeGame
             for (int i = 0; i < Stats.TowerCount; i++)
             {
                 if (!stats.towerOn[i]) continue;
-                towerAngle[i] = Mathf.Repeat(towerAngle[i] + TowerSpin * dt, 360f);
+                int pat = Mathf.Clamp(stats.towerPattern[i], 0, Stats.PatCount - 1);
+                if (!stats.PatternUnlocked(i, pat)) { pat = Stats.PatShot; stats.towerPattern[i] = pat; }
+
+                // 저격만 조준한다. 나머지는 제자리에서 계속 돈다.
+                if (pat == Stats.PatSniper)
+                {
+                    int tgt = SniperTarget();
+                    if (tgt >= 0)
+                    {
+                        Vector2 d = (Vector2)enemies[tgt].tr.position - TowerPos[i];
+                        float want = Mathf.Atan2(d.x, d.y) * Mathf.Rad2Deg;
+                        towerAngle[i] = Mathf.MoveTowardsAngle(towerAngle[i], want, Mathf.Max(90f, stats.towerSpin[i] * 3f) * dt);
+                    }
+                }
+                else towerAngle[i] = Mathf.Repeat(towerAngle[i] + stats.towerSpin[i] * dt, 360f);
+
                 if (towerBarrelSr[i] != null)
                     towerBarrelSr[i].transform.localRotation = Quaternion.Euler(0f, 0f, -towerAngle[i]);
 
+                // 화염·레이저는 "발사 간격"이 없다 — 내 공격 속도에 맞춰 틱이 돈다(사용자 요청).
+                float iv = (pat == Stats.PatFlame || pat == Stats.PatLaser)
+                         ? Mathf.Max(0.05f, stats.attackInterval)
+                         : Mathf.Max(0.08f, stats.towerInterval[i]);
                 towerTimer[i] += dt;
-                float iv = Mathf.Max(0.08f, stats.towerInterval[i]);
                 int guard = 0;
                 while (towerTimer[i] >= iv && guard++ < 8)
                 {
                     towerTimer[i] -= iv;
                     float dmg = hit * stats.towerDmgMul[i];
-                    if (stats.towerType[i] == 1)
-                    {   // 연발 — 총구 양옆으로 3발 부채꼴
-                        SpawnBullet(TowerPos[i], towerAngle[i] - 11f, dmg);
-                        SpawnBullet(TowerPos[i], towerAngle[i], dmg);
-                        SpawnBullet(TowerPos[i], towerAngle[i] + 11f, dmg);
+                    switch (pat)
+                    {
+                        case Stats.PatBurst:
+                            SpawnBullet(TowerPos[i], towerAngle[i] - 11f, dmg * 0.6f);
+                            SpawnBullet(TowerPos[i], towerAngle[i], dmg * 0.6f);
+                            SpawnBullet(TowerPos[i], towerAngle[i] + 11f, dmg * 0.6f);
+                            break;
+                        case Stats.PatFlame:  ConeHit(i, dmg * 0.42f); break;
+                        case Stats.PatLaser:  BeamHit(i, dmg * 1.1f);  break;
+                        case Stats.PatSniper: SniperShot(i, dmg * 6f); break;
+                        default:              SpawnBullet(TowerPos[i], towerAngle[i], dmg); break;
                     }
-                    else SpawnBullet(TowerPos[i], towerAngle[i], dmg);
                     if (sound != null && i == 0) sound.Play(Sfx.Pulse, 0.18f, 1.5f);
                 }
             }
+        }
+
+        // 체력이 가장 많이 남은 적 — 보스가 있으면 보스. 저격의 표적.
+        int SniperTarget()
+        {
+            if (boss != null && !boss.dead)
+                for (int j = 0; j < enemies.Count; j++) if (enemies[j] == boss) return j;
+            int best = -1; float bestHp = 0f;
+            for (int j = 0; j < enemies.Count; j++)
+            {
+                var e = enemies[j];
+                if (e.dead || e.bomb) continue;
+                if (e.hp > bestHp) { bestHp = e.hp; best = j; }
+            }
+            return best;
+        }
+
+        // 화염방사 — 총구 앞 부채꼴(사거리 4.2, 반각 26도) 안의 적 전부를 지진다.
+        void ConeHit(int i, float dmg)
+        {
+            const float Range = 4.2f, HalfAng = 26f;
+            float rad = towerAngle[i] * Mathf.Deg2Rad;
+            var dir = new Vector2(Mathf.Sin(rad), Mathf.Cos(rad));
+            bool stop = false;
+            for (int j = enemies.Count - 1; j >= 0; j--)
+            {
+                var e = enemies[j];
+                if (e.dead || stop) continue;
+                Vector2 d = (Vector2)e.tr.position - TowerPos[i];
+                float dist = d.magnitude;
+                if (dist > Range + e.r) continue;
+                if (dist > 0.01f && Vector2.Angle(dir, d) > HalfAng) continue;
+                if (e == boss && e.shielded) continue;
+                e.hp -= dmg; e.flash = 0.06f;
+                if (e.hp <= 0f && KillEnemy(e, false)) stop = true;
+            }
+            enemies.RemoveAll(x => x.dead);
+            SpawnTowerFx(i, 0, Range);
+        }
+
+        // 레이저 — 총구 방향 직선(반폭 0.42)을 끝까지 꿰뚫는다.
+        void BeamHit(int i, float dmg)
+        {
+            const float Range = 11f, HalfW = 0.42f;
+            float rad = towerAngle[i] * Mathf.Deg2Rad;
+            var dir = new Vector2(Mathf.Sin(rad), Mathf.Cos(rad));
+            bool stop = false;
+            for (int j = enemies.Count - 1; j >= 0; j--)
+            {
+                var e = enemies[j];
+                if (e.dead || stop) continue;
+                Vector2 d = (Vector2)e.tr.position - TowerPos[i];
+                float along = Vector2.Dot(d, dir);
+                if (along < 0f || along > Range) continue;
+                float side = Mathf.Abs(d.x * dir.y - d.y * dir.x);
+                if (side > HalfW + e.r) continue;
+                if (e == boss && e.shielded) continue;
+                e.hp -= dmg; e.flash = 0.06f;
+                if (e.hp <= 0f && KillEnemy(e, false)) stop = true;
+            }
+            enemies.RemoveAll(x => x.dead);
+            SpawnTowerFx(i, 1, Range);
+        }
+
+        // 저격 — 조준이 맞았을 때만 한 발. 느리지만 아주 세다.
+        void SniperShot(int i, float dmg)
+        {
+            int tgt = SniperTarget();
+            if (tgt < 0) return;
+            var e = enemies[tgt];
+            Vector2 d = (Vector2)e.tr.position - TowerPos[i];
+            float want = Mathf.Atan2(d.x, d.y) * Mathf.Rad2Deg;
+            if (Mathf.Abs(Mathf.DeltaAngle(towerAngle[i], want)) > 6f) { towerTimer[i] = Mathf.Max(towerTimer[i], 0f); return; }
+            if (e == boss && e.shielded) return;
+            e.hp -= dmg; e.flash = 0.10f;
+            if (e.hp <= 0f) KillEnemy(e, true);
+            enemies.RemoveAll(x => x.dead);
+            SpawnTowerFx(i, 2, d.magnitude);
         }
 
         // 탄알 이동 + 명중. 맞은 적 하나에만 피해를 주고 사라진다(관통 없음).
@@ -2006,6 +2195,7 @@ namespace BlackholeGame
 
             UpdateTowers(dt);
             UpdateBullets(dt);
+            UpdateTowerFx(dt);
 
             attackTimer += dt;
             guard = 0;
@@ -2283,7 +2473,11 @@ namespace BlackholeGame
             if (IsBought(n.id) && !n.repeat) return false;
             if (n.tier > stagesCleared) return false;   // 지역 N 클리어 전엔 tier N 잠김
             if (n.IsRoot) return true;
-            return IsBought(n.parentId);
+            if (!IsBought(n.parentId)) return false;
+            // round50: 타워 변신은 그 아래 세 갈래를 전부 뚫어야 열린다
+            if (n.alsoNeed != null)
+                foreach (var need in n.alsoNeed) if (!IsBought(need)) return false;
+            return true;
         }
 
         UpgradeNode NodeById(string id) => nodes.Find(m => m.id == id);
@@ -3052,31 +3246,42 @@ namespace BlackholeGame
             { mapIndex = Mathf.Clamp(mapIndex + (ev.delta.y > 0f ? 1 : -1), 0, n - 1); ev.Use(); }
 
             // round49: 잡고 좌우로 끌어서 넘기기. 카드 루프보다 먼저 봐야 드래그가 클릭으로 안 샌다.
+            //   round50: "누르는 중" 상태로 보간을 막지 않는다 — 카드를 눌러 전투로 들어가면 MouseUp 을
+            //   못 받아 그 상태가 남고, 지도로 돌아왔을 때 화살표를 눌러도 화면이 안 움직였다.
             var dragArea = new Rect(0f, cyMid - cardH * 0.75f, w, cardH * 1.5f);
-            if (ev.type == EventType.MouseDown && ev.button == 0 && dragArea.Contains(ev.mousePosition)
-                && !arrowLR.Contains(ev.mousePosition) && !arrowRR.Contains(ev.mousePosition))
-            { mapDragging = true; mapDragMoved = false; mapDragStartX = ev.mousePosition.x; mapDragStartScroll = mapScroll; }
-            if (mapDragging)
+            bool blockCardClick = false;
+            if (ev.type == EventType.MouseDown && ev.button == 0)
             {
-                if (ev.type == EventType.MouseDrag)
+                bool onArrow = arrowLR.Contains(ev.mousePosition) || arrowRR.Contains(ev.mousePosition);
+                mapPressValid = !onArrow && dragArea.Contains(ev.mousePosition);
+                mapDragMoved = false;
+                mapDragStartX = ev.mousePosition.x;
+                mapDragStartScroll = mapScroll;
+            }
+            else if (ev.type == EventType.MouseDrag && mapPressValid)
+            {
+                float dx = mapDragStartX - ev.mousePosition.x;
+                if (!mapDragMoved && Mathf.Abs(dx) > 6f) mapDragMoved = true;   // 손떨림은 클릭으로 둔다
+                if (mapDragMoved)
                 {
-                    float dx = mapDragStartX - ev.mousePosition.x;
-                    if (Mathf.Abs(dx) > 5f) mapDragMoved = true;
                     mapScroll = Mathf.Clamp(mapDragStartScroll + dx / Mathf.Max(1f, slot), 0f, n - 1);
                     mapIndex = Mathf.Clamp(Mathf.RoundToInt(mapScroll), 0, n - 1);
                     ev.Use();
                 }
-                else if (ev.type == EventType.MouseUp)
+            }
+            else if (ev.type == EventType.MouseUp)
+            {
+                if (mapDragMoved)
                 {
-                    mapDragging = false;
                     mapIndex = Mathf.Clamp(Mathf.RoundToInt(mapScroll), 0, n - 1);   // 가장 가까운 칸으로 스냅
-                    bool moved = mapDragMoved;
-                    mapDragMoved = false;      // 여기서 바로 내려야 한다 — Use() 하면 아래 코드가 MouseUp 을 못 본다
-                    if (moved) ev.Use();       // 끌었으면 카드 클릭으로 치지 않는다
+                    blockCardClick = true;
+                    ev.Use();
                 }
+                mapPressValid = false;
+                mapDragMoved = false;
             }
 
-            if (!mapDragging && !Mathf.Approximately(mapScroll, mapIndex))
+            if (!Mathf.Approximately(mapScroll, mapIndex))
                 mapScroll = Mathf.MoveTowards(mapScroll, mapIndex, Mathf.Max(0.05f, Time.deltaTime * 9f));
 
             // 먼 카드부터 그려서 가운데 카드가 위에 오도록
@@ -3093,7 +3298,7 @@ namespace BlackholeGame
                 bool center = Mathf.Abs(rel) < 0.5f;
                 DrawStageCard(r, i, center, k);
                 bool hitArrow = arrowLR.Contains(ev.mousePosition) || arrowRR.Contains(ev.mousePosition);
-                if (GUI.Button(r, GUIContent.none, GUIStyle.none) && transDir == 0 && !mapDragMoved && !hitArrow)
+                if (GUI.Button(r, GUIContent.none, GUIStyle.none) && transDir == 0 && !blockCardClick && !hitArrow)
                 {
                     if (center && i <= stagesCleared)
                     { currentStage = i; if (sound != null) sound.Play(Sfx.Click, 0.7f); BeginTransition(StartRun); }
@@ -3702,6 +3907,75 @@ namespace BlackholeGame
 
         // round45: 반복 강화 — 트리 안이 아니라 능력치 패널 바로 아래 고정 패널.
         //   트리를 스크롤해도 자리가 안 바뀌어서 "지금 뭘 몇 레벨 올렸는지" 가 항상 같은 위치에 보인다.
+        // round50: 타워 탭 — 줄기마다 "뚫어둔 공격 패턴" 중 하나를 고른다.
+        //   스펙(공격력·공속·회전)은 그대로고 패턴만 갈아끼우는 거라, 보스전엔 저격·잡몹엔 화염 식으로 쓴다.
+        static readonly string[] PatKey = { "pat.shot", "pat.burst", "pat.flame", "pat.laser", "pat.sniper" };
+        void DrawPatternPanel(Rect statRect)
+        {
+            if (stats == null || !stats.AnyTower) return;
+            float pad = 12f * uiScale, head = 26f * uiScale;
+            float rowLab = 20f * uiScale, rowBtn = 30f * uiScale, rowGap = 10f * uiScale;
+            float rowH = rowLab + rowBtn + rowGap;
+            int rows = 0;
+            for (int i = 0; i < Stats.TowerCount; i++) if (stats.towerOn[i]) rows++;
+            if (rows == 0) return;
+
+            float w = statRect.width, x = statRect.x;
+            float h = pad + head + rowH * rows + pad;
+            float bottom = Screen.height - 118f * uiScale - 12f;
+            float y = bottom - h;
+            if (!DrawSkinPanel(new Rect(x, y, w, h), true))
+            {
+                var gcP = GUI.color;
+                GUI.color = new Color(0.13f, 0.14f, 0.17f, 0.95f);
+                GUI.DrawTexture(new Rect(x, y, w, h), Texture2D.whiteTexture);
+                GUI.color = gcP;
+            }
+
+            int fs = Mathf.RoundToInt(13f * uiScale);
+            var hd = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleLeft, fontSize = Mathf.RoundToInt(15f * uiScale),
+                fontStyle = FontStyle.Bold, normal = { textColor = Gold } };
+            FlatText(hd);
+            GUI.Label(new Rect(x + pad, y + pad, w - pad * 2f, head), Loc.T("tree.pattern"), hd);
+
+            var lab = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleLeft, fontSize = fs,
+                normal = { textColor = new Color(0.78f, 0.82f, 0.86f) } };
+            FlatText(lab);
+
+            float ry = y + pad + head;
+            for (int i = 0; i < Stats.TowerCount; i++)
+            {
+                if (!stats.towerOn[i]) continue;
+                GUI.Label(new Rect(x + pad, ry, w - pad * 2f, rowLab), Loc.T(TowerLabelKey(i)), lab);
+
+                // 뚫은 패턴만 버튼으로 — 지금 쓰는 패턴은 밝게, 나머지는 흐리게
+                var have = new List<int>();
+                for (int pIdx = 0; pIdx < Stats.PatCount; pIdx++) if (stats.PatternUnlocked(i, pIdx)) have.Add(pIdx);
+                float gap = 5f * uiScale;
+                float bw = (w - pad * 2f - gap * (have.Count - 1)) / Mathf.Max(1, have.Count);
+                float bx = x + pad;
+                for (int k = 0; k < have.Count; k++)
+                {
+                    int pIdx = have[k];
+                    bool on = stats.towerPattern[i] == pIdx;
+                    var st = new GUIStyle(GUIStyle.none)
+                    { font = sLabel.font, fontSize = Mathf.RoundToInt(12f * uiScale),
+                      alignment = TextAnchor.MiddleCenter, clipping = TextClipping.Overflow,
+                      fontStyle = on ? FontStyle.Bold : FontStyle.Normal };
+                    var col = on ? UiSkin.Ink : new Color(0.24f, 0.38f, 0.40f, 0.9f);
+                    st.normal.textColor = st.hover.textColor = st.active.textColor = st.focused.textColor = col;
+                    FlatText(st);
+                    if (UiBtn(new Rect(bx, ry + rowLab, bw, rowBtn), Loc.T(PatKey[pIdx]), st,
+                              on ? Color.white : new Color(0.70f, 0.76f, 0.76f, 0.75f)))
+                    { stats.towerPattern[i] = pIdx; SaveProgress(); }
+                    bx += bw + gap;
+                }
+                ry += rowH;
+            }
+        }
+
+        static string TowerLabelKey(int i) => i == 0 ? "n.towerL" : i == 1 ? "n.towerC" : "n.towerR";
+
         void DrawRepeatPanel(Rect statRect)
         {
             if (nodes == null) return;
@@ -3810,7 +4084,7 @@ namespace BlackholeGame
             float barH = 118f * uiScale;
             Rect statRect = StatPanelRect(barH);   // 우측 상단 능력치 패널
 
-            const float nodeSz = 80f, rowSpacing = 230f, colUnit = 120f;   // round41: 노드 2배 확대 요청 — 열 간격도 겹치지 않게 같이 키움
+            const float nodeSz = 72f, rowSpacing = 230f, colUnit = 120f;   // round50: 노드 10% 축소(80 -> 72)
 
             // round41: 부채꼴로 뻗던 걸 걷어내고 "티어 = 한 행"인 계층형(org-chart) 레이아웃으로 —
             //   같은 부모의 자식들이 한 선반(shelf)처럼 가로로 늘어서고, 세분화될수록(자식이 많을수록)
@@ -3888,11 +4162,8 @@ namespace BlackholeGame
             }
 
             // 배율 = 전체 가지 폭이 area 가로에 딱 맞게(좌우 여백 = 노드 반 개 + 약간). 고정.
-            float zoom = Mathf.Clamp(area.width / (fullW + nodeSz * 0.5f), 0.2f, 1.6f);
+            float zoom = Mathf.Clamp(area.width / (fullW + nodeSz * 2.4f), 0.2f, 1.6f);   // round50: 좌우 여백을 노드 한 개 이상 둬서 끝 가지가 화면에 안 붙게
             pivot.y = availTop - 22f - nodeSz * 0.5f * zoom;   // 스크롤 맨 아래에서 코어가 하단 바 바로 위
-            // round49: 아래의 트리 그리기는 area 를 클립 그룹으로 깔고 그 안에서 한다 — 좌표도 그룹
-            //   기준(= area 왼쪽 위가 0)으로 맞춘다. 화면 좌표로 남겨두면 클립이 안 먹는다.
-            pivot.y -= area.yMin;
 
             npos.Clear();
             foreach (var n in nodes)
@@ -3902,8 +4173,8 @@ namespace BlackholeGame
             float minY = pivot.y;
             foreach (var n in nodes)
                 if (!n.repeat && (n.IsRoot || n.tab == treeTab) && IsRevealed(n) && npos[n.id].y < minY) minY = npos[n.id].y;   // 화면 좌표는 위로 갈수록 y가 작아짐
-            float topScreen0 = pivot.y + (minY - pivot.y) * zoom;          // 스크롤 0 일 때 가장 높은 노드의 y(그룹 기준)
-            float maxPan = Mathf.Max(0f, (nodeSz * 0.5f * zoom + 8f) - topScreen0);
+            float topScreen0 = pivot.y + (minY - pivot.y) * zoom;          // 스크롤 0 일 때 가장 높은 노드의 화면 y
+            float maxPan = Mathf.Max(0f, (area.yMin + nodeSz * 0.5f * zoom + 8f) - topScreen0);
 
             treeMaxPan = maxPan;
             if (treeZoom <= 0f)   // 들어올 때/"화면 리셋" — 지금 살 수 있는 맨 위(경계)가 보이게 끝까지 올려둔다
@@ -3912,7 +4183,10 @@ namespace BlackholeGame
 
             Event ev = Event.current;
             if (ev.type == EventType.ScrollWheel)
-            { treePan.y -= ev.delta.y * 45f; ev.Use(); }   // 휠 위로 = 트리의 위쪽(더 뚫은 곳)으로
+            {   // 휠 한 칸에 노드 두 줄씩. delta.y 는 브라우저·OS 마다 크기가 달라 부호만 쓴다.
+                treePan.y -= Mathf.Sign(ev.delta.y) * rowSpacing * 2f * Mathf.Max(0.05f, treeZoom);
+                ev.Use();
+            }
             else if (ev.type == EventType.MouseDrag && (ev.button == 1 || ev.button == 2))
             { treePan.y += ev.delta.y; ev.Use(); }
 
@@ -3967,10 +4241,9 @@ namespace BlackholeGame
             }
             else treePan = new Vector2(0f, Mathf.Clamp(treePan.y, 0f, maxPan));
 
-            // round49: 트리를 제 영역 안으로 잘라낸다. 안 그러면 노드 사이 연결선이 위로는 탭 버튼,
-            //   아래로는 하단 바까지 뻗어 버튼 위에 검은 줄로 비쳤다(둥근 버튼의 모서리 바깥으로).
-            //   그룹 안은 좌표가 밀리므로 그만큼 되돌려서 아래 계산은 화면 좌표 그대로 쓴다.
-            GUI.BeginGroup(new Rect(0f, area.yMin, Screen.width, area.height));
+            // 트리는 GUI.matrix 로 확대·이동한다. BeginGroup 으로 영역을 자르려 해도 클립 사각형이
+            //   그 변환을 같이 받아 화면 밖으로 밀려나므로(=트리가 통째로 사라진다) 쓰지 않는다.
+            //   영역 밖으로 삐져나가는 연결선은 하단 바의 불투명 바닥이 가린다.
             Matrix4x4 saved = GUI.matrix;
             GUIUtility.ScaleAroundPivot(new Vector2(treeZoom, treeZoom), pivot);
             GUI.matrix = Matrix4x4.Translate(new Vector3(treePan.x, treePan.y, 0f)) * GUI.matrix;
@@ -4043,7 +4316,6 @@ namespace BlackholeGame
             }
 
             GUI.matrix = saved;
-            GUI.EndGroup();
 
             // round47: 커서 / 타워 탭 — 트리 영역 상단 가운데
             {
@@ -4076,6 +4348,7 @@ namespace BlackholeGame
 
             DrawStatPanel(statRect, hovered);
             if (treeTab == 0) DrawRepeatPanel(statRect);
+            else DrawPatternPanel(statRect);
 
             // 마우스 오버 툴팁 (스크린 좌표)
             if (hovered != null)

@@ -36,11 +36,23 @@ namespace BlackholeGame
         // ---- 자동 타워(round47) — 좌/중앙/우 3개. 조준하지 않고 제자리에서 돌며 쏜다 ----
         //   노드로 하나씩 따로 해금·강화한다. 공격력은 "커서 타격의 몇 배"(0.5 → 1.0).
         public const int TowerCount = 3;
+        // round50 공격 패턴 — 해금해도 스펙은 그대로고 패턴만 갈아끼운다(보스전엔 저격, 잡몹엔 화염 …)
+        public const int PatShot = 0, PatBurst = 1, PatFlame = 2, PatLaser = 3, PatSniper = 4, PatCount = 5;
+
         public bool[] towerOn = new bool[TowerCount];
-        public float[] towerDmgMul = { 0.5f, 0.5f, 0.5f };
-        public float[] towerInterval = { 1.1f, 1.1f, 1.1f };   // 발사 간격(초)
-        public int[] towerType = new int[TowerCount];          // 0 = 단발, 1 = 연발
+        public float[] towerDmgMul = { 0.5f, 0.5f, 0.5f };     // 커서 타격 대비 배율
+        public float[] towerInterval = { 1.1f, 1.1f, 1.1f };   // 발사 간격(초) — 단발/연발/저격만 쓴다
+        public float[] towerSpin = { 52f, 52f, 52f };          // 회전 속도(도/초)
+        public int[] towerPattern = new int[TowerCount];       // 지금 고른 패턴
+        public int[] towerPatMask = { 1, 1, 1 };               // 해금한 패턴 비트마스크(0번=단발은 기본)
         public bool AnyTower { get { for (int i = 0; i < TowerCount; i++) if (towerOn[i]) return true; return false; } }
+
+        public bool PatternUnlocked(int tower, int pat) => (towerPatMask[tower] & (1 << pat)) != 0;
+        public void UnlockPattern(int tower, int pat)
+        {
+            towerPatMask[tower] |= 1 << pat;
+            towerPattern[tower] = pat;     // 새로 뚫은 패턴을 바로 쓴다 — 바꾸고 싶으면 타워 탭에서 고른다
+        }
 
         public float GetHitDamage()
             => (baseAttack + flatBonus) * (1f + multBucketPercent / 100f);
@@ -55,7 +67,8 @@ namespace BlackholeGame
             bombUnlocked = bombUnlocked, bombDmgMul = bombDmgMul,
             bombRadiusMul = bombRadiusMul, bombInterval = bombInterval,
             towerOn = (bool[])towerOn.Clone(), towerDmgMul = (float[])towerDmgMul.Clone(),
-            towerInterval = (float[])towerInterval.Clone(), towerType = (int[])towerType.Clone(),
+            towerInterval = (float[])towerInterval.Clone(), towerSpin = (float[])towerSpin.Clone(),
+            towerPattern = (int[])towerPattern.Clone(), towerPatMask = (int[])towerPatMask.Clone(),
         };
 
         // 치명타는 타격 시점에 공식 바깥에서 롤
