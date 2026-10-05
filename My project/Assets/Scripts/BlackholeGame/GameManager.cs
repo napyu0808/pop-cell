@@ -2111,20 +2111,19 @@ namespace BlackholeGame
             //   F 키는 브라우저가 다 쓴다(F5 새로고침, F11 전체화면, F12 개발자도구) — 웹 빌드에서 개발자도구가
             //   열려버려서 Shift+숫자로 옮겼다(브라우저 기본 동작 없음). 에디터에선 Game 창을 클릭해 포커스를 줄 것.
             bool shift = kb != null && kb.shiftKey.isPressed;
-            // Shift+1 — 환생 샤드 +500
+            // Shift+1 — 골드 +100만
             if (shift && kb.digit1Key.wasPressedThisFrame)
             {
-                metaCurrency += 500;
-                Cheat(Loc.F("cheat.shards", 500, metaCurrency));
+                gold += 1_000_000L;
+                Cheat(Loc.F("cheat.gold", 1000000, gold));
             }
 
-            // Shift+2 — 다음 지역 하나 해금
+            // Shift+2 — 환생 샤드 +10000
             if (shift && kb.digit2Key.wasPressedThisFrame)
             {
-                stagesCleared = Mathf.Min(StageConfig.Stages.Length - 1, stagesCleared + 1);
-                if (stagesCleared >= 2) everRebirth = true;
-                mapScroll = -1f;
-                Cheat(Loc.F("cheat.stage", stagesCleared + 1));
+                metaCurrency += 10000;
+                everRebirth = true;
+                Cheat(Loc.F("cheat.shards", 10000, metaCurrency));
             }
 
             // Shift+3 — 모든 지역(지도) 해금 — tier 게이팅도 같이 풀린다 (IsBuyable 이 stagesCleared 기준)
@@ -2136,12 +2135,21 @@ namespace BlackholeGame
                 Cheat(Loc.T("cheat.allStages"));
             }
 
-            // Shift+4 — 모든 노드 즉시 해금(tier 게이팅 무시, 반복 강화 제외)
-            if (shift && kb.digit4Key.wasPressedThisFrame && nodes != null)
+            // Shift+4 — 화면의 적 전부 즉사(보스 포함). 전투 중에만.
+            if (shift && kb.digit4Key.wasPressedThisFrame && state == State.Playing)
             {
-                foreach (var n in nodes)
-                    if (!n.repeat && !bought.Contains(n.id)) { bought.Add(n.id); n.apply(stats); }
-                Cheat(Loc.T("cheat.allNodes"));
+                int wiped = 0;
+                for (int i = enemies.Count - 1; i >= 0; i--)
+                {
+                    var e = enemies[i];
+                    if (e.dead) continue;
+                    e.hp = 0f;
+                    e.shielded = false;      // 보스 보호막도 무시
+                    wiped++;
+                    if (KillEnemy(e, true)) break;
+                }
+                enemies.RemoveAll(x => x.dead);
+                Cheat(Loc.F("cheat.wipe", wiped));
             }
 
             if (state != State.Playing) return;
@@ -3271,12 +3279,6 @@ namespace BlackholeGame
             float cyMid = h * 0.50f;
             float cxMid = w * 0.5f;
 
-            // 화살표 자리를 먼저 잡아둔다 — 카드 클릭 판정에서 이 영역을 빼야 한 번 누를 때
-            //   화살표(한 칸)와 그 아래 카드(그 카드로 점프)가 같이 먹혀 두 칸씩 넘어가지 않는다.
-            float aw = 54f * s, ah = 66f * s;
-            var arrowLR = new Rect(Mathf.Max(6f, w * 0.02f), cyMid - ah * 0.5f, aw, ah);
-            var arrowRR = new Rect(Mathf.Min(w - aw - 6f, w * 0.98f - aw), cyMid - ah * 0.5f, aw, ah);
-
             var ev = Event.current;
             if (ev.type == EventType.ScrollWheel)
             { mapIndex = Mathf.Clamp(mapIndex + (ev.delta.y > 0f ? 1 : -1), 0, n - 1); ev.Use(); }
@@ -3288,8 +3290,7 @@ namespace BlackholeGame
             bool blockCardClick = false;
             if (ev.type == EventType.MouseDown && ev.button == 0)
             {
-                bool onArrow = arrowLR.Contains(ev.mousePosition) || arrowRR.Contains(ev.mousePosition);
-                mapPressValid = !onArrow && dragArea.Contains(ev.mousePosition);
+                mapPressValid = dragArea.Contains(ev.mousePosition);
                 mapDragMoved = false;
                 mapDragStartX = ev.mousePosition.x;
                 mapDragStartScroll = mapScroll;
@@ -3333,21 +3334,13 @@ namespace BlackholeGame
                 var r = new Rect(cxMid + rel * slot - cw * 0.5f, cyMid - ch * 0.5f, cw, ch);
                 bool center = Mathf.Abs(rel) < 0.5f;
                 DrawStageCard(r, i, center, k);
-                bool hitArrow = arrowLR.Contains(ev.mousePosition) || arrowRR.Contains(ev.mousePosition);
-                if (GUI.Button(r, GUIContent.none, GUIStyle.none) && transDir == 0 && !blockCardClick && !hitArrow)
+                if (GUI.Button(r, GUIContent.none, GUIStyle.none) && transDir == 0 && !blockCardClick)
                 {
                     if (center && i <= stagesCleared)
                     { currentStage = i; if (sound != null) sound.Play(Sfx.Click, 0.7f); BeginTransition(StartRun); }
                     else { mapIndex = i; if (sound != null) sound.Play(Sfx.Click, 0.55f); }
                 }
             }
-
-            // 좌우 화살표
-            var arrow = new GUIStyle(sBig) { alignment = TextAnchor.MiddleCenter,
-                fontSize = Mathf.RoundToInt(34f * s), normal = { textColor = InkDark } };
-            FlatText(arrow);
-            if (mapIndex > 0 && UiBtn(arrowLR, "<", arrow)) mapIndex--;
-            if (mapIndex < n - 1 && UiBtn(arrowRR, ">", arrow)) mapIndex++;
 
 
             // 페이지 점

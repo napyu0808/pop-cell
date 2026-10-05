@@ -121,7 +121,9 @@ namespace BlackholeGame
 
         const int TwPerBranch = 5;                                   // 갈래 하나당 노드 수
         //  단계: 0 기본(단발) · 1 화염방사 · 2 레이저 · 3 저격
-        static readonly int[] TwStageTier  = { 2, 4, 5, 7 };          // 그 단계 갈래 노드의 시작 티어
+        //   round52: 1지역을 깨면 바로 타워를 키울 수 있게 1단계를 티어 1 로 내렸다 —
+        //   환생 직후 "이번엔 타워를 간다" 는 선택지가 되라고.
+        static readonly int[] TwStageTier  = { 1, 4, 5, 7 };          // 그 단계 갈래 노드의 시작 티어
         static readonly int[] TwMorphTier  = { 0, 4, 5, 6 };          // 변신 노드 티어(0 단계는 변신 없음)
         static readonly string[] TowerKey  = { "twL", "twC", "twR" };
         static readonly string[] TowerName = { "n.towerL", "n.towerC", "n.towerR" };
