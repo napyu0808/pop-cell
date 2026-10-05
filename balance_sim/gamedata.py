@@ -34,13 +34,13 @@ BOMB_UNLOCK_TIER = 1
 
 # ---- 자동 타워(round50 개편) — UpgradeTree.cs 의 Tw* 상수 미러 ----
 #   줄기마다 해금 → [공격력/공속/회전] 3갈래 → 셋 다 뚫으면 변신(화염 → 레이저 → 저격).
-TOWER_UNLOCK_TIER = 1
+TOWER_UNLOCK_TIER = 0
 TOWER_DMG_ADD = 0.10
 TOWER_DMG_MAX_AT = [1.0, 1.5, 2.0, 2.4]
 TOWER_SPEED_MUL, TOWER_INTERVAL_MIN = 0.85, 0.10
 TOWER_SPIN_ADD, TOWER_SPIN_MAX = 14.0, 300.0
 TW_PER_BRANCH = 5
-TW_STAGE_TIER = [2, 4, 5, 7]
+TW_STAGE_TIER = [0, 4, 5, 7]
 TW_MORPH_TIER = [0, 4, 5, 6]
 TOWER_KEYS = ["twL", "twC", "twR"]
 PAT_SHOT, PAT_BURST, PAT_FLAME, PAT_LASER, PAT_SNIPER = 0, 1, 2, 3, 4

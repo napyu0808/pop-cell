@@ -112,7 +112,7 @@ namespace BlackholeGame
         //   변신은 화염방사 → 레이저 → 저격 순. 변신해도 스펙(공격력·공속·회전)은 그대로 쌓이고
         //   공격 패턴만 늘어난다 — 타워 탭에서 뚫은 패턴 중 아무거나 골라 쓴다.
         //   3~6지역에서 힘이 되게 티어를 잡았고, 저격은 보스가 단단해지는 7~8지역용이다.
-        public const int TowerUnlockTier = 1;
+        public const int TowerUnlockTier = 0;   // round53: 처음부터 — 환생 직후 초기자금으로 타워부터 가는 선택지
 
         public const float TowerDmgAdd = 0.10f;                     // 단계마다 5개 = +0.5
         public static readonly float[] TowerDmgMaxAt = { 1.0f, 1.5f, 2.0f, 2.4f };   // 단계별 상한
@@ -121,9 +121,9 @@ namespace BlackholeGame
 
         const int TwPerBranch = 5;                                   // 갈래 하나당 노드 수
         //  단계: 0 기본(단발) · 1 화염방사 · 2 레이저 · 3 저격
-        //   round52: 1지역을 깨면 바로 타워를 키울 수 있게 1단계를 티어 1 로 내렸다 —
-        //   환생 직후 "이번엔 타워를 간다" 는 선택지가 되라고.
-        static readonly int[] TwStageTier  = { 1, 4, 5, 7 };          // 그 단계 갈래 노드의 시작 티어
+        //   round53: 1단계는 티어 0 — 지역을 하나도 안 깨도 산다. 환생하고 초기자금을 들고
+        //   시작할 때 "이번엔 타워부터" 로 갈 수 있게.
+        static readonly int[] TwStageTier  = { 0, 4, 5, 7 };          // 그 단계 갈래 노드의 시작 티어
         static readonly int[] TwMorphTier  = { 0, 4, 5, 6 };          // 변신 노드 티어(0 단계는 변신 없음)
         static readonly string[] TowerKey  = { "twL", "twC", "twR" };
         static readonly string[] TowerName = { "n.towerL", "n.towerC", "n.towerR" };
