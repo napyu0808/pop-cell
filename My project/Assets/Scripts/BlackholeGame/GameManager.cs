@@ -2761,7 +2761,9 @@ namespace BlackholeGame
                 bool changed = nxt != null && nxt[i] != cur[i];
                 if (changed)
                 {
-                    // "지금 → 바뀔 값" — 바뀔 값만 초록으로
+                    // "지금 → 바뀔 값" — 바뀔 값만 초록으로.
+                    //   round52: 둘 다 그리면 라벨 칸까지 넘어와 글자가 겹쳤다(타워 행처럼 값이 긴 경우).
+                    //   라벨이 쓰고 남은 폭에 안 들어가면 "지금 →" 는 접고 바뀔 값만 보여준다.
                     var dim = new GUIStyle(valS) { alignment = TextAnchor.MiddleRight, fontStyle = FontStyle.Normal };
                     dim.normal.textColor = new Color(0.62f, 0.64f, 0.68f);
                     FlatText(dim);
@@ -2769,8 +2771,10 @@ namespace BlackholeGame
                     float aw = dim.CalcSize(new GUIContent(a)).x;
                     float bw = upS.CalcSize(new GUIContent(nxt[i])).x;
                     float right = ix + iw;
+                    float roomW = iw - lab.CalcSize(new GUIContent(labels[i])).x - 8f * uiScale;
                     GUI.Label(new Rect(right - bw, iy, bw, rowH), nxt[i], upS);
-                    GUI.Label(new Rect(right - bw - 6f - aw, iy, aw, rowH), a, dim);
+                    if (aw + 6f + bw <= roomW)
+                        GUI.Label(new Rect(right - bw - 6f - aw, iy, aw, rowH), a, dim);
                 }
                 else
                 {
@@ -4020,6 +4024,9 @@ namespace BlackholeGame
             float bottom = Screen.height - 118f * uiScale - 12f;   // 하단 바 바로 위
             float top = statRect.yMax + 10f * uiScale;             // 능력치 패널과는 겹치지 않게
             if (h > bottom - top) { rowH = Mathf.Max(34f * uiScale, (bottom - top - pad * 2f - head) / list.Count); h = pad + head + rowH * list.Count + pad; }
+            // round52: 행이 줄어들면 글자도 같이 줄인다. 높이만 줄였더니 한 줄 몫이 글자보다 작아져
+            //   이름·설명 윗부분이 깎여 있었다.
+            float rowK = Mathf.Clamp(rowH / (56f * uiScale), 0.62f, 1f);
             float y = bottom - h;
             var area = new Rect(x, y, w, h);
             if (!DrawSkinPanel(area, true))
@@ -4036,7 +4043,7 @@ namespace BlackholeGame
             hs.normal.textColor = new Color(1f, 0.82f, 0.30f); FlatText(hs);
             GUI.Label(new Rect(x + pad, y + pad * 0.6f, w - pad * 2f, head), Loc.T("tree.repTitle"), hs);
 
-            var ns = new GUIStyle(sLabel) { fontSize = Mathf.RoundToInt(12f * uiScale), alignment = TextAnchor.MiddleLeft };
+            var ns = new GUIStyle(sLabel) { fontSize = Mathf.Max(9, Mathf.RoundToInt(12f * uiScale * rowK)), alignment = TextAnchor.MiddleLeft };
             ns.normal.textColor = Ink; FlatText(ns);
             var ls = new GUIStyle(ns) { alignment = TextAnchor.MiddleRight, fontStyle = FontStyle.Bold };
             ls.normal.textColor = new Color(1f, 0.82f, 0.30f); FlatText(ls);
@@ -4062,21 +4069,26 @@ namespace BlackholeGame
                 float btnW = 40f * uiScale, btnH2 = Mathf.Min(22f * uiScale, rowH * 0.46f), bgap = 4f * uiScale;
                 float btnsW = btnW * 3f + bgap * 2f;
                 float nameW = Mathf.Max(30f, w - pad * 2f - (ir.width + 6f * uiScale) - btnsW - 6f * uiScale);
-                GUI.Label(new Rect(tx, rowY, nameW, rowH * 0.38f), Loc.T(n.label), ns);
-
                 // round51: 한 번 사면 얼마나 오르는지 — 이게 없어서 뭘 올려주는지 알 수 없었다.
-                var es = new GUIStyle(ns) { fontSize = Mathf.RoundToInt(11f * uiScale) };
+                var es = new GUIStyle(ns) { fontSize = Mathf.Max(8, Mathf.RoundToInt(11f * uiScale * rowK)) };
                 es.normal.textColor = locked || !open ? new Color(0.58f, 0.60f, 0.64f) : new Color(0.55f, 0.88f, 0.70f);
                 FlatText(es);
+                var ss = new GUIStyle(ns) { fontSize = Mathf.Max(8, Mathf.RoundToInt(10f * uiScale * rowK)) };
+                ss.normal.textColor = new Color(0.72f, 0.74f, 0.78f); FlatText(ss);
                 string eff = n.desc != null && n.desc.StartsWith("nd.") ? Loc.F("rs." + n.desc.Substring(3), n.descArg) : "";
-                GUI.Label(new Rect(tx, rowY + rowH * 0.34f, nameW, rowH * 0.32f), eff, es);
-
                 string sub = locked ? Loc.F("tree.lockTier", n.tier)
                            : !open ? Loc.T("tree.repLocked")
                            : "Lv " + RepLevel(n.id) + " · $" + n.cost.ToString("N0");
-                var ss = new GUIStyle(ns) { fontSize = Mathf.RoundToInt(10f * uiScale) };
-                ss.normal.textColor = new Color(0.72f, 0.74f, 0.78f); FlatText(ss);
-                GUI.Label(new Rect(tx, rowY + rowH * 0.64f, nameW, rowH * 0.34f), sub, ss);
+
+                // 비율이 아니라 글자 높이로 쌓아야 행이 줄어도 안 깎인다. 남는 높이는 위아래로 나눈다.
+                float h1 = ns.CalcHeight(new GUIContent(Loc.T(n.label)), nameW);
+                float h2 = es.CalcHeight(new GUIContent(eff.Length > 0 ? eff : "0"), nameW);
+                float h3 = ss.CalcHeight(new GUIContent(sub), nameW);
+                float slack = Mathf.Max(0f, rowH - (h1 + h2 + h3));
+                float ty = rowY + slack * 0.5f;
+                GUI.Label(new Rect(tx, ty, nameW, h1), Loc.T(n.label), ns);
+                GUI.Label(new Rect(tx, ty + h1, nameW, h2), eff, es);
+                GUI.Label(new Rect(tx, ty + h1 + h2, nameW, h3), sub, ss);
 
                 if (!locked && open)
                 {

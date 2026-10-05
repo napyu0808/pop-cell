@@ -150,7 +150,7 @@ namespace BlackholeGame
             ["tree.reset"]     = new[] { "화면 리셋", "表示リセット", "Reset View" },
             ["stat.tower"]     = new[] { "타워", "タワー", "Towers" },
             ["stat.towerOff"]  = new[] { "없음", "なし", "None" },
-            ["stat.towerVal"]  = new[] { "{0}대 · ×{1} · {2}초", "{0}基 · ×{1} · {2}秒", "{0} · x{1} · {2}s" },
+            ["stat.towerVal"]  = new[] { "{0}대 ×{1} · {2}초", "{0}基 ×{1} · {2}秒", "{0} x{1} · {2}s" },
             ["tree.tabCursor"] = new[] { "커서 강화", "カーソル強化", "Cursor" },
             ["tree.tabTower"]  = new[] { "타워 강화", "タワー強化", "Towers" },
             ["tree.toTop"]     = new[] { "맨 위로", "最上部へ", "Top" },
