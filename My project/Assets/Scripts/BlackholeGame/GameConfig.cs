@@ -30,6 +30,7 @@ namespace BlackholeGame
         public float bombDmgMul = 2f;          // 잡몹 피해 = 타격 × 이 값. 노드로 최대 5
         public float bombRadiusMul = 1f;       // 폭발 반경 배율. 노드 +0.1 씩 최대 2
         public float bombInterval = 20f;       // 생성 간격(초). 노드로 최소 10
+        public float bombFieldSec = 10f;       // round53: 터진 자리에 남는 장판 지속(초). 노드로 최대 20
         // 보스에게는 최대체력의 1% → 5% — 대미지 강화(2→5배)에 비례해서 같이 오른다
         public float BombBossFrac => 0.01f + Mathf.Clamp01((bombDmgMul - 2f) / 3f) * 0.04f;
 
@@ -67,7 +68,7 @@ namespace BlackholeGame
             bonusTimeSec = bonusTimeSec, spawnIntervalMult = spawnIntervalMult,
             spawnCount = spawnCount, startWave = startWave, autoAttack = autoAttack,
             bombUnlocked = bombUnlocked, bombDmgMul = bombDmgMul,
-            bombRadiusMul = bombRadiusMul, bombInterval = bombInterval,
+            bombRadiusMul = bombRadiusMul, bombInterval = bombInterval, bombFieldSec = bombFieldSec,
             towerOn = (bool[])towerOn.Clone(), towerDmgMul = (float[])towerDmgMul.Clone(),
             towerInterval = (float[])towerInterval.Clone(), towerSpin = (float[])towerSpin.Clone(),
             towerPattern = (int[])towerPattern.Clone(), towerPatMask = (int[])towerPatMask.Clone(),

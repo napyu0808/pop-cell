@@ -30,6 +30,7 @@ SKIP_ADD     = 2
 BOMB_DMG_ADD, BOMB_DMG_MAX = 0.5, 5.0
 BOMB_RAD_ADD, BOMB_RAD_MAX = 0.10, 2.0
 BOMB_INT_SUB, BOMB_INT_MIN = 2.0, 10.0
+BOMB_FIELD_ADD, BOMB_FIELD_MAX = 2.0, 20.0
 BOMB_UNLOCK_TIER = 1
 
 # ---- 자동 타워(round50 개편) — UpgradeTree.cs 의 Tw* 상수 미러 ----
@@ -57,6 +58,7 @@ LANES = {
     "time":  ("Time", 8, 0),   "gold":  ("Gold", 15, 0),  "skip":  ("Skip", 3, 0),
     "scount": ("SCount", 9, 0), "spawn": ("Spawn", 9, 0),
     "bombdmg": ("BombDmg", 6, 1), "bombrad": ("BombRad", 10, 1), "bombfreq": ("BombFreq", 5, 1),
+    "bombtime": ("BombTime", 5, 1),
 }
 
 # ---- GameConfig.cs : Stats 기본값 --------------------------------------
@@ -146,6 +148,8 @@ def apply_type(t, tier, s):
         s.bombRadiusMul = min(BOMB_RAD_MAX, s.bombRadiusMul + BOMB_RAD_ADD)
     elif t == "BombFreq":
         s.bombInterval = max(BOMB_INT_MIN, s.bombInterval - BOMB_INT_SUB)
+    elif t == "BombTime":
+        s.bombFieldSec = min(BOMB_FIELD_MAX, s.bombFieldSec + BOMB_FIELD_ADD)
     # ---- 반복 강화 ----
     elif t == "RFlat":
         s.flatBonus += REP_FLAT
@@ -211,7 +215,7 @@ def build():
     make("spawn0", "root", "Spawn", tier_of("spawn", 0), "spawn")
     lane("scount", "spawn0"); lane("spawn", "spawn0", 1)
     make("bomb", "spawn0", "Bomb", BOMB_UNLOCK_TIER, "bomb")
-    lane("bombdmg", "bomb"); lane("bombrad", "bomb"); lane("bombfreq", "bomb")
+    lane("bombdmg", "bomb"); lane("bombrad", "bomb"); lane("bombfreq", "bomb"); lane("bombtime", "bomb")
     # 자동 타워 — 코어에서 좌/중앙/우 3줄기(별도 탭)
     for i in range(3):
         key = TOWER_KEYS[i]
@@ -295,6 +299,7 @@ def new_stats():
     s.bombDmgMul = 2.0
     s.bombRadiusMul = 1.0
     s.bombInterval = 20.0
+    s.bombFieldSec = 10.0
     return s
 
 
@@ -340,8 +345,8 @@ def wave_cfg(stage, asc=0):
 # GameManager 가 살아있는 Play 모드에서 UpgradeTree.BuildAll() 로 뽑은 값 (round38).
 EXPECTED_DPS = [256, 894, 2286, 6642, 23705, 65041, 220748, 578355]
 EXPECTED_HIT = [111, 232, 420, 706, 1335, 2562, 5050, 9748]
-EXPECTED_TOTAL_COST = 322_623_767_373  # 일반 노드만(반복 제외) — round51 분사구·표적 노드 추가 후
-EXPECTED_NODES = 318   # 루트+커서 150 + 타워 162 + 반복 6
+EXPECTED_TOTAL_COST = 323_692_443_947  # 일반 노드만(반복 제외) — round53 백신 장판 지속 가지 추가 후
+EXPECTED_NODES = 323   # 루트+커서 155 + 타워 162 + 반복 6
 
 
 def self_check(verbose=True):

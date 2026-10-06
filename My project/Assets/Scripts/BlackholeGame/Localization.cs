@@ -200,6 +200,7 @@ namespace BlackholeGame
             ["n.bombdmg"]  = new[] { "백신 위력", "ワクチン威力", "Vaccine Power" },
             ["n.bombrad"]  = new[] { "백신 범위", "ワクチン範囲", "Vaccine Radius" },
             ["n.bombfreq"] = new[] { "백신 빈도", "ワクチン頻度", "Vaccine Rate" },
+            ["n.bombtime"] = new[] { "백신 지속", "ワクチン持続", "Vaccine Duration" },
             // ---- 노드 설명 ({0} = 수치) ----
             ["nd.flat"]  = new[] { "고정 공격력 +{0}", "固定攻撃力 +{0}", "Flat damage +{0}" },
             ["nd.mult"]  = new[] { "공격 배수 +{0:0.##}%p", "攻撃倍率 +{0:0.##}%p", "Damage mult +{0:0.##}%p" },
@@ -261,6 +262,7 @@ namespace BlackholeGame
             ["nd.bombdmg"]  = new[] { "폭발 피해 +{0:0.##}배 (보스 최대체력 비율도 상승)", "爆発ダメージ +{0:0.##}倍（ボス最大HP割合も上昇）", "Blast damage +{0:0.##}x (boss max-HP share too)" },
             ["nd.bombrad"]  = new[] { "폭발 범위 +{0:0.##}배", "爆発範囲 +{0:0.##}倍", "Blast radius +{0:0.##}x" },
             ["nd.bombfreq"] = new[] { "캡슐 출현 간격 -{0:0.##}초", "カプセル出現間隔 -{0:0.##}秒", "Capsule interval -{0:0.##}s" },
+            ["nd.bombtime"] = new[] { "백신 장판 지속 +{0:0.##}초", "ワクチン床の持続 +{0:0.##}秒", "Vaccine field lasts +{0:0.##}s" },
 
             // ---- 메타 노드 ----
             ["m.dmg"]    = new[] { "각성 · 공격", "覚醒 · 攻撃", "Awaken · Damage" },

@@ -59,7 +59,7 @@ namespace BlackholeGame
         public const float TimeCap = 120f;          // 시작 시간 +초
         public const float SpawnFloor = 0.22f;      // 소환 간격 배율 하한
         public const int   SCountMax = 10;          // 동시 소환 (기본 1 → 최대 10)
-        public const float BombDmgMax = 5f, BombRadMax = 2f, BombIntervalMin = 10f;
+        public const float BombDmgMax = 5f, BombRadMax = 2f, BombIntervalMin = 10f, BombFieldMax = 20f;
         public const float RepRangeMax = 5f;        // 반복 강화 범위 상한(월드 단위 반경)
 
         static float CM(float v) => Mathf.Min(MultCap, v);
@@ -72,7 +72,7 @@ namespace BlackholeGame
         // ---- 노드 1개당 수치 (round44: 300→150노드라 대략 2배) ----
         public const float MultPP = 21f, SpeedMul = 0.826f, CritCPP = 0.08f, CritXAdd = 0.18f,
                            RangeAdd = 0.21f, GoldPP = 18f, TimeAdd = 15f, SpawnMul = 0.85f,
-                           BombDmgAdd = 0.5f, BombRadAdd = 0.10f, BombIntervalSub = 2f;
+                           BombDmgAdd = 0.5f, BombRadAdd = 0.10f, BombIntervalSub = 2f, BombFieldAdd = 2f;
         public const int SkipAdd = 2;
 
         // ---- 반복 강화 1회당 수치·가격 (같은 값으로 같은 양) ----
@@ -92,7 +92,7 @@ namespace BlackholeGame
             tier >= 0 && tier < FlatByTier.Length ? FlatByTier[tier]
             : Mathf.RoundToInt(FlatByTier[FlatByTier.Length - 1] * Mathf.Pow(1.9f, tier - FlatByTier.Length + 1));
 
-        public enum T { Flat, Mult, Speed, CritC, CritX, Range, Gold, Time, Spawn, SCount, Skip, Auto, Bomb, BombDmg, BombRad, BombFreq,
+        public enum T { Flat, Mult, Speed, CritC, CritX, Range, Gold, Time, Spawn, SCount, Skip, Auto, Bomb, BombDmg, BombRad, BombFreq, BombTime,
                         RFlat, RMult, RSpeed, RRange, RCritX, RGold }
 
         // 가지 정의 — (타입, id 접두어, 노드 수, 시작 티어). 노드 수는 머리 노드를 포함한 전체 길이.
@@ -104,7 +104,8 @@ namespace BlackholeGame
             LCritC = L(T.CritC, "critc", 10),  LRange = L(T.Range, "range", 13),  LCritX = L(T.CritX, "critx", 15),
             LTime  = L(T.Time,  "time",   8),  LGold  = L(T.Gold,  "gold",  15),  LSkip  = L(T.Skip,  "skip",  3),
             LSCount= L(T.SCount,"scount", 9),  LSpawn = L(T.Spawn, "spawn",  9),
-            LBDmg  = L(T.BombDmg, "bombdmg", 6, 1), LBRad = L(T.BombRad, "bombrad", 10, 1), LBFreq = L(T.BombFreq, "bombfreq", 5, 1);
+            LBDmg  = L(T.BombDmg, "bombdmg", 6, 1), LBRad = L(T.BombRad, "bombrad", 10, 1), LBFreq = L(T.BombFreq, "bombfreq", 5, 1),
+            LBTime = L(T.BombTime, "bombtime", 5, 1);
         public const int BombUnlockTier = 1;   // 백신은 1지역을 깬 뒤 — 기본 조작에 익숙해진 다음 새 요소
 
         // ---- 자동 타워(round50 개편) ---------------------------------------------------
@@ -236,6 +237,7 @@ namespace BlackholeGame
                 case T.BombDmg:  return ("blast", "n.bombdmg", "nd.bombdmg", BombDmgAdd, s => s.bombDmgMul = Mathf.Min(BombDmgMax, s.bombDmgMul + BombDmgAdd));
                 case T.BombRad:  return ("blastring", "n.bombrad", "nd.bombrad", BombRadAdd, s => s.bombRadiusMul = Mathf.Min(BombRadMax, s.bombRadiusMul + BombRadAdd));
                 case T.BombFreq: return ("pillfast", "n.bombfreq", "nd.bombfreq", BombIntervalSub, s => s.bombInterval = Mathf.Max(BombIntervalMin, s.bombInterval - BombIntervalSub));
+                case T.BombTime: return ("clock", "n.bombtime", "nd.bombtime", BombFieldAdd, s => s.bombFieldSec = Mathf.Min(BombFieldMax, s.bombFieldSec + BombFieldAdd));
                 // ---- 반복 강화 — 가지 노드와 같은 아이콘, 효과는 "같은 양을 계속" ----
                 case T.RFlat:  return ("sword", "n.rflat", "nd.rflat", RepFlat, s => s.flatBonus += RepFlat);
                 case T.RMult:  return ("mult", "n.rmult", "nd.rmult", RepMult, s => s.multBucketPercent += RepMult);   // 상한 없음
@@ -309,6 +311,7 @@ namespace BlackholeGame
             Lane(list, LBDmg, "bomb");
             Lane(list, LBRad, "bomb");
             Lane(list, LBFreq, "bomb");
+            Lane(list, LBTime, "bomb");
 
             // 자동 타워 — 별도 탭(tab 1). 코어에서 좌/중앙/우 3줄기.
             for (int i = 0; i < 3; i++) TowerLane(list, i, RootId);

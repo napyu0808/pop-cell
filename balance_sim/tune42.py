@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 round42~44 튜닝 드라이버 — 변이0, 1~8지역 클리어 시간을 seed 여러 개로 병렬 측정.
-  목표(사용자): 변이0 8지역 ≈ 5시간(실측) = 시뮬 ≈ 1140분 (SIM_TO_REAL 3.8).
+  목표(사용자, 2026-10-06 변경): 변이0 8지역 ≈ 3시간(실측) = 시뮬 ≈ 684분 (SIM_TO_REAL 3.8).
+    예전 목표는 5시간이었는데 "좀 쉽게" 가자고 3시간으로 내렸다.
   round44 추가:
     - 반복 강화(가지 끝, 같은 값으로 같은 양) 를 구매 후보에 넣는다.
     - 지역별 골드 배율을 "골드/적 체력" 효율로 계산(beta = 지역 하나 올라갈 때 효율 배수).
@@ -152,7 +153,7 @@ def main():
     if rl:
         print("반복 강화 레벨(평균): " + ", ".join("%s %.0f" % (k, v) for k, v in sorted(rl.items())))
     tot = sum(mean(0, j) for j in range(n))
-    print("누적 시뮬 %.0f분 → 실측 추정 %.0f분 (%.1f시간)   목표 ≈ 300분" % (tot, tot / M.SIM_TO_REAL, tot / M.SIM_TO_REAL / 60))
+    print("누적 시뮬 %.0f분 → 실측 추정 %.0f분 (%.1f시간)   목표 ≈ 180분(3시간)" % (tot, tot / M.SIM_TO_REAL, tot / M.SIM_TO_REAL / 60))
     walls = [r[6] for r in res if r[6] is not None]
     if walls:
         print("*** 벽: S%d 에서 %d/%d seed 가 400판 안에 못 깸 ***" % (min(walls) + 1, len(walls), len(SEEDS)))

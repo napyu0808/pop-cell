@@ -77,6 +77,7 @@ class Stats:
         self.bombDmgMul = 2.0
         self.bombRadiusMul = 1.0
         self.bombInterval = 20.0
+        self.bombFieldSec = 10.0
         # round47 자동 타워 — GameConfig.cs Stats 와 동일
         self.towerOn = [False, False, False]
         self.towerDmgMul = [0.5, 0.5, 0.5]
@@ -116,6 +117,8 @@ class Stats:
 # round42: GameManager 상수 미러
 ELITE_CHANCE, ELITE_HP, ELITE_GOLD = 0.07, 3.0, 5
 BOMB_BASE_R, BOMB_MAX_ALIVE, BOMB_SIZE, BOMB_HP = 2.6, 2, 1.9, 0.6
+# round53: 백신은 즉발이 아니라 장판 — 그 자리에 깔려 주기마다 위의 적을 지진다
+BOMB_TICK_SEC, BOMB_TICK_MUL, BOMB_BOSS_TICK, MAX_BOMB_FIELDS = 0.5, 0.15, 0.06, 6
 # round47 자동 타워 — GameManager.cs 의 상수 미러
 TOWER_POS = [(-5.2, 0.0), (0.0, 0.0), (5.2, 0.0)]
 TOWER_SPIN, BULLET_SPEED, BULLET_LIFE, BULLET_R = 52.0, 9.0, 2.2, 0.16
@@ -159,6 +162,7 @@ class Run:
         self.bn = 0
         self.tw_ang = [0.0, 0.0, 0.0]
         self.tw_t = [0.0, 0.0, 0.0]
+        self.fields = []   # 백신 장판 [x, y, r, 남은초, 다음틱]
 
     def _spawn(self, wave, boss=False, bomb=False):
         if boss:
@@ -364,21 +368,41 @@ class Run:
             return False
 
         def detonate(x, y):
-            rad = BOMB_BASE_R * s.bombRadiusMul
-            bhit = hit * s.bombDmgMul
-            for j in range(self.n - 1, -1, -1):
-                if self.dead[j]:
+            """round53: 즉발 피해 없이 그 자리에 장판을 깐다."""
+            if len(self.fields) >= MAX_BOMB_FIELDS:
+                self.fields.pop(0)
+            self.fields.append([x, y, BOMB_BASE_R * s.bombRadiusMul, max(1.0, s.bombFieldSec), 0.0])
+            return False
+
+        def field_tick(dt_):
+            """장판들이 주기마다 위의 적을 때린다. True = 펄스 중단."""
+            if not self.fields:
+                return False
+            fhit = hit * s.bombDmgMul * BOMB_TICK_MUL
+            for fi in range(len(self.fields) - 1, -1, -1):
+                f = self.fields[fi]
+                f[3] -= dt_
+                if f[3] <= 0.0:
+                    self.fields.pop(fi)
                     continue
-                dx = self.px[j] - x; dy = self.py[j] - y
-                rr = rad + self.er[j]
-                if dx * dx + dy * dy > rr * rr:
-                    continue
-                if j == self.boss_idx:
-                    self.hp[j] -= w.bossHp * s.bomb_boss_frac()
-                else:
-                    self.hp[j] -= bhit
-                if self.hp[j] <= 0 and kill(j, False):
-                    return True
+                f[4] -= dt_
+                guard2 = 0
+                while f[4] <= 0.0 and guard2 < 4:
+                    guard2 += 1
+                    f[4] += BOMB_TICK_SEC
+                    for j in range(self.n - 1, -1, -1):
+                        if self.dead[j] or self.bm[j]:
+                            continue
+                        dx = self.px[j] - f[0]; dy = self.py[j] - f[1]
+                        rr = f[2] + self.er[j]
+                        if dx * dx + dy * dy > rr * rr:
+                            continue
+                        if j == self.boss_idx:
+                            self.hp[j] -= w.bossHp * s.bomb_boss_frac() * BOMB_BOSS_TICK
+                        else:
+                            self.hp[j] -= fhit
+                        if self.hp[j] <= 0 and kill(j, False):
+                            return True
             return False
 
         if st["wave"] >= w.totalWaves:
@@ -411,6 +435,12 @@ class Run:
                         self._spawn(st["wave"], bomb=True); bomb_t = 0.0
                     else:
                         bomb_t = s.bombInterval
+
+            # --- 백신 장판
+            if field_tick(dt):
+                self._compact()
+                break
+            self._compact()
 
             # --- move + bounce (vectorized)
             n = self.n

@@ -1557,6 +1557,7 @@ namespace BlackholeGame
             bullets.Clear();
             foreach (var f in towerFx) if (f.tr) Destroy(f.tr.gameObject);
             towerFx.Clear();
+            ClearBombFields();
         }
 
         // kind: 0 화염 · 1 레이저 · 2 저격
@@ -2240,6 +2241,7 @@ namespace BlackholeGame
             UpdateTowers(dt);
             UpdateBullets(dt);
             UpdateTowerFx(dt);
+            UpdateBombFields(dt);
 
             attackTimer += dt;
             guard = 0;
@@ -2446,41 +2448,98 @@ namespace BlackholeGame
 
         // 백신 폭발 — 반경 안의 잡몹은 타격 × bombDmgMul, 보스는 최대체력 × BombBossFrac(1%→5%).
         //   폭발로 죽은 적도 KillEnemy 로 똑같이 처리(골드·처치 수) — 다른 캡슐이 휘말리면 연쇄 폭발.
+        // round53: 터지는 순간 한 번 때리던 걸 "장판"으로 바꿨다 — 그 자리에 백신이 깔려
+        //   10~20초 동안 위에 있는 적을 계속 지진다. 즉발 피해는 없애고 전부 장판으로 넘겼다.
         bool Detonate(Vector3 pos)
         {
             float rad = BombBaseRadius * stats.bombRadiusMul;
             var vc = new Color(0.62f, 0.93f, 1f);   // 백신 색(연한 청록)
-            SpawnBurst(pos, Color.white, rad / 3f);   // 링이 정확히 폭발 반경까지 퍼진다(최종 지름 = r0×6)
+            SpawnBurst(pos, Color.white, rad / 3f);
             SpawnBurst(pos, vc, rad / 4.2f);
-            SpawnSplat(pos, vc, rad * 0.85f);          // 큼직한 흔적 — 폭발 반경을 거의 덮고 판 끝날 때까지 남는다
-                                                       // (자국 스프라이트가 텍스처를 절반쯤만 채워서 0.42 로는 반경의 40%뿐이었다)
             if (sound != null) sound.Play(Sfx.Boss, 0.7f, 1.35f);
-
-            float hit = stats.GetHitDamage() * stats.bombDmgMul;
-            for (int j = enemies.Count - 1; j >= 0; j--)
-            {
-                var o = enemies[j];
-                if (o.dead) continue;
-                float dx = o.tr.position.x - pos.x, dy = o.tr.position.y - pos.y;
-                float rr = rad + o.r;
-                if (dx * dx + dy * dy > rr * rr) continue;
-
-                bool isBoss = o == boss;
-                if (isBoss && o.shielded) continue;   // 무적 페이즈는 폭발도 막는다
-                float dmg = isBoss ? o.hpMax * stats.BombBossFrac : hit;
-                o.hp -= dmg;
-                o.flash = 0.12f;
-                if (floaters.Count < 40)
-                    floaters.Add(new Floater
-                    {
-                        world = o.tr.position + Vector3.up * (o.r + 0.1f),
-                        life = 0.6f,
-                        text = Mathf.RoundToInt(dmg).ToString(),
-                        crit = true,
-                    });
-                if (o.hp <= 0f && KillEnemy(o, false)) return true;
-            }
+            SpawnBombField(pos, rad, Mathf.Max(1f, stats.bombFieldSec));
             return false;
+        }
+
+        // ---- 백신 장판 ----
+        class BombFieldFx
+        {
+            public Vector2 pos; public float r; public float life, maxLife, tick;
+            public Transform tr; public SpriteRenderer sr;
+        }
+        readonly List<BombFieldFx> bombFields = new List<BombFieldFx>();
+        const float BombTickSec = 0.5f;       // 장판이 때리는 주기
+        const float BombTickMul = 0.15f;      // 틱당 = 타격 x 백신배수 x 이 값 (10초면 합계 3배, 20초면 6배)
+                                              //   0.08 로 낮춰도 전체 플레이타임이 2.9 -> 3.0 시간뿐이라(시뮬 측정)
+                                              //   백신에 투자한 보람이 보이도록 체감 쪽으로 잡았다
+        const float BombBossTickFrac = 0.06f; // 보스는 틱마다 최대체력의 (BombBossFrac x 이 값)
+        const int MaxBombFields = 6;
+
+        void SpawnBombField(Vector3 pos, float rad, float sec)
+        {
+            if (bombFields.Count >= MaxBombFields)
+            {
+                var old0 = bombFields[0];
+                if (old0.tr) Destroy(old0.tr.gameObject);
+                bombFields.RemoveAt(0);
+            }
+            if (discSprite == null) discSprite = BuildDiscSprite();
+            if (spriteMat == null) spriteMat = new Material(FindSpriteShader());
+            var go = new GameObject("BombField");
+            var sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = discSprite; sr.sharedMaterial = spriteMat;
+            sr.sortingOrder = -2;                       // 적·커서보다 아래
+            sr.color = new Color(0.50f, 0.92f, 1f, 0.34f);
+            go.transform.position = new Vector3(pos.x, pos.y, 0f);
+            go.transform.localScale = Vector3.one * (rad * 2f);
+            bombFields.Add(new BombFieldFx { pos = pos, r = rad, life = sec, maxLife = sec, tick = 0f, tr = go.transform, sr = sr });
+        }
+
+        void ClearBombFields()
+        {
+            foreach (var f in bombFields) if (f.tr) Destroy(f.tr.gameObject);
+            bombFields.Clear();
+        }
+
+        void UpdateBombFields(float dt)
+        {
+            if (bombFields.Count == 0) return;
+            float hit = stats.GetHitDamage() * stats.bombDmgMul * BombTickMul;
+            for (int i = bombFields.Count - 1; i >= 0; i--)
+            {
+                var f = bombFields[i];
+                f.life -= dt;
+                if (f.life <= 0f)
+                { if (f.tr) Destroy(f.tr.gameObject); bombFields.RemoveAt(i); continue; }
+
+                // 남은 시간에 따라 옅어지고 아주 조금 쪼그라든다
+                float k = f.life / Mathf.Max(0.0001f, f.maxLife);
+                if (f.sr != null) f.sr.color = new Color(0.50f, 0.92f, 1f, 0.12f + 0.24f * k);
+                if (f.tr != null) f.tr.localScale = Vector3.one * (f.r * 2f * (0.92f + 0.08f * k));
+
+                f.tick -= dt;
+                int guard = 0;
+                while (f.tick <= 0f && guard++ < 4)
+                {
+                    f.tick += BombTickSec;
+                    bool stop = false;
+                    for (int j = enemies.Count - 1; j >= 0; j--)
+                    {
+                        var o = enemies[j];
+                        if (o.dead || o.bomb || stop) continue;
+                        float dx = o.tr.position.x - f.pos.x, dy = o.tr.position.y - f.pos.y;
+                        float rr = f.r + o.r;
+                        if (dx * dx + dy * dy > rr * rr) continue;
+                        bool isBoss = o == boss;
+                        if (isBoss && o.shielded) continue;
+                        float dmg = isBoss ? o.hpMax * stats.BombBossFrac * BombBossTickFrac : hit;
+                        o.hp -= dmg;
+                        o.flash = 0.05f;
+                        if (o.hp <= 0f && KillEnemy(o, false)) stop = true;
+                    }
+                    enemies.RemoveAll(x => x.dead);
+                }
+            }
         }
 
         void UpdateCursor()
@@ -4417,8 +4476,16 @@ namespace BlackholeGame
                 float topH = ts.CalcHeight(new GUIContent(top), innerW);
                 float statusH = tsY.CalcHeight(new GUIContent(status), innerW);
                 float th = padTop + topH + gapMid + statusH + padBot;
+                // round53: 커서 오른쪽 "위" 에 띄운다. 예전엔 커서 아래였고 화면 높이로만 잘라서,
+                //   트리 맨 아래 노드에 올리면 툴팁이 하단 바 뒤로 들어가 글씨가 안 보였다.
                 Vector2 mp = Event.current.mousePosition;
-                var tr = new Rect(Mathf.Min(mp.x + 16f, Screen.width - tw - 8f), Mathf.Min(mp.y + 10f, Screen.height - th - 8f), tw, th);
+                float tx = mp.x + 16f;
+                if (tx + tw > Screen.width - 8f) tx = Mathf.Max(8f, mp.x - tw - 16f);   // 오른쪽이 모자라면 왼쪽으로
+                float botLimit = Screen.height - barH - 8f;                             // 하단 바 위까지만
+                float ty = mp.y - th - 12f;
+                if (ty < 8f) ty = mp.y + 18f;                                           // 위가 모자라면 커서 아래로
+                if (ty + th > botLimit) ty = Mathf.Max(8f, botLimit - th);
+                var tr = new Rect(tx, ty, tw, th);
                 if (!DrawSkinPanel(tr, false))
                 {
                     GUI.color = new Color(0.12f, 0.13f, 0.15f, 0.97f);
