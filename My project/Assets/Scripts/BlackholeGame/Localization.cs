@@ -189,6 +189,7 @@ namespace BlackholeGame
             ["n.towerL"] = new[] { "왼쪽 타워", "左タワー", "Left Tower" },
             ["n.towerC"] = new[] { "중앙 타워", "中央タワー", "Center Tower" },
             ["n.towerR"] = new[] { "오른쪽 타워", "右タワー", "Right Tower" },
+            ["n.towerBoss"] = new[] { "보스 특화", "ボス特化", "Anti-Boss" },
             // ---- 반복 강화 (round44) ----
             ["n.rflat"]  = new[] { "공격력 강화 ∞", "攻撃力強化 ∞", "Damage ∞" },
             ["n.rmult"]  = new[] { "공격 배수 강화 ∞", "攻撃倍率強化 ∞", "Multiplier ∞" },
@@ -219,6 +220,10 @@ namespace BlackholeGame
                                        "この位置に自動タワーを設置 — 回転しながら弾を撃つ",
                                        "Places an auto tower here — it spins and fires" },
             ["nd.towerDmg"]  = new[] { "타워 공격력 +{0:0.##}배 (커서 타격 기준)", "タワー攻撃力 +{0:0.##}倍（カーソル基準）", "Tower damage +{0:0.##}x of a cursor hit" },
+            ["nd.towerFlat"] = new[] { "타워 고정 공격력 +{0:N0}", "タワー固定攻撃力 +{0:N0}", "Tower flat damage +{0:N0}" },
+            ["nd.towerBoss"] = new[] { "타워가 보스에게 주는 피해 +{0:0.##}배 (최대 1.2)",
+                                       "タワーがボスに与えるダメージ +{0:0.##}倍（最大1.2）",
+                                       "Tower damage to bosses +{0:0.##}x (max 1.2)" },
             ["nd.towerSpd"]  = new[] { "타워 발사 간격 ×{0:0.##}", "タワー発射間隔 ×{0:0.##}", "Tower fire interval ×{0:0.##}" },
             ["nd.towerBurst"]= new[] { "연발 — 한 번에 3발을 부채꼴로", "連射 — 一度に3発を扇状に", "Burst — three shots in a fan" },
             ["nd.towerSpin"] = new[] { "타워 회전 속도 +{0:0}도/초", "タワー回転速度 +{0:0}度/秒", "Tower spin +{0:0}deg/s" },

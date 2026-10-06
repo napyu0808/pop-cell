@@ -114,9 +114,13 @@ namespace BlackholeGame
         //   공격 패턴만 늘어난다 — 타워 탭에서 뚫은 패턴 중 아무거나 골라 쓴다.
         //   3~6지역에서 힘이 되게 티어를 잡았고, 저격은 보스가 단단해지는 7~8지역용이다.
         public const int TowerUnlockTier = 0;   // round53: 처음부터 — 환생 직후 초기자금으로 타워부터 가는 선택지
+        public const long TowerUnlockCost = 1000;
 
-        public const float TowerDmgAdd = 0.10f;                     // 단계마다 5개 = +0.5
-        public static readonly float[] TowerDmgMaxAt = { 1.0f, 1.5f, 2.0f, 2.4f };   // 단계별 상한
+        // round54: 공격력 갈래는 "커서 배수" 가 아니라 고정 공격력이다. 커서를 안 키워도 타워 혼자
+        //   잡몹을 치우라고 — 커서 배수(towerDmgMul)는 0.5 로 고정하고 노드를 두지 않는다.
+        //   칸당 값은 그 단계가 겨냥하는 지역의 잡몹 체력 기준(1~3지역 37~1,392 / 5~6지역 1.7만~12.8만 / 7지역 202만).
+        public static readonly float[] TowerFlatAt = { 100f, 600f, 10000f };
+        public const float TowerBossAdd = 0.24f, TowerBossMax = 1.2f;   // 보스 피해 배율 0.5 -> 1.2
         public const float TowerSpeedMul = 0.85f, TowerIntervalMin = 0.10f;   // round51: 풀강 초당 4발 -> 10발
         public const float TowerSpinAdd = 14f, TowerSpinMax = 300f;
 
@@ -134,8 +138,9 @@ namespace BlackholeGame
         {
             string key = TowerKey[idx];
             string unlock = key + "0";
+            // round54: 해금만 티어 가격과 무관하게 1,000 — 초반에 "타워부터 하나 세운다" 가 되게
             list.Add(new UpgradeNode(unlock, parent, Vector2.zero, "tower", TowerName[idx],
-                                     Cost(TowerUnlockTier), TowerUnlockTier, "nd.towerOn", 0f,
+                                     TowerUnlockCost, TowerUnlockTier, "nd.towerOn", 0f,
                                      s => s.towerOn[idx] = true, false, 1));
 
             string stem = unlock;
@@ -153,6 +158,13 @@ namespace BlackholeGame
                                              Cost(TwMorphTier[st]), TwMorphTier[st], desc, 0f,
                                              s => s.UnlockPattern(idx, pat), false, 1,
                                              new[] { stem + "d", stem + "p" }));
+                    // round54: 변신마다 보스 피해 배율 한 칸. 타워가 보스까지 녹이면 클리커가 아니게 되니
+                    //   잡몹은 고정 공격력으로 밀되 보스는 0.5 에서 시작해 1.2 까지만 올라간다.
+                    string bossId = key + "bs" + st;
+                    list.Add(new UpgradeNode(bossId, morph, Vector2.zero, "scope", TowerName[idx],
+                                             Cost(TwMorphTier[st]), TwMorphTier[st], "nd.towerBoss", TowerBossAdd,
+                                             s => s.towerBossMul[idx] = Mathf.Min(TowerBossMax, s.towerBossMul[idx] + TowerBossAdd),
+                                             false, 1));
                     stem = morph;
                     if (st == 3)
                     {
@@ -172,7 +184,7 @@ namespace BlackholeGame
                 }
 
                 int tier0 = TwStageTier[st];
-                float dmgMax = TowerDmgMaxAt[st];
+                float flatAdd = TowerFlatAt[Mathf.Min(st, TowerFlatAt.Length - 1)];
                 // 세 갈래 — d 공격력 · s 공속 · p 회전속도. 각각 TwPerBranch 칸.
                 for (int b = 0; b < 3; b++)
                 {
@@ -184,8 +196,8 @@ namespace BlackholeGame
                         string id = stem + bk + (k == TwPerBranch - 1 ? "" : k.ToString());
                         if (b == 0)
                             list.Add(new UpgradeNode(id, bp, Vector2.zero, "sword", TowerName[idx], Cost(tier), tier,
-                                                     "nd.towerDmg", TowerDmgAdd,
-                                                     s => s.towerDmgMul[idx] = Mathf.Min(dmgMax, s.towerDmgMul[idx] + TowerDmgAdd), false, 1));
+                                                     "nd.towerFlat", flatAdd,
+                                                     s => s.towerFlat[idx] += flatAdd, false, 1));
                         else if (b == 1)
                             list.Add(new UpgradeNode(id, bp, Vector2.zero, "bolt", TowerName[idx], Cost(tier), tier,
                                                      "nd.towerSpd", TowerSpeedMul,

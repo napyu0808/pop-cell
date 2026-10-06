@@ -42,6 +42,12 @@ namespace BlackholeGame
 
         public static bool Exists() => PlayerPrefs.HasKey(Key);
 
+        // round54: "이 기기에서 한 번이라도 플레이했는가" — 최초 1회만 온보딩(코어를 안 주고 바로 1지역)
+        //   세이브를 지워도(Wipe) 이 플래그는 남겨서, 온보딩은 설치 후 정말 한 번만 나온다.
+        const string FirstRunKey = "popcell.firstrun";
+        public static bool FirstRunDone() => PlayerPrefs.GetInt(FirstRunKey, 0) != 0;
+        public static void MarkFirstRunDone() { PlayerPrefs.SetInt(FirstRunKey, 1); PlayerPrefs.Save(); }
+
         public static SaveData Load()
         {
             if (!PlayerPrefs.HasKey(Key)) return null;

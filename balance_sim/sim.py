@@ -87,6 +87,8 @@ class Stats:
         self.towerPatMask = [1, 1, 1]
         self.towerBeams = [1, 1, 1]
         self.towerTargets = [1, 1, 1]
+        self.towerFlat = [0.0, 0.0, 0.0]
+        self.towerBossMul = [0.5, 0.5, 0.5]
         for k, v in kw.items():
             setattr(self, k, v)
 
@@ -107,6 +109,8 @@ class Stats:
         s.towerPatMask = list(self.towerPatMask)
         s.towerBeams = list(self.towerBeams)
         s.towerTargets = list(self.towerTargets)
+        s.towerFlat = list(self.towerFlat)
+        s.towerBossMul = list(self.towerBossMul)
         return s
 
     def any_tower(self):
@@ -158,7 +162,7 @@ class Run:
         B = MAX_BULLETS
         self.bux = np.zeros(B); self.buy = np.zeros(B)
         self.bvx = np.zeros(B); self.bvy = np.zeros(B)
-        self.bulife = np.zeros(B); self.budmg = np.zeros(B)
+        self.bulife = np.zeros(B); self.budmg = np.zeros(B); self.bubm = np.ones(B)
         self.bn = 0
         self.tw_ang = [0.0, 0.0, 0.0]
         self.tw_t = [0.0, 0.0, 0.0]
@@ -195,7 +199,7 @@ class Run:
         a = self.rng.random() * 2 * math.pi
         self.vx[i] = math.cos(a) * sp; self.vy[i] = math.sin(a) * sp
 
-    def _fire(self, ti, ang, dmg):
+    def _fire(self, ti, ang, dmg, boss_mul=1.0):
         if self.bn >= MAX_BULLETS:
             return
         k = self.bn; self.bn += 1
@@ -205,6 +209,7 @@ class Run:
         self.bvy[k] = math.cos(rad) * BULLET_SPEED
         self.bulife[k] = BULLET_LIFE
         self.budmg[k] = dmg
+        self.bubm[k] = boss_mul
 
     def _sniper_target(self):
         bi = getattr(self, "boss_idx", -1)
@@ -218,7 +223,7 @@ class Run:
                 best_hp = self.hp[j]; best = j
         return best
 
-    def _area_hit(self, ti, dmg, shape, kill, ang_off=0.0):
+    def _area_hit(self, ti, dmg, shape, kill, ang_off=0.0, boss_mul=1.0):
         """화염(부채꼴) / 레이저(직선) — 닿는 적 전부. True = 펄스 중단."""
         tx, ty = TOWER_POS[ti]
         rad = math.radians(self.tw_ang[ti] + ang_off)
@@ -241,12 +246,12 @@ class Run:
                     continue
                 if abs(ex * dy_ - ey * dx_) > LASER_HALF_W + self.er[j]:
                     continue
-            self.hp[j] -= dmg
+            self.hp[j] -= dmg * (boss_mul if j == self.boss_idx else 1.0)
             if self.hp[j] <= 0 and kill(j, False):
                 return True
         return False
 
-    def _sniper_shot(self, ti, dmg, kill, targets=1):
+    def _sniper_shot(self, ti, dmg, kill, targets=1, boss_mul=1.0):
         j = self._sniper_target()
         if j < 0:
             return False
@@ -268,7 +273,7 @@ class Run:
         for k in picked:
             if self.dead[k]:
                 continue
-            self.hp[k] -= dmg
+            self.hp[k] -= dmg * (boss_mul if k == self.boss_idx else 1.0)
             if self.hp[k] <= 0 and kill(k, False):
                 return True
         return False
@@ -482,11 +487,11 @@ class Run:
                     guard = 0
                     while self.tw_t[ti] >= iv and guard < 8:
                         self.tw_t[ti] -= iv; guard += 1
-                        dmg = hit * s.towerDmgMul[ti]
+                        dmg = hit * s.towerDmgMul[ti] + s.towerFlat[ti]
                         if pat == PAT_BURST:
                             a0 = self.tw_ang[ti]
                             for a in (a0 - BURST_SPREAD, a0, a0 + BURST_SPREAD):
-                                self._fire(ti, a, dmg * 0.6)
+                                self._fire(ti, a, dmg * 0.6, s.towerBossMul[ti])
                         elif pat in (PAT_FLAME, PAT_LASER):
                             shape = "cone" if pat == PAT_FLAME else "beam"
                             mul = 0.42 if pat == PAT_FLAME else 1.1
@@ -494,15 +499,15 @@ class Run:
                             done = False
                             for b in range(nb):
                                 off = 0.0 if nb <= 1 else b * (360.0 / nb)
-                                if self._area_hit(ti, dmg * mul, shape, kill, off):
+                                if self._area_hit(ti, dmg * mul, shape, kill, off, s.towerBossMul[ti]):
                                     done = True; break
                             if done:
                                 break
                         elif pat == PAT_SNIPER:
-                            if self._sniper_shot(ti, dmg * 20.0, kill, max(1, min(3, s.towerTargets[ti]))):
+                            if self._sniper_shot(ti, dmg * 8.0, kill, max(1, min(3, s.towerTargets[ti])), s.towerBossMul[ti]):
                                 break
                         else:
-                            self._fire(ti, self.tw_ang[ti], dmg)
+                            self._fire(ti, self.tw_ang[ti], dmg, s.towerBossMul[ti])
                     if st["won"]:
                         break
                 self._compact()
@@ -532,13 +537,13 @@ class Run:
                         alive[bi_] = False
                         if self.dead[j]:
                             continue
-                        self.hp[j] -= self.budmg[bi_]
+                        self.hp[j] -= self.budmg[bi_] * (self.bubm[bi_] if j == self.boss_idx else 1.0)
                         if self.hp[j] <= 0 and kill(j, False):
                             break             # 웨이브 전환/보스 처치 — 이번 프레임 명중 판정 중단
                     self._compact()
                 keep = np.nonzero(alive)[0]
                 if len(keep) != m:
-                    for arr in (self.bux, self.buy, self.bvx, self.bvy, self.bulife, self.budmg):
+                    for arr in (self.bux, self.buy, self.bvx, self.bvy, self.bulife, self.budmg, self.bubm):
                         arr[:len(keep)] = arr[keep]
                     self.bn = int(len(keep))
                 if st["won"]:

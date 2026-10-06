@@ -105,7 +105,7 @@ namespace BlackholeGame
 
         // ---- 자동 타워(round47) ----
         //   조준하지 않는다: 제자리에서 일정 속도로 돌며 총구가 향한 쪽으로 쏜다.
-        class Bullet { public Transform tr; public SpriteRenderer sr; public Vector2 pos, vel; public float life, dmg, r; }
+        class Bullet { public Transform tr; public SpriteRenderer sr; public Vector2 pos, vel; public float life, dmg, r, bossMul; }
         readonly List<Bullet> bullets = new List<Bullet>();
 
         // round50: 화염·레이저·저격의 잔상 — 아주 짧게 떴다 사라진다
@@ -1505,7 +1505,10 @@ namespace BlackholeGame
             metaCurrency = 0;
             RebuildBaseStats();
             stats = baseStats != null ? baseStats.Clone() : stats;
-            GrabRoot();
+            // round54: 이 기기에서 처음 하는 판이면 코어("고정 공격력 +8")를 안 준다 — 0골드짜리라
+            //   첫 노드를 직접 사 보는 게 트리를 이해하는 가장 빠른 길이다. 두 번째부터는 예전처럼 쥐여준다.
+            bool firstRun = !SaveSystem.FirstRunDone();
+            if (!firstRun) GrabRoot();
             gold = 2000 * MetaLv("m_start");   // 메타를 지웠으니 0
             currentStage = 0;
             stagesCleared = 0;
@@ -1518,7 +1521,13 @@ namespace BlackholeGame
             mapScroll = -1f;
             wave.LoadStage(currentStage);
             wave.ApplyAscension(ascensionLevel);
-            state = State.Map;
+            if (firstRun)
+            {
+                // 첫 판은 지도를 건너뛰고 바로 1지역으로 — 뭘 눌러야 할지 묻지 않게.
+                SaveSystem.MarkFirstRunDone();
+                StartRun();
+            }
+            else state = State.Map;
         }
 
         // 타워 3개를 씬에 만들어 두고, 해금 여부에 따라 보이기만 토글한다.
@@ -1597,7 +1606,7 @@ namespace BlackholeGame
             }
         }
 
-        void SpawnBullet(Vector2 pos, float angDeg, float dmg)
+        void SpawnBullet(Vector2 pos, float angDeg, float dmg, float bossMul = 1f)
         {
             if (bullets.Count >= MaxBullets) return;
             if (bulletSprite == null) bulletSprite = BuildBulletSprite();
@@ -1608,7 +1617,7 @@ namespace BlackholeGame
             sr.color = new Color(0.70f, 0.95f, 1f);   // 골드 드랍(노란 점)과 구분되는 하늘색
             float rad = angDeg * Mathf.Deg2Rad;
             var dir = new Vector2(Mathf.Sin(rad), Mathf.Cos(rad));   // 0도 = 위쪽
-            var b = new Bullet { tr = go.transform, sr = sr, pos = pos, vel = dir * BulletSpeed, life = BulletLife, dmg = dmg, r = 0.16f };
+            var b = new Bullet { tr = go.transform, sr = sr, pos = pos, vel = dir * BulletSpeed, life = BulletLife, dmg = dmg, r = 0.16f, bossMul = bossMul };
             go.transform.position = pos;
             go.transform.localScale = Vector3.one * (b.r * 2f);
             bullets.Add(b);
@@ -1650,18 +1659,19 @@ namespace BlackholeGame
                 while (towerTimer[i] >= iv && guard++ < 8)
                 {
                     towerTimer[i] -= iv;
-                    float dmg = hit * stats.towerDmgMul[i];
+                    // round54: 커서 배수(0.5 고정) + 고정 공격력. 고정값이 있어야 커서를 안 키워도 잡몹이 죽는다.
+                    float dmg = hit * stats.towerDmgMul[i] + stats.towerFlat[i];
                     switch (pat)
                     {
                         case Stats.PatBurst:
-                            SpawnBullet(TowerPos[i], towerAngle[i] - 11f, dmg * 0.6f);
-                            SpawnBullet(TowerPos[i], towerAngle[i], dmg * 0.6f);
-                            SpawnBullet(TowerPos[i], towerAngle[i] + 11f, dmg * 0.6f);
+                            SpawnBullet(TowerPos[i], towerAngle[i] - 11f, dmg * 0.6f, stats.towerBossMul[i]);
+                            SpawnBullet(TowerPos[i], towerAngle[i], dmg * 0.6f, stats.towerBossMul[i]);
+                            SpawnBullet(TowerPos[i], towerAngle[i] + 11f, dmg * 0.6f, stats.towerBossMul[i]);
                             break;
                         case Stats.PatFlame:  ConeHit(i, dmg * 0.42f); break;
                         case Stats.PatLaser:  BeamHit(i, dmg * 1.1f);  break;
-                        case Stats.PatSniper: SniperShot(i, dmg * 20f); break;   // round51: 8지역 잡몹도 못 뚫어서 대폭 상향
-                        default:              SpawnBullet(TowerPos[i], towerAngle[i], dmg); break;
+                        case Stats.PatSniper: SniperShot(i, dmg * 8f); break;    // round54: 고정 공격력이 붙어 20배는 과했다
+                        default:              SpawnBullet(TowerPos[i], towerAngle[i], dmg, stats.towerBossMul[i]); break;
                     }
                     if (sound != null && i == 0) sound.Play(Sfx.Pulse, 0.18f, 1.5f);
                 }
@@ -1693,7 +1703,7 @@ namespace BlackholeGame
         // 방향이 2개면 위아래(180도), 3개면 원을 셋으로 나눈 각(120도)
         static float BeamOffset(int beams, int b) => beams <= 1 ? 0f : b * (360f / beams);
 
-        void ConeHitOne(int i, float dmg, float angDeg)
+        void ConeHitOne(int i, float dmg, float angDeg)   // 보스는 towerBossMul 배
         {
             const float Range = 4.2f, HalfAng = 26f;
             float rad = angDeg * Mathf.Deg2Rad;
@@ -1708,7 +1718,7 @@ namespace BlackholeGame
                 if (dist > Range + e.r) continue;
                 if (dist > 0.01f && Vector2.Angle(dir, d) > HalfAng) continue;
                 if (e == boss && e.shielded) continue;
-                e.hp -= dmg; e.flash = 0.06f;
+                e.hp -= dmg * (e == boss ? stats.towerBossMul[i] : 1f); e.flash = 0.06f;
                 if (e.hp <= 0f && KillEnemy(e, false)) stop = true;
             }
             enemies.RemoveAll(x => x.dead);
@@ -1738,7 +1748,7 @@ namespace BlackholeGame
                 float side = Mathf.Abs(d.x * dir.y - d.y * dir.x);
                 if (side > HalfW + e.r) continue;
                 if (e == boss && e.shielded) continue;
-                e.hp -= dmg; e.flash = 0.06f;
+                e.hp -= dmg * (e == boss ? stats.towerBossMul[i] : 1f); e.flash = 0.06f;
                 if (e.hp <= 0f && KillEnemy(e, false)) stop = true;
             }
             enemies.RemoveAll(x => x.dead);
@@ -1773,7 +1783,7 @@ namespace BlackholeGame
             foreach (var e in sniperPick)
             {
                 if (e.dead || (e == boss && e.shielded)) continue;
-                e.hp -= dmg; e.flash = 0.10f;
+                e.hp -= dmg * (e == boss ? stats.towerBossMul[i] : 1f); e.flash = 0.10f;
                 if (e.hp <= 0f) KillEnemy(e, true);
                 SpawnTowerFx(i, 2, ((Vector2)e.tr.position - TowerPos[i]).magnitude,
                              Mathf.Atan2(e.tr.position.x - TowerPos[i].x, e.tr.position.y - TowerPos[i].y) * Mathf.Rad2Deg);
@@ -1808,7 +1818,7 @@ namespace BlackholeGame
                     bool isBoss = e == boss;
                     if (!(isBoss && e.shielded))
                     {
-                        e.hp -= b.dmg;
+                        e.hp -= b.dmg * (isBoss ? b.bossMul : 1f);
                         e.flash = 0.06f;
                         if (e.hp <= 0f && KillEnemy(e, false)) stop = true;
                     }

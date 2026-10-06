@@ -36,8 +36,10 @@ BOMB_UNLOCK_TIER = 1
 # ---- 자동 타워(round50 개편) — UpgradeTree.cs 의 Tw* 상수 미러 ----
 #   줄기마다 해금 → [공격력/공속/회전] 3갈래 → 셋 다 뚫으면 변신(화염 → 레이저 → 저격).
 TOWER_UNLOCK_TIER = 0
-TOWER_DMG_ADD = 0.10
-TOWER_DMG_MAX_AT = [1.0, 1.5, 2.0, 2.4]
+# round54: 공격력 갈래는 커서 배수가 아니라 고정 공격력. 커서 배수는 0.5 고정(노드 없음).
+TOWER_FLAT_AT = [100.0, 600.0, 10000.0]
+TOWER_BOSS_ADD, TOWER_BOSS_MAX = 0.24, 1.2
+TOWER_UNLOCK_COST = 1000
 TOWER_SPEED_MUL, TOWER_INTERVAL_MIN = 0.85, 0.10
 TOWER_SPIN_ADD, TOWER_SPIN_MAX = 14.0, 300.0
 TW_PER_BRANCH = 5
@@ -75,12 +77,12 @@ BASE_SPAWNCNT = 1   # round42
 #            S1    S2    S3    S4    S5    S6    S7    S8
 WAVES    = [   4,    5,    7,    9,   11,   13,   15,   18]
 TLIM     = [  28,   34,   44,   54,   64,   74,   88,  108]
-HP0      = [29, 183, 717, 1317, 4841, 25564, 283982, 2568181]
+HP0      = [29, 183, 717, 1317, 5809, 38346, 1419910, 5136362]
 HPG      = [1.130, 1.136, 1.142, 1.148, 1.153, 1.158, 1.163, 1.168]
-BOSSHP   = [5375, 28608, 124107, 563499, 4038668, 30071574, 390286918, 5017823188]
+BOSSHP   = [5375, 28608, 124107, 563499, 4846402, 45107361, 1951434590, 10035646376]
 QUOTA0   = [   4,    5,    6,    7,    8,    9,   10,   11]
 SE       = [   8,    9,   10,   11,   12,   13,   14,   15]
-GOLDRATE = [1.00, 4.72, 15.98, 30.00, 134.39, 934.09, 14254.46, 194837.80]
+GOLDRATE = [1.00, 4.72, 15.98, 30.00, 161.26, 1401.13, 71272.29, 389675.59]
 
 GOLD_CURVE = [
     1, 2, 5, 10, 12, 15, 20,
@@ -223,7 +225,7 @@ def build():
 
         def on(s, i=i):
             s.towerOn[i] = True
-        nodes.append(Node(unlock, "root", TOWER_UNLOCK_TIER, "TwOn", key, fn=on))
+        nodes.append(Node(unlock, "root", TOWER_UNLOCK_TIER, "TwOn", key, fn=on, cost=TOWER_UNLOCK_COST))
 
         stem = unlock
         for st in range(4):
@@ -236,6 +238,10 @@ def build():
                 morph = key + "m" + str(st)
                 nodes.append(Node(morph, stem + "s", TW_MORPH_TIER[st], "TwMorph", key,
                                   fn=morph_fn, also=[stem + "d", stem + "p"]))
+
+                def boss_fn(s, i=i):          # 변신마다 보스 피해 배율 한 칸
+                    s.towerBossMul[i] = min(TOWER_BOSS_MAX, s.towerBossMul[i] + TOWER_BOSS_ADD)
+                nodes.append(Node(key + "bs" + str(st), morph, TW_MORPH_TIER[st], "TwBoss", key, fn=boss_fn))
                 stem = morph
                 if st == 3:
                     prevt = morph
@@ -249,15 +255,15 @@ def build():
                     break
 
             tier0 = TW_STAGE_TIER[st]
-            dmg_max = TOWER_DMG_MAX_AT[st]
+            flat_add = TOWER_FLAT_AT[min(st, len(TOWER_FLAT_AT) - 1)]
             for b, bk in enumerate(("d", "s", "p")):
                 bp = stem
                 for k in range(TW_PER_BRANCH):
                     tier = min(NODE_TIERS - 1, tier0 + (1 if k >= TW_PER_BRANCH - 2 else 0))
                     nid = stem + bk + ("" if k == TW_PER_BRANCH - 1 else str(k))
                     if b == 0:
-                        def f(s, i=i, m=dmg_max):
-                            s.towerDmgMul[i] = min(m, s.towerDmgMul[i] + TOWER_DMG_ADD)
+                        def f(s, i=i, a=flat_add):
+                            s.towerFlat[i] += a
                     elif b == 1:
                         def f(s, i=i):
                             s.towerInterval[i] = max(TOWER_INTERVAL_MIN, s.towerInterval[i] * TOWER_SPEED_MUL)
@@ -345,8 +351,8 @@ def wave_cfg(stage, asc=0):
 # GameManager 가 살아있는 Play 모드에서 UpgradeTree.BuildAll() 로 뽑은 값 (round38).
 EXPECTED_DPS = [256, 894, 2286, 6642, 23705, 65041, 220748, 578355]
 EXPECTED_HIT = [111, 232, 420, 706, 1335, 2562, 5050, 9748]
-EXPECTED_TOTAL_COST = 323_692_443_947  # 일반 노드만(반복 제외) — round53 백신 장판 지속 가지 추가 후
-EXPECTED_NODES = 323   # 루트+커서 155 + 타워 162 + 반복 6
+EXPECTED_TOTAL_COST = 326_986_234_586  # 일반 노드만(반복 제외) — round54 보스 특화 9칸 + 해금 1,000
+EXPECTED_NODES = 332   # 루트+커서 155 + 타워 171 + 반복 6
 
 
 def self_check(verbose=True):
