@@ -237,9 +237,9 @@ namespace BlackholeGame
             new StageConfig(1, "s.1",  5,  34f,       183f, 1.136f,        28608,  5,  9,     4.72f, new Color(0.36f,0.62f,0.70f)),
             new StageConfig(2, "s.2",  7,  44f,       717f, 1.142f,       124107,  6, 10,    15.98f, new Color(0.60f,0.54f,0.36f)),
             new StageConfig(3, "s.3",  9,  54f,      1317f, 1.148f,       563499,  7, 11,    30.00f, new Color(0.40f,0.46f,0.60f)),
-            new StageConfig(4, "s.4", 11,  64f,      5809f, 1.153f,      4846402,  8, 12,   161.26f, new Color(0.30f,0.58f,0.62f)),
-            new StageConfig(5, "s.5", 13,  74f,     38346f, 1.158f,     45107361,  9, 13,  1401.13f, new Color(0.34f,0.56f,0.34f)),
-            new StageConfig(6, "s.6", 15,  88f,   1419910f, 1.163f,   1951434590, 10, 14, 71272.29f, new Color(0.62f,0.66f,0.72f)),
+            new StageConfig(4, "s.4", 11,  64f,      6971f, 1.153f,      5815682,  8, 12,   161.26f, new Color(0.30f,0.58f,0.62f)),
+            new StageConfig(5, "s.5", 13,  74f,     49850f, 1.158f,     58639569,  9, 13,  1401.13f, new Color(0.34f,0.56f,0.34f)),
+            new StageConfig(6, "s.6", 15,  88f,   1632896f, 1.163f,   2244149778, 10, 14, 71272.29f, new Color(0.62f,0.66f,0.72f)),
             new StageConfig(7, "s.7", 18, 108f,   5136362f, 1.168f,  10035646376, 11, 15, 389675.59f, new Color(0.66f,0.30f,0.34f)),
         };
     }

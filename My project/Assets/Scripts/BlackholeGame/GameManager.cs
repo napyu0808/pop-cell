@@ -31,7 +31,24 @@ namespace BlackholeGame
 
         long gold;   // round44: 지역별 골드가 체력만큼 커져서(8지역 킬당 ~1만) int(21억)로는 넘칠 수 있다
         int waveNum = 1, kills, quota;
-        int cycleKills; long cycleGold;
+        int cycleKills; long cycleGold; float cycleElapsed;   // round55: 이번 판 경과(배양 적재 기준)
+
+        // ---- 타격감(round55) ------------------------------------------------------
+        //   숫자만 커지고 손맛이 없다는 지적 — 처치할 때 화면이 흔들리고, 보스를 잡을 땐
+        //   아주 짧게 시간이 멈추고, 연속 처치가 쌓이면 콤보가 화면에 뜨고 소리 피치가 올라간다.
+        float shakeAmp, shakeTime;      // 남은 흔들림 세기 / 시간
+        float hitStopLeft;              // 히트스톱 남은 시간(실시간 기준)
+        int comboCount; float comboLeft;
+        const float ComboWindow = 1.6f; // 이 안에 다음 처치가 없으면 콤보가 끊긴다
+
+        // ---- 연속 클리어(round55) -------------------------------------------------
+        //   실패해도 골드를 그대로 챙기니 한 판 한 판이 "도전"이 아니라 "정산"이었다.
+        //   클리어를 이어가면 골드가 붙고, 시간 초과로 한 번 지면 처음부터. 판수는 그대로지만
+        //   같은 판이 다르게 읽힌다.
+        int winStreak;
+        const float StreakBonusPer = 0.06f;   // 연속 1회당 +6%
+        const int StreakBonusMax = 8;          // 최대 +48%
+        float StreakMul => 1f + StreakBonusPer * Mathf.Min(winStreak, StreakBonusMax);
         int currentStage = 0;     // 지금 플레이 중인 지역 (0~7)
         int stagesCleared = 0;    // 클리어한 지역 수 = 해금된 tier
         int retryCount = 0;       // 부대 카운터(리트라이 횟수) — 표시용
@@ -70,6 +87,38 @@ namespace BlackholeGame
         HashSet<string> bought = new HashSet<string>();
         // round44: 반복 강화 레벨. 한 번이라도 산 반복 노드는 bought 에도 들어간다(연결선·공개 판정용).
         readonly Dictionary<string, int> repLv = new Dictionary<string, int>();
+
+        // ---- 배양(자원 채취, round55) --------------------------------------------------
+        //   운반체가 영양소 더미와 코어 사이를 왕복한다. 코어에 닿을 때마다 적재량만큼 골드.
+        //   게임이 켜져 있는 동안만 돈다(타이틀 제외) — 껐을 때는 안 오른다는 게 사용자 요구.
+        //   적재량은 "최근 판의 초당 골드"에 비례해서, 지역이 올라가도 알아서 스케일된다.
+        //   round56: 8지역까지 꾸준히 올릴 거리가 되게 단계를 크게 늘렸다(연구원 9 + 산출 25 + 속도 18 = 52단계).
+        public const int MinerMax = 10;
+        const float MinerCycleBase = 4.0f, MinerCycleStep = 0.15f, MinerCycleMin = 1.3f;
+        //   산출은 판 실적이 아니라 고정치다(사용자 결정). 단계마다 배수로 올라가서
+        //   8지역까지 따라붙는다: 10 x 1.45^25 ≈ 24만.
+        const float MinerLoadBase = 10f, MinerLoadMul = 1.45f;
+        static readonly long[] CultureCost0 = { 2000, 500, 800 };     // 연구원 / 산출 / 속도 기본 가격
+        static readonly float[] CultureCostMul = { 4.0f, 1.70f, 2.10f };
+        static readonly int[] CultureMaxLv = { MinerMax - 1, 25, 18 };
+        static readonly string[] CultureKey = { "cwk", "cld", "csp" };
+
+        readonly Dictionary<string, int> cultureLv = new Dictionary<string, int>();
+        readonly float[] minerPhase = new float[MinerMax];   // 0~1 왕복 진행도
+        float cultureGoldAcc;                                 // 소수점 누적(골드는 long)
+        bool minerPhaseInit;                                  // 출발 위상을 한 번만 흩는다
+
+        int CultureLv(int i) => cultureLv.TryGetValue(CultureKey[i], out var v) ? v : 0;
+        long CultureCost(int i)
+        {
+            double c = CultureCost0[i] * System.Math.Pow(CultureCostMul[i], CultureLv(i));
+            return (long)System.Math.Min(long.MaxValue / 4, System.Math.Round(c));
+        }
+        int MinerCount => 1 + CultureLv(0);
+        float MinerCycleSec => Mathf.Max(MinerCycleMin, MinerCycleBase - MinerCycleStep * CultureLv(2));
+
+        float MinerLoad => MinerLoadBase * Mathf.Pow(MinerLoadMul, CultureLv(1));
+        float CultureGoldPerSec => MinerCount / Mathf.Max(0.01f, MinerCycleSec) * MinerLoad;
         int treeTab;                // round47: 0 = 커서 강화, 1 = 자동 타워
         float treeMaxPan;           // 트리 세로 스크롤 최대치(맨 위) — 하단 '맨 위로' 버튼이 쓴다
         bool treeBarDrag;           // 스크롤바 핸들을 잡고 있는 중
@@ -1381,6 +1430,8 @@ namespace BlackholeGame
             foreach (var id in bought) d.bought.Add(id);
             foreach (var kv in metaLv) if (kv.Value > 0) d.metaBought.Add(kv.Key + ":" + kv.Value);
             foreach (var kv in repLv) if (kv.Value > 0) d.repLv.Add(kv.Key + ":" + kv.Value);
+            foreach (var kv in cultureLv) if (kv.Value > 0) d.cultureLv.Add(kv.Key + ":" + kv.Value);
+            d.winStreak = winStreak;
             SaveSystem.Save(d);
         }
 
@@ -1415,6 +1466,43 @@ namespace BlackholeGame
             cheatMsgUntil = Time.unscaledTime + 2.5f;
             if (state != State.Title) SaveProgress();   // 타이틀(아직 판 없음)에선 저장하지 않는다
             if (sound != null) sound.Play(Sfx.Buy, 0.6f);
+        }
+
+        // round55: 연속 처치 — 쌓일수록 크고 진하게. 숫자가 커지는 걸 눈으로 보게 하는 장치.
+        void DrawCombo()
+        {
+            if (state != State.Playing) return;
+            // 연속 클리어가 붙어 있으면 전투 중에도 보이게 — 지면 잃는다는 걸 알아야 긴장이 생긴다
+            if (winStreak > 0)
+            {
+                var sst = new GUIStyle(sLabel)
+                { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(13f * uiScale), fontStyle = FontStyle.Bold };
+                if (uiFont != null) sst.font = uiFont;
+                sst.normal.textColor = new Color(0.55f, 0.92f, 0.70f, 0.92f);
+                FlatText(sst);
+                GUI.Label(new Rect(0f, Screen.height * 0.115f, Screen.width, 22f * uiScale),
+                          Loc.F("hud.streak", winStreak, Mathf.RoundToInt((StreakMul - 1f) * 100f)), sst);
+            }
+            if (comboCount < 3) return;
+            float k = Mathf.Clamp01(comboLeft / ComboWindow);
+            float grow = Mathf.Clamp01(comboCount / 40f);
+            int fs = Mathf.RoundToInt((26f + 22f * grow) * uiScale);
+            var st = new GUIStyle(sBig)
+            { alignment = TextAnchor.MiddleCenter, fontSize = fs, fontStyle = FontStyle.Bold };
+            if (uiFont != null) st.font = uiFont;
+            // 끝나갈수록 옅어진다 — 콤보가 끊기는 게 보여야 긴장이 생긴다
+            var col = Color.Lerp(new Color(1f, 0.86f, 0.36f), new Color(1f, 0.42f, 0.30f), grow);
+            col.a = 0.35f + 0.65f * k;
+            st.normal.textColor = col;
+            FlatText(st);
+            float y = Screen.height * 0.17f;
+            var r = new Rect(0f, y, Screen.width, fs * 1.6f);
+            // 살짝 커졌다 돌아오는 팝 — 마지막 처치 직후가 가장 크다
+            float pop = 1f + 0.12f * k * k;
+            var m0 = GUI.matrix;
+            GUIUtility.ScaleAroundPivot(new Vector2(pop, pop), new Vector2(Screen.width * 0.5f, y + fs * 0.8f));
+            GUI.Label(r, Loc.F("hud.combo", comboCount), st);
+            GUI.matrix = m0;
         }
 
         void DrawCheatMsg()
@@ -1481,6 +1569,13 @@ namespace BlackholeGame
                 bought.Add(n.id);
                 for (int k = 0; k < lv; k++) n.apply(stats);
             }
+            cultureLv.Clear();
+            foreach (var e in d.cultureLv)
+            {
+                var pp = e.Split(':');
+                if (pp.Length == 2 && int.TryParse(pp[1], out var clv) && clv > 0) cultureLv[pp[0]] = clv;
+            }
+            winStreak = d.winStreak;
             wave.LoadStage(currentStage);
             wave.ApplyAscension(ascensionLevel);
             state = State.Map;
@@ -1874,6 +1969,8 @@ namespace BlackholeGame
             bombTimer = 0f;
             cycleKills = 0;
             cycleGold = 0;
+            cycleElapsed = 0f;
+            comboCount = 0; comboLeft = 0f;
             bossesKilled = 0;
             waveNum = Mathf.Clamp(stats.startWave, 1, Mathf.Max(1, wave.totalWaves - 1));  // 보스 웨이브로는 시작 안 함
             timeLeft = wave.TimeAt(waveNum) + stats.bonusTimeSec;
@@ -1899,6 +1996,8 @@ namespace BlackholeGame
 
         void OnTimeout()
         {
+            winStreak = 0;        // 시간 초과 = 연속 끊김
+            SaveProgress();
             if (sound != null) sound.Play(Sfx.Timeout, 0.8f);
             retryCount++;
             maxScore = Mathf.Max(maxScore, stagesCleared * 100 + waveNum);
@@ -2087,11 +2186,103 @@ namespace BlackholeGame
             bursts.Add(new Burst { tr = go.transform, sr = sr, life = 0.32f, maxLife = 0.32f, r0 = r, col = col });
         }
 
+        // 배양 — 연구원마다 한 주기를 돌릴 때마다 산출만큼 골드가 들어온다.
+        //   타이틀에서는 돌지 않는다(게임을 "하고 있는" 동안만).
+        void UpdateCulture(float dt)
+        {
+            if (state == State.Title) return;
+            float load = MinerLoad;
+            if (load <= 0f) return;
+            int n = MinerCount;
+            float cyc = MinerCycleSec;
+            if (!minerPhaseInit)
+            {
+                minerPhaseInit = true;
+                for (int k = 0; k < MinerMax; k++) minerPhase[k] = k / (float)MinerMax;   // 고르게 흩어서 출발
+            }
+            for (int i = 0; i < n; i++)
+            {
+                // 연구원마다 주기 시작을 흩어 둬서 한꺼번에 몰려 끝나지 않게
+                float before = minerPhase[i];
+                minerPhase[i] = Mathf.Repeat(before + dt / cyc, 1f);
+                if (minerPhase[i] < before)
+                {
+                    cultureGoldAcc += load;                          // 한 주기 = 배양 한 묶음 완성
+                    // 배양 화면을 보고 있을 때만 소리 — 전투 중에 뒤에서 계속 울리면 시끄럽다
+                    if (sound != null && state == State.Tree && treeTab == 2)
+                        sound.Play(Sfx.Pop, 0.22f, Random.Range(1.5f, 1.75f));
+                }
+            }
+            if (cultureGoldAcc >= 1f)
+            {
+                long add = (long)cultureGoldAcc;
+                cultureGoldAcc -= add;
+                gold += add;
+                cycleGold += add;       // 결과 화면의 "이번 싸이클" 에도 반영
+                campaignGold += add;
+            }
+        }
+
+        // 처치·폭발이 부를 화면 흔들림. 세기는 겹칠 때 누적되되 상한이 있다.
+        void Shake(float amp, float dur = 0.18f)
+        {
+            shakeAmp = Mathf.Min(0.42f, shakeAmp + amp);
+            shakeTime = Mathf.Max(shakeTime, dur);
+        }
+
+        void UpdateShake(float dt)
+        {
+            if (cam == null) return;
+            if (shakeTime > 0f)
+            {
+                shakeTime -= dt;
+                shakeAmp = Mathf.MoveTowards(shakeAmp, 0f, dt * 1.6f);
+                float k = Mathf.Max(0f, shakeAmp);
+                // 흔들림은 "떨림"이라 매 프레임 방향이 달라야 한다
+                var off = new Vector3(Random.Range(-k, k), Random.Range(-k, k), 0f);
+                cam.transform.position = new Vector3(off.x, off.y, -10f);
+            }
+            else if (cam.transform.position.x != 0f || cam.transform.position.y != 0f)
+            {
+                shakeAmp = 0f;
+                cam.transform.position = new Vector3(0f, 0f, -10f);
+            }
+        }
+
+        void UpdateCombo(float dt)
+        {
+            if (comboCount <= 0) return;
+            comboLeft -= dt;
+            if (comboLeft <= 0f) comboCount = 0;
+        }
+
+        // 연속 처치 — 끊기기 전에 또 잡으면 쌓이고, 쌓일수록 처치음이 높아진다.
+        void BumpCombo(bool crit)
+        {
+            comboCount++;
+            comboLeft = ComboWindow;
+            if (sound != null)
+            {
+                float pitch = Mathf.Min(2.1f, 0.92f + comboCount * 0.035f) * Random.Range(0.97f, 1.04f);
+                sound.Play(crit ? Sfx.Crit : Sfx.Pop, crit ? 0.62f : 0.5f, pitch);
+            }
+            Shake(crit ? 0.07f : 0.03f, crit ? 0.16f : 0.10f);
+        }
+
         void Update()
         {
             float dt = Time.deltaTime;
             if (dt > 0.1f) dt = 0.1f;
 
+            UpdateCulture(dt);
+            UpdateShake(Time.unscaledDeltaTime);
+            UpdateCombo(dt);
+            // 히트스톱 — 보스를 잡은 순간 아주 짧게 멈춰서 한 방이 묵직하게 느껴지게
+            if (hitStopLeft > 0f)
+            {
+                hitStopLeft -= Time.unscaledDeltaTime;
+                if (hitStopLeft > 0f) return;
+            }
             UpdateCursor();
             UpdateSpecks(dt);
             UpdateBursts(dt);
@@ -2169,6 +2360,7 @@ namespace BlackholeGame
             if (timeLeft <= 0f) { timeLeft = 0f; OnTimeout(); return; }
 
             campaignElapsedSec += dt;   // 승천 사이클 전체 소요 시간(Win 화면 표시용)
+            cycleElapsed += dt;
 
             if (boss != null)
             {
@@ -2380,7 +2572,8 @@ namespace BlackholeGame
             }
 
             bool wasBoss = e == boss;
-            int g = Mathf.RoundToInt(wave.GoldAt(e.spawnWave) * (1f + stats.goldMultPercent / 100f));
+            // round55: 연속 클리어 보너스는 여기서 바로 — 떠오르는 골드 숫자도 보너스가 반영돼야 한다
+            int g = Mathf.RoundToInt(wave.GoldAt(e.spawnWave) * (1f + stats.goldMultPercent / 100f) * StreakMul);
             if (e.elite) g *= EliteGoldMul;   // 변이개체 — 반가운 보너스
             SpawnBurst(e.tr.position, e.baseColor, e.r);
             SpawnSplat(e.tr.position, e.baseColor, e.r);
@@ -2400,7 +2593,10 @@ namespace BlackholeGame
             if (wasBoss)
             {
                 boss = null; bossesKilled++;
-                if (sound != null) sound.Play(Sfx.Win, 1f);
+                winStreak++;
+                hitStopLeft = 0.16f;      // 한 박자 멈춤
+                Shake(0.40f, 0.55f);
+                if (sound != null) sound.Play(Sfx.Win, 1f, Mathf.Min(1.35f, 1f + winStreak * 0.035f));
                 stagesCleared = Mathf.Max(stagesCleared, currentStage + 1);
                 maxScore = Mathf.Max(maxScore, stagesCleared * 100);
                 if (stagesCleared >= 2) everRebirth = true;   // 한 번 열리면 환생해도 메타/환생 버튼은 계속 보임
@@ -2446,7 +2642,7 @@ namespace BlackholeGame
                 }
                 return true;
             }
-            if (sound != null) sound.PlayKill(crit);
+            BumpCombo(crit);   // round55: 처치음 + 콤보 + 잔진동
             // 쿼터를 채워 "실제로 다음 웨이브로 넘어갈 때만" 펄스를 멈춘다.
             //   round43 버그: 보스 웨이브는 쿼터를 채워도 안 넘어가는데(OnWaveClear 가 그냥 return)
             //   여기서 매번 true 를 돌려줘서, 보스 옆 잡몹이 하나 죽을 때마다 그 펄스가 끊겼다.
@@ -2467,6 +2663,7 @@ namespace BlackholeGame
             SpawnBurst(pos, Color.white, rad / 3f);
             SpawnBurst(pos, vc, rad / 4.2f);
             if (sound != null) sound.Play(Sfx.Boss, 0.7f, 1.35f);
+            Shake(0.22f, 0.26f);
             SpawnBombField(pos, rad, Mathf.Max(1f, stats.bombFieldSec));
             return false;
         }
@@ -2905,6 +3102,7 @@ namespace BlackholeGame
         void OnGUI()
         {
             DrawScreens();
+            DrawCombo();
             DrawCheatMsg();
             DrawTransition();   // 눈꺼풀은 항상 맨 위
         }
@@ -4078,6 +4276,195 @@ namespace BlackholeGame
 
         static string TowerLabelKey(int i) => i == 0 ? "n.towerL" : i == 1 ? "n.towerC" : "n.towerR";
 
+        // round55: 커서 / 타워 / 배양 탭 — 트리와 배양 화면이 같이 쓴다.
+        void DrawTreeTabs(Rect area, float tabBarH)
+        {
+            float tw2 = Mathf.Min(150f * uiScale, area.width * 0.3f), th2 = 34f * uiScale, tgap = 8f * uiScale;
+            float tx0 = area.center.x - (tw2 * 3f + tgap * 2f) * 0.5f, ty0 = area.yMin - tabBarH + 4f;
+            var tabSt = Btn(Mathf.RoundToInt(14f * uiScale));
+            for (int i = 0; i < 3; i++)
+            {
+                var r = new Rect(tx0 + i * (tw2 + tgap), ty0, tw2, th2);
+                bool on = treeTab == i;
+                // 배경 없는 글자 스타일 — 몸통은 UiBtn 의 스킨(젤리 버튼)이 그린다.
+                var ts2 = new GUIStyle(GUIStyle.none)
+                {
+                    font = tabSt.font,
+                    fontSize = tabSt.fontSize,
+                    fontStyle = on ? FontStyle.Bold : FontStyle.Normal,
+                    alignment = TextAnchor.MiddleCenter,
+                    wordWrap = false,
+                    clipping = TextClipping.Overflow,
+                };
+                var col = on ? UiSkin.Ink : new Color(0.22f, 0.36f, 0.38f, 0.85f);
+                ts2.normal.textColor = ts2.hover.textColor = ts2.active.textColor = ts2.focused.textColor = col;
+                FlatText(ts2);
+                // 고른 탭은 그대로, 안 고른 탭은 흐리게 — 색만으로 구분한다
+                if (UiBtn(r, Loc.T(i == 0 ? "tree.tabCursor" : i == 1 ? "tree.tabTower" : "tree.tabCulture"), ts2,
+                          on ? Color.white : new Color(0.72f, 0.78f, 0.78f, 0.75f)) && treeTab != i)
+                { treeTab = i; treeZoom = 0f; treePan = Vector2.zero; }
+            }
+        }
+
+        // round56: 연구소 — 연구원들이 책상에 앉아 배양을 돌린다. 연구원이 늘수록 산출이 는다.
+        //   한 주기가 끝날 때마다 책상 위 플라스크가 차올랐다가 비워지고 골드가 들어온다.
+        void DrawCultureField(Rect area)
+        {
+            var gc = GUI.color;
+            var disc = discSprite != null ? discSprite.texture : Texture2D.whiteTexture;
+            int n = MinerCount;
+
+            // 책상을 격자로 — 한 줄에 최대 5석
+            int cols = Mathf.Min(5, Mathf.Max(1, n));
+            int rows = Mathf.CeilToInt(n / (float)cols);
+            float cw = Mathf.Min(area.width / (cols + 1f), 190f * uiScale);
+            float ch = Mathf.Min(area.height / (rows + 1.4f), 150f * uiScale);
+            float gw = cw * cols, gh = ch * rows;
+            float gx = area.center.x - gw * 0.5f, gy = area.center.y - gh * 0.5f;
+
+            for (int i = 0; i < n; i++)
+            {
+                int cx = i % cols, cy = i / cols;
+                float x = gx + cx * cw + cw * 0.5f;
+                float y = gy + cy * ch + ch * 0.5f;
+                float u = Mathf.Clamp01(minerPhase[i]);           // 이번 주기 진행도
+                float s0 = Mathf.Min(cw, ch);
+
+                // 책상
+                float deskW = s0 * 0.62f, deskH = s0 * 0.10f;
+                GUI.color = new Color(0.30f, 0.44f, 0.52f, 0.95f);
+                GUI.DrawTexture(new Rect(x - deskW * 0.5f, y + s0 * 0.14f, deskW, deskH), Texture2D.whiteTexture);
+
+                // 연구원 — 몸통 + 머리. 작업 중엔 아주 살짝 앞뒤로 까딱인다.
+                float bob = Mathf.Sin(u * Mathf.PI * 6f) * s0 * 0.012f;
+                float bodyW = s0 * 0.26f, bodyH = s0 * 0.22f;
+                GUI.color = new Color(0.78f, 0.90f, 0.95f, 1f);
+                GUI.DrawTexture(new Rect(x - bodyW * 0.5f, y - s0 * 0.02f + bob, bodyW, bodyH), disc);
+                float headR = s0 * 0.13f;
+                GUI.color = new Color(0.88f, 0.95f, 0.99f, 1f);
+                GUI.DrawTexture(new Rect(x - headR, y - s0 * 0.20f + bob, headR * 2f, headR * 2f), disc);
+
+                // 책상 위 플라스크 — 주기만큼 차오른다
+                float fw = s0 * 0.16f, fh = s0 * 0.20f;
+                float fx = x + deskW * 0.26f, fy = y + s0 * 0.14f - fh;
+                GUI.color = new Color(0.24f, 0.36f, 0.42f, 0.55f);
+                GUI.DrawTexture(new Rect(fx, fy, fw, fh), Texture2D.whiteTexture);
+                float lvl = fh * u;
+                GUI.color = new Color(0.42f, 0.90f, 0.62f, 0.95f);
+                GUI.DrawTexture(new Rect(fx, fy + fh - lvl, fw, lvl), Texture2D.whiteTexture);
+
+                // 막 비워진 직후엔 위로 작은 빛이 뜬다 — 돈이 들어온 신호
+                if (u < 0.12f)
+                {
+                    float a = 1f - u / 0.12f;
+                    float ps = s0 * 0.12f * (0.6f + a * 0.6f);
+                    GUI.color = new Color(1f, 0.88f, 0.42f, a * 0.9f);
+                    GUI.DrawTexture(new Rect(fx + fw * 0.5f - ps * 0.5f, fy - ps * (0.4f + a), ps, ps), disc);
+                }
+            }
+            GUI.color = gc;
+        }
+
+        // 배양 강화 — 영구 강화와 같은 자리(우측 하단). 운반체 수 / 적재량 / 이동 속도.
+        void DrawCulturePanel(Rect statRect)
+        {
+            float pad = 12f * uiScale, head = 26f * uiScale, rowH = 54f * uiScale;
+            float w = statRect.width, x = statRect.x;
+            float headAll = head * 2.1f;
+            float h = pad + headAll + rowH * 3f + pad;
+            float bottom = Screen.height - 118f * uiScale - 12f;
+            float top = statRect.yMax + 10f * uiScale;
+            if (h > bottom - top)
+            {
+                rowH = Mathf.Max(34f * uiScale, (bottom - top - pad * 2f - headAll) / 3f);
+                h = pad + headAll + rowH * 3f + pad;
+            }
+            float rowK = Mathf.Clamp(rowH / (54f * uiScale), 0.62f, 1f);
+            float y = bottom - h;
+            if (!DrawSkinPanel(new Rect(x, y, w, h), true))
+            {
+                var gcP = GUI.color;
+                GUI.color = new Color(0.13f, 0.14f, 0.17f, 0.95f);
+                GUI.DrawTexture(new Rect(x, y, w, h), Texture2D.whiteTexture);
+                GUI.color = gcP;
+            }
+
+            var hd = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleLeft, fontSize = Mathf.RoundToInt(15f * uiScale),
+                fontStyle = FontStyle.Bold, normal = { textColor = Gold } };
+            FlatText(hd);
+            GUI.Label(new Rect(x + pad, y + pad * 0.6f, w - pad * 2f, head), Loc.T("tree.cultureTitle"), hd);
+
+            // 지금 초당 얼마가 들어오는지 — 이게 없으면 뭘 올려야 할지 알 수 없다
+            var rate = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleLeft, fontSize = Mathf.RoundToInt(12f * uiScale),
+                normal = { textColor = new Color(0.55f, 0.88f, 0.70f) } };
+            FlatText(rate);
+            GUI.Label(new Rect(x + pad, y + pad * 0.6f + head, w - pad * 2f, head),
+                      Loc.F("tree.cultureRate", CultureGoldPerSec.ToString("N0")), rate);
+
+            var ns = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleLeft,
+                fontSize = Mathf.Max(9, Mathf.RoundToInt(12f * uiScale * rowK)), normal = { textColor = Ink } };
+            FlatText(ns);
+            var es = new GUIStyle(ns) { fontSize = Mathf.Max(8, Mathf.RoundToInt(11f * uiScale * rowK)) };
+            es.normal.textColor = new Color(0.55f, 0.88f, 0.70f); FlatText(es);
+            var ss = new GUIStyle(ns) { fontSize = Mathf.Max(8, Mathf.RoundToInt(10f * uiScale * rowK)) };
+            ss.normal.textColor = new Color(0.72f, 0.74f, 0.78f); FlatText(ss);
+            var bst = Btn(Mathf.RoundToInt(11f * uiScale));
+
+            string[] icons = { "cells", "coin", "bolt" };
+            float rowY = y + pad + headAll;
+            for (int i = 0; i < 3; i++)
+            {
+                int lv = CultureLv(i);
+                bool maxed = lv >= CultureMaxLv[i];
+                long cost = CultureCost(i);
+                float iconSz = Mathf.Min(rowH - 8f * uiScale, 26f * uiScale);
+                var ir = new Rect(x + pad, rowY + (rowH - iconSz) * 0.5f, iconSz, iconSz);
+                var tex = (iconTex != null && iconTex.TryGetValue(icons[i], out var it)) ? it : null;
+                var gc0 = GUI.color;
+                if (tex != null)
+                {
+                    GUI.color = maxed ? new Color(1f, 1f, 1f, 0.32f) : new Color(1f, 0.86f, 0.42f);
+                    GUI.DrawTexture(ir, tex, ScaleMode.ScaleToFit);
+                }
+                GUI.color = gc0;
+
+                float tx = ir.xMax + 6f * uiScale;
+                float btnW = Mathf.Min(64f * uiScale, w * 0.26f), btnH2 = Mathf.Min(24f * uiScale, rowH * 0.5f);
+                float nameW = Mathf.Max(30f, w - pad * 2f - (ir.width + 6f * uiScale) - btnW - 6f * uiScale);
+                string nameTxt = Loc.T("n.culture" + i);
+                string effTxt  = i == 0 ? Loc.F("cu.workers", MinerCount.ToString(), MinerMax.ToString())
+                               : i == 1 ? Loc.F("cu.load", MinerLoad.ToString("N0"))
+                                        : Loc.F("cu.speed", MinerCycleSec.ToString("0.0"));
+                string subTxt  = maxed ? Loc.T("tree.repMaxShort") : "Lv " + lv + " · $" + cost.ToString("N0");
+                float h1 = ns.CalcHeight(new GUIContent(nameTxt), nameW);
+                float h2 = es.CalcHeight(new GUIContent(effTxt), nameW);
+                float h3 = ss.CalcHeight(new GUIContent(subTxt), nameW);
+                float ty = rowY + Mathf.Max(0f, rowH - (h1 + h2 + h3)) * 0.5f;
+                GUI.Label(new Rect(tx, ty, nameW, h1), nameTxt, ns);
+                GUI.Label(new Rect(tx, ty + h1, nameW, h2), effTxt, es);
+                GUI.Label(new Rect(tx, ty + h1 + h2, nameW, h3), subTxt, ss);
+
+                if (!maxed)
+                {
+                    var br = new Rect(x + w - pad - btnW, rowY + (rowH - btnH2) * 0.5f, btnW, btnH2);
+                    bool prev = GUI.enabled;
+                    GUI.enabled = gold >= cost && transDir == 0;
+                    var bs2 = new GUIStyle(bst);
+                    bs2.normal.textColor = bs2.hover.textColor = bs2.active.textColor = bs2.focused.textColor = UiSkin.Ink;
+                    FlatText(bs2);
+                    if (UiBtn(br, Loc.T("cu.buy"), bs2))
+                    {
+                        gold -= cost;
+                        cultureLv[CultureKey[i]] = lv + 1;
+                        if (sound != null) sound.Play(Sfx.Buy, 0.75f);
+                        SaveProgress();
+                    }
+                    GUI.enabled = prev;
+                }
+                rowY += rowH;
+            }
+        }
+
         void DrawRepeatPanel(Rect statRect)
         {
             if (nodes == null) return;
@@ -4359,6 +4746,18 @@ namespace BlackholeGame
             }
             else treePan = new Vector2(0f, Mathf.Clamp(treePan.y, 0f, maxPan));
 
+            // round55: 배양 탭은 노드 트리가 아니라 채취장 화면이다.
+            if (treeTab == 2)
+            {
+                DrawCultureField(area);
+                GUI.color = c0;
+                DrawTreeTabs(area, tabBarH);
+                DrawStatPanel(statRect, null);
+                DrawCulturePanel(statRect);
+                DrawTreeBottomBar(barH);
+                return;
+            }
+
             // 트리는 GUI.matrix 로 확대·이동한다. BeginGroup 으로 영역을 자르려 해도 클립 사각형이
             //   그 변환을 같이 받아 화면 밖으로 밀려나므로(=트리가 통째로 사라진다) 쓰지 않는다.
             //   영역 밖으로 삐져나가는 연결선은 하단 바의 불투명 바닥이 가린다.
@@ -4435,38 +4834,12 @@ namespace BlackholeGame
 
             GUI.matrix = saved;
 
-            // round47: 커서 / 타워 탭 — 트리 영역 상단 가운데
-            {
-                float tw2 = Mathf.Min(150f * uiScale, area.width * 0.3f), th2 = 34f * uiScale, tgap = 8f * uiScale;
-                float tx0 = area.center.x - (tw2 * 2f + tgap) * 0.5f, ty0 = area.yMin - tabBarH + 4f;
-                var tabSt = Btn(Mathf.RoundToInt(14f * uiScale));
-                for (int i = 0; i < 2; i++)
-                {
-                    var r = new Rect(tx0 + i * (tw2 + tgap), ty0, tw2, th2);
-                    bool on = treeTab == i;
-                    // 배경 없는 글자 스타일 — 몸통은 UiBtn 의 스킨(젤리 버튼)이 그린다.
-                    var ts2 = new GUIStyle(GUIStyle.none)
-                    {
-                        font = tabSt.font,
-                        fontSize = tabSt.fontSize,
-                        fontStyle = on ? FontStyle.Bold : FontStyle.Normal,
-                        alignment = TextAnchor.MiddleCenter,
-                        wordWrap = false,
-                        clipping = TextClipping.Overflow,
-                    };
-                    var col = on ? UiSkin.Ink : new Color(0.22f, 0.36f, 0.38f, 0.85f);
-                    ts2.normal.textColor = ts2.hover.textColor = ts2.active.textColor = ts2.focused.textColor = col;
-                    FlatText(ts2);
-                    // 고른 탭은 그대로, 안 고른 탭은 흐리게 — 색만으로 구분한다
-                    if (UiBtn(r, Loc.T(i == 0 ? "tree.tabCursor" : "tree.tabTower"), ts2,
-                              on ? Color.white : new Color(0.72f, 0.78f, 0.78f, 0.75f)) && treeTab != i)
-                    { treeTab = i; treeZoom = 0f; treePan = Vector2.zero; }
-                }
-            }
+            DrawTreeTabs(area, tabBarH);
 
             DrawStatPanel(statRect, hovered);
             if (treeTab == 0) DrawRepeatPanel(statRect);
-            else DrawPatternPanel(statRect);
+            else if (treeTab == 1) DrawPatternPanel(statRect);
+            else DrawCulturePanel(statRect);
 
             // 마우스 오버 툴팁 (스크린 좌표)
             if (hovered != null)
@@ -4508,6 +4881,12 @@ namespace BlackholeGame
                 GUI.Label(new Rect(tr.x + padX, tr.y + padTop + topH + gapMid, innerW, statusH), status, tsY);
             }
 
+            DrawTreeBottomBar(barH);
+        }
+
+        // round55: 트리·배양 탭이 같이 쓰는 하단 바(보유 골드 · 도움말 · 이동 버튼)
+        void DrawTreeBottomBar(float barH)
+        {
             // 고정 하단 바 — 화면 맨 아래에 그룹으로 고정(게임뷰가 살짝 잘려도 버튼이 안쪽에 오도록 여유 확보)
             // barH 는 위에서 이미 계산됨
             // 버튼 3개(화면리셋/재도전/지도로) — 좁고 긴 창에서도 안 밀리게 폭을 화면비로도 제한
