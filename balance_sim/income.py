@@ -1,88 +1,58 @@
+# -*- coding: utf-8 -*-
 """
-Income-vs-build-depth curve.
+지역별 한 판 수입 — 전투를 돌리지 않고 데이터만으로 계산한다.
 
-The "cheapest first" policy buys whole depth rings (9 nodes of equal cost) in order,
-so the build is fully described by the ring depth d.  Measure G(d) = gold per run at
-depth d, then the runs needed to buy ring d+1 is  9*C(d+1) / G(d).
-That turns balancing into arithmetic instead of guesswork.
+  tune42.py 는 프레임 단위로 전투를 돌려서 메모리를 많이 먹는다(numpy + 프로세스 3개).
+  "이 지역을 한 판 깨면 얼마가 들어오나"만 알고 싶을 때는 그럴 필요가 없다 —
+  웨이브마다 처치 할당량 x 처치당 골드를 합치면 된다. 순수 파이썬, 메모리 거의 0.
+
+  주의: '전 웨이브를 다 깬다'는 가정이라 실제보다 후하다. 중간에 시간 초과로 끝나는
+  판이 섞이므로, 실측 평균은 여기서 나온 값의 60~80% 쯤으로 보면 된다.
+
+  사용법: python income.py
 """
-from sim import Stats, run_once
-from tree import build
-from prog import AIM, GOLD_FIX
+import gamedata as G
+
+GOLD_MULT = G.GOLD_OUTSIDE_SIM   # 연속 클리어·콤보·배양·정수까지 포함한 어림 배수
 
 
-def stats_at_depth(cfg, d):
-    """All nodes with j < d bought, in every chain (+ root)."""
-    s = Stats()
-    for n in build(cfg):
-        if n.chain == "root" or n.j < d:
-            n.apply(s)
-    if not cfg.goldMultApplies:
-        s.goldMultPercent = 0.0
-    return s
+def gold_at(stage, w):
+    n = len(G.GOLD_CURVE)
+    g = G.GOLD_CURVE[w - 1] if w <= n else G.GOLD_CURVE[-1] * (1.10 ** (w - n))
+    return max(1, round(g * G.GOLDRATE[stage]))
 
 
-def income_curve(cfg, seeds=4, dt=1 / 60.0):
-    """-> list of dicts per depth 0..chain"""
-    w = cfg.wavecfg()
-    out = []
-    for d in range(cfg.chain + 1):
-        s = stats_at_depth(cfg, d)
-        gs, ks, wv, won, el = [], [], [], 0, []
-        for i in range(seeds):
-            r = run_once(s, w, seed=1000 + d * 17 + i, dt=dt, **AIM)
-            gs.append(r["gold"] * GOLD_FIX); ks.append(r["kills"])
-            wv.append(r["wave"]); won += r["won"]; el.append(r["elapsed"])
-        out.append(dict(
-            d=d, gold=sum(gs) / seeds, kills=sum(ks) / seeds, wave=sum(wv) / seeds,
-            won=won / seeds, elapsed=sum(el) / seeds,
-            run_len=cfg.baseTimeLimit + s.bonusTimeSec,
-            hit=s.hit(), R=s.cursorRadius, atk=s.attackInterval, startWave=s.startWave,
-        ))
-    return out
+def run_income(stage):
+    """한 판(1웨이브 ~ 보스)을 다 깼을 때의 골드와, 제한시간 합."""
+    waves = G.WAVES[stage]
+    quota0 = G.QUOTA0[stage]
+    total = 0
+    for w in range(1, waves + 1):
+        kills = quota0 + (w - 1) * 2
+        total += kills * gold_at(stage, w)
+    secs = G.TLIM[stage] * waves      # 웨이브마다 제한시간이 다시 찬다
+    return total * GOLD_MULT, secs
 
 
-def project(cfg, curve, shop=15.0, cap_runs=400):
-    """Estimate total runs/minutes from the income curve + cost ladder."""
-    total_runs = 0.0
-    total_sec = 0.0
-    bank = 0.0
-    rows = []
-    for d in range(1, cfg.chain + 1):
-        need = 9 * cfg.cost(d)
-        g = curve[d - 1]["gold"]
-        if g <= 0:
-            return None
-        runs = 0.0
-        while bank < need and runs < cap_runs:
-            bank += g
-            runs += 1
-            total_sec += curve[d - 1]["elapsed"] + shop
-        bank -= need
-        total_runs += runs
-        rows.append(dict(d=d, cost1=cfg.cost(d), ring=need, income=g, runs=runs,
-                         cum_min=total_sec / 60.0, wave=curve[d - 1]["wave"],
-                         won=curve[d]["won"] if d < len(curve) else 0))
-        if curve[d]["won"] >= 0.75:      # boss reliably dies at this depth -> game over
-            break
-    return dict(runs=total_runs, minutes=total_sec / 60.0, rows=rows)
+def main():
+    print("지역별 한 판 수입 (전 웨이브 클리어 가정, 외부 배수 x%.2f 포함)" % GOLD_MULT)
+    print()
+    print("%-6s %12s %7s %14s %14s %16s" % ("지역", "한 판 골드", "최대 초", "골드/분", "골드/초", "티어 노드 가격"))
+    for i in range(8):
+        g, secs = run_income(i)
+        tier_cost = G.TIER_COST[i] if i < len(G.TIER_COST) else 0
+        print("%-6s %12.3g %7d %14.3g %14.3g %16.3g"
+              % ("S%d" % (i + 1), g, secs, g / (secs / 60.0), g / secs, tier_cost))
+    print()
+    print("※ 티어 노드 가격 = 그 티어 노드 1개 값(UpgradeTree.TierCost).")
+    print("   한 판에 그 티어 노드를 몇 개 살 수 있는지가 곧 체감 속도다.")
+    print()
+    print("%-6s %18s" % ("지역", "한 판 = 티어노드 n개"))
+    for i in range(8):
+        g, _ = run_income(i)
+        tc = G.TIER_COST[i] if i < len(G.TIER_COST) else 0
+        print("%-6s %18.2f" % ("S%d" % (i + 1), g / tc if tc else 0))
 
 
-def show(cfg, name=""):
-    c = income_curve(cfg)
-    print(f"\n===== income curve: {name} =====")
-    print(f"{'d':>3} {'hit':>8} {'R':>5} {'atk':>6} {'sw':>3} {'run':>4} "
-          f"{'wave':>5} {'kills':>6} {'gold/run':>11} {'x prev':>6} {'won':>4}")
-    for i, r in enumerate(c):
-        x = c[i]["gold"] / c[i - 1]["gold"] if i and c[i - 1]["gold"] > 0 else 0
-        print(f"{r['d']:3d} {r['hit']:8,.0f} {r['R']:5.2f} {r['atk']:6.3f} "
-              f"{r['startWave']:3d} {r['run_len']:4.0f} {r['wave']:5.1f} {r['kills']:6.0f} "
-              f"{r['gold']:11,.0f} {x:6.2f} {r['won']:4.0%}")
-    p = project(cfg, c)
-    if p:
-        print(f"\n{'d':>3} {'node$':>10} {'ring$':>11} {'income':>11} {'runs':>6} {'cum min':>8}")
-        for r in p["rows"]:
-            print(f"{r['d']:3d} {r['cost1']:10,d} {r['ring']:11,d} {r['income']:11,.0f} "
-                  f"{r['runs']:6.1f} {r['cum_min']:8.1f}")
-        print(f"  => projected {p['runs']:.0f} runs, {p['minutes']:.1f} min")
-    return c, p
+if __name__ == "__main__":
+    main()

@@ -78,10 +78,10 @@ namespace BlackholeGame
         // ---- 반복 강화 1회당 수치·가격 (같은 값으로 같은 양) ----
         // 1회 수치는 작게 — 여러 번(수십~수백 레벨) 사게 해서 +1/+10/최대 버튼이 의미 있게
         public const float RepFlat = 10f, RepMult = 1f, RepAps = 0.05f, RepRange = 0.01f, RepCritX = 0.02f, RepGold = 1f;
-        public static readonly long[] RepCost = { 7000000, 7000000, 7000000, 7000000, 7000000, 7000000 };   // flat, mult, speed, range, critx, gold
+        public static readonly long[] RepCost = { 11000000, 11000000, 11000000, 11000000, 11000000, 11000000 };   // flat, mult, speed, range, critx, gold
 
         // tier별 노드 비용 — balance_sim(tune42)으로 맞춘다.
-        static readonly long[] TierCost = { 24, 6268, 136418, 809270, 9640207, 93542245, 994746785, 17987095160 };
+        static readonly long[] TierCost = { 40, 12854, 317045, 2655247, 34265731, 217398725, 2039877494, 15737700588 };
         public static long Cost(int tier) =>
             tier >= 0 && tier < TierCost.Length ? TierCost[tier]
             : (long)System.Math.Round(TierCost[TierCost.Length - 1] * System.Math.Pow(2.6, tier - TierCost.Length + 1));

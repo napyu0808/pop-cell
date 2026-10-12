@@ -14,7 +14,7 @@ NODE_TIERS = 8          # round45: 일반 노드는 티어 0~7 (지역마다 새
 REPEAT_TIER = 7         # 반복 강화는 마지막 티어
 
 FLAT_BY_TIER = [20, 24, 30, 50, 88, 156, 290, 560]
-TIER_COST    = [24, 6268, 136418, 809270, 9640207, 93542245, 994746785, 17987095160]
+TIER_COST    = [40, 12854, 317045, 2655247, 34265731, 217398725, 2039877494, 15737700588]
 
 ROOT_FLAT    = 8.0
 MULT_PP, MULT_CAP        = 21.0, 300.0
@@ -51,7 +51,7 @@ PAT_SHOT, PAT_BURST, PAT_FLAME, PAT_LASER, PAT_SNIPER = 0, 1, 2, 3, 4
 # 반복 강화 1회당 (UpgradeTree.Rep*) — 가격은 flat, mult, speed, range, critx, gold 순
 REP_FLAT, REP_MULT, REP_APS, REP_RANGE, REP_CRITX, REP_GOLD = 10.0, 1.0, 0.05, 0.01, 0.02, 1.0
 REP_INTERVAL_FLOOR, REP_RANGE_MAX = 0.035, 5.0
-REP_COST = [7000000, 7000000, 7000000, 7000000, 7000000, 7000000]
+REP_COST = [11000000, 11000000, 11000000, 11000000, 11000000, 11000000]
 
 # 가지 정의 (타입, 길이, 시작 티어) — UpgradeTree.L* 와 같은 값
 LANES = {
@@ -99,6 +99,33 @@ GOLD_OUTSIDE_SIM = 1.50
 # round57 판수(2.8시간 기준 7/6/9/16/39/56/96/23)로 어림하면 후반 실화력 +5~10%,
 # 초반(S1~S3)은 체감이 훨씬 크다. 플레이타임은 2.8 -> 2.5시간 안팎으로 내려갈 전망.
 DAMAGE_OUTSIDE_SIM = 1.08
+
+# ---- 배양 연구소(GameManager) 미러 -----------------------------------------
+CU_MINER_MAX   = 10
+CU_CYCLE_BASE  = 4.0
+CU_CYCLE_STEP  = 0.15
+CU_CYCLE_MIN   = 1.1
+CU_LOAD_BASE   = 10.0
+CU_LOAD_MUL    = 1.55
+CU_COST0       = [8800.0, 2200.0, 11000.0]  # 연구원 / 산출 / 속도
+CU_COST_MUL    = [5.0, 1.75, 2.0]
+CU_MAX_LV      = [CU_MINER_MAX - 1, 25, 22]
+
+
+def cu_income(lv):
+    """초당 골드. lv = (연구원, 산출, 속도) 레벨."""
+    workers = 1 + lv[0]
+    cycle = max(CU_CYCLE_MIN, CU_CYCLE_BASE - CU_CYCLE_STEP * lv[2])
+    load = CU_LOAD_BASE * CU_LOAD_MUL ** lv[1]
+    return workers / cycle * load
+
+
+def cu_cost(track, lv):
+    return CU_COST0[track] * CU_COST_MUL[track] ** lv
+
+
+# 연속 클리어(최대 +48%) + 콤보(최대 +20%) 를 합친 어림 배수. 둘 다 자주 끊겨서 실효는 이 정도.
+STREAK_COMBO = 1.45
 
 GOLD_CURVE = [
     1, 2, 5, 10, 12, 15, 20,
@@ -367,7 +394,7 @@ def wave_cfg(stage, asc=0):
 # GameManager 가 살아있는 Play 모드에서 UpgradeTree.BuildAll() 로 뽑은 값 (round38).
 EXPECTED_DPS = [256, 894, 2286, 6642, 23705, 65041, 220748, 578355]
 EXPECTED_HIT = [111, 232, 420, 706, 1335, 2562, 5050, 9748]
-EXPECTED_TOTAL_COST = 326_986_234_586  # 일반 노드만(반복 제외) — round54 보스 특화 9칸 + 해금 1,000
+EXPECTED_TOTAL_COST = 355_988_393_659  # 일반 노드만(반복 제외) — round57 가격 재조정(에디터 실측과 대조 완료)
 EXPECTED_NODES = 332   # 루트+커서 155 + 타워 171 + 반복 6
 
 

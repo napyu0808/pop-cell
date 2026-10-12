@@ -10,7 +10,8 @@ namespace BlackholeGame
     //   통째로 날아간다. 깊게 파려면 그 지역을 제곱으로 돌아야 하니 그 길이 막힌다.
     public static class Essence
     {
-        public const int Count = 8;
+        //   8지역은 깨는 순간 승천이라 거기서 받은 정수를 쓸 기회가 없다 — 그래서 7지역까지만 떨어진다.
+        public const int Count = 7;
         public const int MaxLv = 20;
 
         // 레벨 lv -> lv+1 로 올리는 비용(정수 개수). L레벨까지 누적 L(L+1)/2 개.
@@ -20,12 +21,11 @@ namespace BlackholeGame
         public static readonly float[] PerLv = {
             100f,   // 1 실험실     — 고정 공격력
             1f,     // 2 정착지     — 공격 속도 %
-            0.5f,   // 3 도심       — 치명타 확률 %
+            250f,   // 3 도심       — 타워 고정 공격력
             2f,     // 4 수로망     — 골드 획득 %
-            1.5f,   // 5 항만       — 커서 범위 %
-            250f,   // 6 산림       — 타워 고정 공격력
+            1f,     // 5 항만       — 모든 피해 %
+            1.5f,   // 6 산림       — 커서 범위 %
             1.5f,   // 7 설원       — 보스 피해 %
-            1f,     // 8 근원       — 모든 피해 %
         };
 
         public static float ValueAt(int region, int lv) => PerLv[region] * lv;

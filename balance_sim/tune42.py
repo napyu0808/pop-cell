@@ -18,7 +18,11 @@ import mutation_calc as M
 from sim import run_once
 from prog import AIM, GOLD_FIX
 
-SEEDS = [0, 1, 2]
+CU_PAYBACK_SEC = 3600.0   # 한 시간 안에 본전을 뽑으면 남는 돈으로 배양을 산다
+
+import os as _os
+# 메모리가 빠듯한 기계에서는 PC_SEEDS=1 로 시드를 줄여 돌린다(프로세스 수 = 시드 수).
+SEEDS = list(range(int(_os.environ.get("PC_SEEDS", "3"))))
 OLD_GOLDRATE = [1.00, 0.70, 0.82, 0.95, 1.05, 1.15, 1.30, 1.55]   # round43 까지의 지역 골드 배율
 
 
@@ -78,15 +82,43 @@ def play(seed, max_runs=400):
     bought = {"root"}; lane_cnt = {}; rep_lv = {}
     s = G.new_stats(); s.flatBonus += G.ROOT_FLAT
     gold = 0
+    cu = [0, 0, 0]          # 배양 레벨 (연구원, 산출, 속도)
+    cu_spent = 0.0          # 배양에 넣은 누적 골드 — 보고용
     mins, runs_l, prof, gpm_first, gpm_last, boss_sec = [], [], [], [], [], []
+    cu_hist = []
+    cu_earned = 0.0
+
+    def cu_tick(sec):
+        """판·상점에서 흐른 시간만큼 배양 수입을 넣는다(타이틀 빼고 늘 돈다)."""
+        nonlocal gold, cu_earned
+        got = G.cu_income(cu) * sec
+        gold += got
+        cu_earned += got
+
+    def cu_best():
+        """회수 기간이 가장 짧은 배양 강화. (회수초, 트랙, 비용) 또는 None."""
+        best = None
+        for t in range(3):
+            if cu[t] >= G.CU_MAX_LV[t]:
+                continue
+            c = G.cu_cost(t, cu[t])
+            nxt = list(cu); nxt[t] += 1
+            gain = G.cu_income(nxt) - G.cu_income(cu)
+            if gain <= 0:
+                continue
+            payback = c / gain
+            if best is None or payback < best[0]:
+                best = (payback, t, c)
+        return best
     for stage in range(8):
         w = G.wave_cfg(stage, asc=0)
         secs, runs, won = 0.0, 0, False
         hist = []   # (골드, 초) 판별
         while runs < max_runs:
             r = run_once(s, w, seed=seed * 99991 + stage * 61 + runs * 11, dt=M.DT, **AIM)
-            g = round(r["gold"] * GOLD_FIX)
+            g = round(r["gold"] * GOLD_FIX * G.STREAK_COMBO)
             gold += g
+            cu_tick(r["elapsed"])          # 싸우는 동안에도 배양은 돈다
             hist.append((g, r["elapsed"] + M.SHOP))
             secs += r["elapsed"]; runs += 1
             if r["won"]:
@@ -94,6 +126,7 @@ def play(seed, max_runs=400):
                 boss_sec.append(r.get("boss_sec", 0.0))
                 break
             secs += M.SHOP
+            cu_tick(M.SHOP)
             while True:
                 # 사람처럼: 살 수 있는 일반 노드가 있으면 그것부터(싼 것 → 덜 찍은 가지 순).
                 # 없으면 반복 강화를 레벨이 낮은 것부터 고르게 — 상한에 닿은 것(공속·범위)은 제외.
@@ -102,6 +135,12 @@ def play(seed, max_runs=400):
                 if cand:
                     p = min(cand, key=lambda n: (n.cost, lane_cnt.get(n.lane, 0), M.LANE_PRIO.get(n.lane, 99), n.id))
                 else:
+                    # 진행용 노드를 다 샀으면 남는 돈은 수입(배양)과 반복 강화로. 배양이
+                    # 회수가 빠르면 그쪽을 먼저 — 다만 노드보다 앞서지는 않는다.
+                    cb = cu_best()
+                    if cb is not None and cb[2] <= gold and cb[0] <= CU_PAYBACK_SEC:
+                        gold -= cb[2]; cu_spent += cb[2]; cu[cb[1]] += 1
+                        continue
                     cand = [n for n in nodes if n.repeat and n.parent in bought and n.tier < stage + 1
                             and n.cost <= gold and not rep_capped(n, s)]
                     if not cand:
@@ -112,14 +151,15 @@ def play(seed, max_runs=400):
                     rep_lv[p.id] = rep_lv.get(p.id, 0) + 1
                 p.apply(s)
         mins.append(secs / 60.0); runs_l.append(runs)
+        cu_hist.append((list(cu), G.cu_income(cu), cu_earned, cu_spent))
         tt = [n for n in nodes if n.type is not None and not n.repeat and n.tier == stage]
         prof.append(sum(1 for n in tt if n.id in bought) / max(1, len(tt)) if tt else float("nan"))
         f = hist[:3]; l = hist[-3:]
         gpm_first.append(sum(g for g, _ in f) / max(1e-9, sum(t for _, t in f)) * 60)
         gpm_last.append(sum(g for g, _ in l) / max(1e-9, sum(t for _, t in l)) * 60)
         if not won:
-            return mins, runs_l, prof, gpm_first, gpm_last, rep_lv, stage
-    return mins, runs_l, prof, gpm_first, gpm_last, rep_lv, None
+            return mins, runs_l, prof, gpm_first, gpm_last, rep_lv, stage, cu_hist
+    return mins, runs_l, prof, gpm_first, gpm_last, rep_lv, None, cu_hist
 
 
 def _one(args):
@@ -138,14 +178,30 @@ def main():
     print("GOLDRATE  =", G.GOLDRATE)
     n = min(len(r[0]) for r in res)
     mean = lambda i, j: statistics.mean(r[i][j] for r in res)
-    print("지역           " + "".join("%9s" % ("S%d" % (j + 1)) for j in range(n)))
-    print("분(시뮬)       " + "".join("%9.1f" % mean(0, j) for j in range(n)))
-    print("판수           " + "".join("%9.0f" % mean(1, j) for j in range(n)))
-    print("해당티어 구매  " + "".join(("%8.0f%%" % (mean(2, j) * 100)) if j < G.NODE_TIERS else "        -" for j in range(n)))
-    print("골드/분 첫3판  " + "".join("%9.0f" % mean(3, j) for j in range(n)))
-    print("골드/분 끝3판  " + "".join("%9.0f" % mean(4, j) for j in range(n)))
+    def money(v):
+        # 1e6 넘으면 자릿수를 세는 게 불가능해진다 — 지수로 적고 칸을 띄운다
+        return ("%11.0f" % v) if v < 1e6 else ("%11.3g" % v)
+
+    print("지역         " + "".join("%11s" % ("S%d" % (j + 1)) for j in range(n)))
+    print("분(시뮬)     " + "".join("%11.1f" % mean(0, j) for j in range(n)))
+    print("판수         " + "".join("%11.0f" % mean(1, j) for j in range(n)))
+    print("해당티어 구매" + "".join(("%10.0f%%" % (mean(2, j) * 100)) if j < G.NODE_TIERS else "          -" for j in range(n)))
+    print("골드/분 첫3판" + "".join(money(mean(3, j)) for j in range(n)))
+    print("골드/분 끝3판" + "".join(money(mean(4, j)) for j in range(n)))
+    print("골드/초 끝3판" + "".join(money(mean(4, j) / 60.0) for j in range(n)))
     print("올라간 직후 배율 " + "".join("%8.2fx" % (mean(3, j) / max(1e-9, mean(4, j - 1))) if j > 0 else "        -" for j in range(n))
           + "   (지역 k 첫 3판 골드/분 ÷ 지역 k-1 마지막 3판)")
+    # 배양: 지역을 끝낸 시점의 레벨과 초당 수입, 그리고 그동안 배양이 번 돈
+    cu_inc = lambda j: statistics.mean(r[7][j][1] for r in res if j < len(r[7]))
+    cu_lv = lambda j: [round(statistics.mean(r[7][j][0][t] for r in res if j < len(r[7]))) for t in range(3)]
+    print("배양 초당     " + "".join(money(cu_inc(j)) for j in range(n)))
+    print("배양 레벨     " + "".join("%11s" % ("/".join(str(v) for v in cu_lv(j))) for j in range(n)))
+    cu_share = []
+    for j in range(n):
+        combat = mean(4, j) / 60.0
+        cu_share.append(cu_inc(j) / max(1e-9, combat + cu_inc(j)) * 100)
+    print("배양 비중(%)  " + "".join("%10.0f%%" % v for v in cu_share) + "   (배양 ÷ (전투+배양) 초당)")
+
     rl = {}
     for r in res:
         for k, v in r[5].items():
