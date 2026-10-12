@@ -31,7 +31,7 @@ namespace BlackholeGame
 
         long gold;   // round44: 지역별 골드가 체력만큼 커져서(8지역 킬당 ~1만) int(21억)로는 넘칠 수 있다
         int waveNum = 1, kills, quota;
-        int cycleKills; long cycleGold; float cycleElapsed;   // round55: 이번 판 경과(배양 적재 기준)
+        int cycleKills; long cycleGold;                       // 결과 화면에 쓰는 '이번 판' 집계
 
         // ---- 타격감(round55) ------------------------------------------------------
         //   숫자만 커지고 손맛이 없다는 지적 — 처치할 때 화면이 흔들리고, 보스를 잡을 땐
@@ -40,11 +40,50 @@ namespace BlackholeGame
         float hitStopLeft;              // 히트스톱 남은 시간(실시간 기준)
         int comboCount; float comboLeft;
         const float ComboWindow = 1.6f; // 이 안에 다음 처치가 없으면 콤보가 끊긴다
+        //   round57: 콤보가 숫자 장식으로만 있었다 — 이어 붙이면 골드가 붙게 해서
+        //   "끊기면 아깝다" 가 되게 한다. 40연속에서 +20% 로 상한.
+        const float ComboBonusPer = 0.005f;
+        const int ComboBonusMax = 40;
+        float ComboMul => 1f + ComboBonusPer * Mathf.Min(comboCount, ComboBonusMax);
 
         // ---- 연속 클리어(round55) -------------------------------------------------
         //   실패해도 골드를 그대로 챙기니 한 판 한 판이 "도전"이 아니라 "정산"이었다.
         //   클리어를 이어가면 골드가 붙고, 시간 초과로 한 번 지면 처음부터. 판수는 그대로지만
         //   같은 판이 다르게 읽힌다.
+        // ---- 보스 정수(round57) — 지역 보스가 떨어뜨리는 네 번째 재화 ----
+        readonly int[] essence = new int[Essence.Count];   // 보유
+        readonly int[] essLv   = new int[Essence.Count];   // 강화 레벨
+        int essGainedThisRun;                              // 결과 화면에 보여줄 이번 판 획득
+
+        float EssBossMul => 1f + Essence.ValueAt(6, essLv[6]) / 100f;   // 보스 피해 — 전투 쪽에서 직접 곱한다
+
+        // 레벨에서 Stats 로 값을 밀어 넣는다. 매 프레임 덮어쓰기라 어긋날 길이 없다 —
+        //   환생·세이브 로드·클론 어디에서도 따로 챙길 필요가 없게 하려는 것.
+        void SyncEssence()
+        {
+            if (stats == null) return;
+            stats.essFlat      = Essence.ValueAt(0, essLv[0]);
+            stats.essSpeedPct  = Essence.ValueAt(1, essLv[1]);
+            stats.essCritAdd   = Essence.ValueAt(2, essLv[2]) / 100f;
+            stats.essGoldPct   = Essence.ValueAt(3, essLv[3]);
+            stats.essRangePct  = Essence.ValueAt(4, essLv[4]);
+            stats.essTowerFlat = Essence.ValueAt(5, essLv[5]);
+            stats.essAllPct    = Essence.ValueAt(7, essLv[7]);
+        }
+
+        bool CanBuyEssence(int i)
+            => i >= 0 && i < Essence.Count && essLv[i] < Essence.MaxLv && essence[i] >= Essence.CostAt(essLv[i]);
+
+        void BuyEssence(int i)
+        {
+            if (!CanBuyEssence(i)) return;
+            essence[i] -= Essence.CostAt(essLv[i]);
+            essLv[i]++;
+            SyncEssence();
+            if (sound != null) sound.Play(Sfx.Buy, 0.8f, 1.1f);
+            SaveProgress();
+        }
+
         int winStreak;
         const float StreakBonusPer = 0.06f;   // 연속 1회당 +6%
         const int StreakBonusMax = 8;          // 최대 +48%
@@ -1432,6 +1471,8 @@ namespace BlackholeGame
             foreach (var kv in repLv) if (kv.Value > 0) d.repLv.Add(kv.Key + ":" + kv.Value);
             foreach (var kv in cultureLv) if (kv.Value > 0) d.cultureLv.Add(kv.Key + ":" + kv.Value);
             d.winStreak = winStreak;
+            d.essence = (int[])essence.Clone();
+            d.essLv = (int[])essLv.Clone();
             SaveSystem.Save(d);
         }
 
@@ -1503,6 +1544,33 @@ namespace BlackholeGame
             GUIUtility.ScaleAroundPivot(new Vector2(pop, pop), new Vector2(Screen.width * 0.5f, y + fs * 0.8f));
             GUI.Label(r, Loc.F("hud.combo", comboCount), st);
             GUI.matrix = m0;
+
+            // round57: 남은 시간 바 — 숫자만으론 언제 끊기는지 몰라서 손을 놓는 타이밍을 못 잡는다.
+            //   팝(pop)은 숫자에만 걸고 바는 자리를 지킨다. 안 그러면 바가 같이 들썩여 읽기 힘들다.
+            var gc = GUI.color;
+            float bw = Mathf.Min(Screen.width * 0.34f, (150f + 60f * grow) * uiScale);
+            float bh = Mathf.Max(3f, 5f * uiScale);
+            float bx = Screen.width * 0.5f - bw * 0.5f, by = y + fs * 1.45f;
+            GUI.color = new Color(0f, 0f, 0f, 0.28f);
+            GUI.DrawTexture(new Rect(bx, by, bw, bh), Texture2D.whiteTexture);
+            var fill = col; fill.a = 0.92f;
+            GUI.color = fill;
+            GUI.DrawTexture(new Rect(bx, by, bw * k, bh), Texture2D.whiteTexture);
+            GUI.color = gc;
+
+            // 붙은 골드 보너스 — 바 바로 밑에 작게
+            int bonus = Mathf.RoundToInt((ComboMul - 1f) * 100f);
+            if (bonus > 0)
+            {
+                var bst = new GUIStyle(sLabel)
+                { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(12f * uiScale), fontStyle = FontStyle.Bold };
+                if (uiFont != null) bst.font = uiFont;
+                var bc = Gold; bc.a = 0.40f + 0.60f * k;
+                bst.normal.textColor = bc;
+                FlatText(bst);
+                GUI.Label(new Rect(0f, by + bh + 3f * uiScale, Screen.width, 20f * uiScale),
+                          Loc.F("hud.comboBonus", bonus), bst);
+            }
         }
 
         void DrawCheatMsg()
@@ -1576,6 +1644,13 @@ namespace BlackholeGame
                 if (pp.Length == 2 && int.TryParse(pp[1], out var clv) && clv > 0) cultureLv[pp[0]] = clv;
             }
             winStreak = d.winStreak;
+            // 길이를 믿지 않는다 — 지역이 늘어난 뒤의 옛 세이브도 그대로 읽히게
+            for (int i = 0; i < Essence.Count; i++)
+            {
+                essence[i] = d.essence != null && i < d.essence.Length ? d.essence[i] : 0;
+                essLv[i] = d.essLv != null && i < d.essLv.Length ? Mathf.Clamp(d.essLv[i], 0, Essence.MaxLv) : 0;
+            }
+            SyncEssence();
             wave.LoadStage(currentStage);
             wave.ApplyAscension(ascensionLevel);
             state = State.Map;
@@ -1747,7 +1822,7 @@ namespace BlackholeGame
 
                 // 화염·레이저는 "발사 간격"이 없다 — 내 공격 속도에 맞춰 틱이 돈다(사용자 요청).
                 float iv = (pat == Stats.PatFlame || pat == Stats.PatLaser)
-                         ? Mathf.Max(0.05f, stats.attackInterval)
+                         ? stats.IntervalNow
                          : Mathf.Max(0.08f, stats.towerInterval[i]);
                 towerTimer[i] += dt;
                 int guard = 0;
@@ -1755,7 +1830,7 @@ namespace BlackholeGame
                 {
                     towerTimer[i] -= iv;
                     // round54: 커서 배수(0.5 고정) + 고정 공격력. 고정값이 있어야 커서를 안 키워도 잡몹이 죽는다.
-                    float dmg = hit * stats.towerDmgMul[i] + stats.towerFlat[i];
+                    float dmg = hit * stats.towerDmgMul[i] + stats.TowerFlatNow(i);
                     switch (pat)
                     {
                         case Stats.PatBurst:
@@ -1813,7 +1888,7 @@ namespace BlackholeGame
                 if (dist > Range + e.r) continue;
                 if (dist > 0.01f && Vector2.Angle(dir, d) > HalfAng) continue;
                 if (e == boss && e.shielded) continue;
-                e.hp -= dmg * (e == boss ? stats.towerBossMul[i] : 1f); e.flash = 0.06f;
+                e.hp -= dmg * (e == boss ? stats.towerBossMul[i] * EssBossMul : 1f); e.flash = 0.06f;
                 if (e.hp <= 0f && KillEnemy(e, false)) stop = true;
             }
             enemies.RemoveAll(x => x.dead);
@@ -1843,7 +1918,7 @@ namespace BlackholeGame
                 float side = Mathf.Abs(d.x * dir.y - d.y * dir.x);
                 if (side > HalfW + e.r) continue;
                 if (e == boss && e.shielded) continue;
-                e.hp -= dmg * (e == boss ? stats.towerBossMul[i] : 1f); e.flash = 0.06f;
+                e.hp -= dmg * (e == boss ? stats.towerBossMul[i] * EssBossMul : 1f); e.flash = 0.06f;
                 if (e.hp <= 0f && KillEnemy(e, false)) stop = true;
             }
             enemies.RemoveAll(x => x.dead);
@@ -1878,7 +1953,7 @@ namespace BlackholeGame
             foreach (var e in sniperPick)
             {
                 if (e.dead || (e == boss && e.shielded)) continue;
-                e.hp -= dmg * (e == boss ? stats.towerBossMul[i] : 1f); e.flash = 0.10f;
+                e.hp -= dmg * (e == boss ? stats.towerBossMul[i] * EssBossMul : 1f); e.flash = 0.10f;
                 if (e.hp <= 0f) KillEnemy(e, true);
                 SpawnTowerFx(i, 2, ((Vector2)e.tr.position - TowerPos[i]).magnitude,
                              Mathf.Atan2(e.tr.position.x - TowerPos[i].x, e.tr.position.y - TowerPos[i].y) * Mathf.Rad2Deg);
@@ -1913,7 +1988,7 @@ namespace BlackholeGame
                     bool isBoss = e == boss;
                     if (!(isBoss && e.shielded))
                     {
-                        e.hp -= b.dmg * (isBoss ? b.bossMul : 1f);
+                        e.hp -= b.dmg * (isBoss ? b.bossMul * EssBossMul : 1f);
                         e.flash = 0.06f;
                         if (e.hp <= 0f && KillEnemy(e, false)) stop = true;
                     }
@@ -1969,7 +2044,7 @@ namespace BlackholeGame
             bombTimer = 0f;
             cycleKills = 0;
             cycleGold = 0;
-            cycleElapsed = 0f;
+            essGainedThisRun = 0;
             comboCount = 0; comboLeft = 0f;
             bossesKilled = 0;
             waveNum = Mathf.Clamp(stats.startWave, 1, Mathf.Max(1, wave.totalWaves - 1));  // 보스 웨이브로는 시작 안 함
@@ -2218,8 +2293,9 @@ namespace BlackholeGame
                 long add = (long)cultureGoldAcc;
                 cultureGoldAcc -= add;
                 gold += add;
-                cycleGold += add;       // 결과 화면의 "이번 싸이클" 에도 반영
                 campaignGold += add;
+                // round57: cycleGold 에는 넣지 않는다 — 결과 화면의 "획득"이 배양 수입 때문에
+                //   가만히 있어도 계속 올라가서, 그 판에서 얼마를 벌었는지 읽을 수 없었다.
             }
         }
 
@@ -2274,6 +2350,7 @@ namespace BlackholeGame
             float dt = Time.deltaTime;
             if (dt > 0.1f) dt = 0.1f;
 
+            SyncEssence();
             UpdateCulture(dt);
             UpdateShake(Time.unscaledDeltaTime);
             UpdateCombo(dt);
@@ -2360,7 +2437,6 @@ namespace BlackholeGame
             if (timeLeft <= 0f) { timeLeft = 0f; OnTimeout(); return; }
 
             campaignElapsedSec += dt;   // 승천 사이클 전체 소요 시간(Win 화면 표시용)
-            cycleElapsed += dt;
 
             if (boss != null)
             {
@@ -2449,9 +2525,9 @@ namespace BlackholeGame
             guard = 0;
             if (stats.autoAttack)
             {
-                while (attackTimer >= stats.attackInterval && state == State.Playing && guard++ < 10)
+                while (attackTimer >= stats.IntervalNow && state == State.Playing && guard++ < 10)
                 {
-                    attackTimer -= stats.attackInterval;
+                    attackTimer -= stats.IntervalNow;
                     AttackPulse();
                 }
             }
@@ -2462,7 +2538,7 @@ namespace BlackholeGame
                 var ms = Mouse.current;
                 if (ms != null && ms.leftButton.wasPressedThisFrame && manualClickCd <= 0f)
                 {
-                    manualClickCd = Mathf.Max(0.28f, stats.attackInterval * 1.08f);   // 자동보다 살짝만 느리게
+                    manualClickCd = Mathf.Max(0.28f, stats.IntervalNow * 1.08f);   // 자동보다 살짝만 느리게
                     AttackPulse();
                 }
             }
@@ -2509,7 +2585,7 @@ namespace BlackholeGame
 
         void AttackPulse()
         {
-            float R = stats.cursorRadius;
+            float R = stats.RadiusNow;
             bool hitAny = false;
             bool stop = false;
             for (int i = enemies.Count - 1; i >= 0 && !stop; i--)
@@ -2536,7 +2612,7 @@ namespace BlackholeGame
                 bool blocked = isBoss && e.shielded;
                 if (blocked) amount = 0f;
 
-                if (!blocked) e.hp -= amount;
+                if (!blocked) e.hp -= isBoss ? amount * EssBossMul : amount;
                 e.flash = 0.08f;
 
                 if (floaters.Count < 40)
@@ -2573,7 +2649,7 @@ namespace BlackholeGame
 
             bool wasBoss = e == boss;
             // round55: 연속 클리어 보너스는 여기서 바로 — 떠오르는 골드 숫자도 보너스가 반영돼야 한다
-            int g = Mathf.RoundToInt(wave.GoldAt(e.spawnWave) * (1f + stats.goldMultPercent / 100f) * StreakMul);
+            int g = Mathf.RoundToInt(wave.GoldAt(e.spawnWave) * (1f + stats.GoldPctNow / 100f) * StreakMul * ComboMul);
             if (e.elite) g *= EliteGoldMul;   // 변이개체 — 반가운 보너스
             SpawnBurst(e.tr.position, e.baseColor, e.r);
             SpawnSplat(e.tr.position, e.baseColor, e.r);
@@ -2594,6 +2670,9 @@ namespace BlackholeGame
             {
                 boss = null; bossesKilled++;
                 winStreak++;
+                // round57: 지역 보스 = 그 지역 정수 1개. 클리어한 지역만 쌓인다.
+                if (currentStage >= 0 && currentStage < Essence.Count)
+                { essence[currentStage]++; essGainedThisRun++; }
                 hitStopLeft = 0.16f;      // 한 박자 멈춤
                 Shake(0.40f, 0.55f);
                 if (sound != null) sound.Play(Sfx.Win, 1f, Mathf.Min(1.35f, 1f + winStreak * 0.035f));
@@ -2739,7 +2818,7 @@ namespace BlackholeGame
                         if (dx * dx + dy * dy > rr * rr) continue;
                         bool isBoss = o == boss;
                         if (isBoss && o.shielded) continue;
-                        float dmg = isBoss ? o.hpMax * stats.BombBossFrac * BombBossTickFrac : hit;
+                        float dmg = isBoss ? o.hpMax * stats.BombBossFrac * BombBossTickFrac * EssBossMul : hit;
                         o.hp -= dmg;
                         o.flash = 0.05f;
                         if (o.hp <= 0f && KillEnemy(o, false)) stop = true;
@@ -2758,7 +2837,7 @@ namespace BlackholeGame
             cursorWorld = w;
             cursorRing.position = w;
             // 보이는 반경 = 실제 타격 반경. (예전엔 맥동으로 살짝 커 보여 "범위 안인데 안 맞음"이 났다)
-            float cr = stats.cursorRadius;
+            float cr = stats.RadiusNow;
             cursorRing.localScale = Vector3.one * (cr * 2f);
             // 테두리 두께 — 반경에 고정 비율(옛날 16%)로 그리면 후반에 범위가 커질수록 테두리만 두꺼워져
             // 보기 흉해진다. 절대 두께가 거의 일정하게 유지되도록 반경이 커질수록 비율을 줄인다.
@@ -2889,13 +2968,13 @@ namespace BlackholeGame
 
         string[] StatValues(Stats s)
         {
-            float aps = 1f / Mathf.Max(0.0001f, s.attackInterval);
+            float aps = 1f / Mathf.Max(0.0001f, s.IntervalNow);
             return new[]
             {
                 s.GetHitDamage().ToString("N0"),
-                $"{s.critChance * 100f:0}% × {s.critMult:0.0}",
+                $"{s.CritNow * 100f:0}% × {s.critMult:0.0}",
                 Loc.F("stat.aspdVal", aps.ToString("0.0")),
-                $"{s.cursorRadius:0.00}",
+                $"{s.RadiusNow:0.00}",
                 $"+{s.goldMultPercent:0}%",
                 Loc.F("stat.spawnVal", s.spawnIntervalMult.ToString("0.00"), s.spawnCount),
                 Loc.F("stat.timeVal", (wave.baseTimeLimit + s.bonusTimeSec).ToString("0")),
@@ -4101,6 +4180,12 @@ namespace BlackholeGame
             GUI.Label(new Rect(panel.x, ly + lh, pw, lh), Loc.F("res.kills", cycleKills), big);
             GUI.Label(new Rect(panel.x, ly + lh * 2f, pw, lh), Loc.F("res.gain", cycleGold.ToString("N0")), bigY);
             GUI.Label(new Rect(panel.x, ly + lh * 3f + 6f * K, pw, lh), Loc.F("res.have", gold.ToString("N0")), headY);
+            if (essGainedThisRun > 0)
+            {
+                var essSt = new GUIStyle(big) { normal = { textColor = new Color(0.46f, 0.92f, 0.74f) } };
+                GUI.Label(new Rect(panel.x, ly + lh * 4f + 10f * K, pw, lh),
+                          Loc.F("res.essence", essGainedThisRun) + "  " + Loc.T("ess." + currentStage), essSt);
+            }
 
             // 버튼 3개가 패널 폭(pw)을 거의 꽉 채워 좌우 여백이 4px 밖에 안 됐다 — 폭을 조금 줄여 숨통을
             const float bw = 186f * K, bh = 46f * K, gap = 16f * K;
@@ -4279,10 +4364,11 @@ namespace BlackholeGame
         // round55: 커서 / 타워 / 배양 탭 — 트리와 배양 화면이 같이 쓴다.
         void DrawTreeTabs(Rect area, float tabBarH)
         {
-            float tw2 = Mathf.Min(150f * uiScale, area.width * 0.3f), th2 = 34f * uiScale, tgap = 8f * uiScale;
-            float tx0 = area.center.x - (tw2 * 3f + tgap * 2f) * 0.5f, ty0 = area.yMin - tabBarH + 4f;
+            const int tabN = 4;
+            float tw2 = Mathf.Min(150f * uiScale, area.width * 0.22f), th2 = 34f * uiScale, tgap = 8f * uiScale;
+            float tx0 = area.center.x - (tw2 * tabN + tgap * (tabN - 1)) * 0.5f, ty0 = area.yMin - tabBarH + 4f;
             var tabSt = Btn(Mathf.RoundToInt(14f * uiScale));
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < tabN; i++)
             {
                 var r = new Rect(tx0 + i * (tw2 + tgap), ty0, tw2, th2);
                 bool on = treeTab == i;
@@ -4300,68 +4386,288 @@ namespace BlackholeGame
                 ts2.normal.textColor = ts2.hover.textColor = ts2.active.textColor = ts2.focused.textColor = col;
                 FlatText(ts2);
                 // 고른 탭은 그대로, 안 고른 탭은 흐리게 — 색만으로 구분한다
-                if (UiBtn(r, Loc.T(i == 0 ? "tree.tabCursor" : i == 1 ? "tree.tabTower" : "tree.tabCulture"), ts2,
+                if (UiBtn(r, Loc.T(TreeTabKey[i]), ts2,
                           on ? Color.white : new Color(0.72f, 0.78f, 0.78f, 0.75f)) && treeTab != i)
                 { treeTab = i; treeZoom = 0f; treePan = Vector2.zero; }
             }
         }
 
-        // round56: 연구소 — 연구원들이 책상에 앉아 배양을 돌린다. 연구원이 늘수록 산출이 는다.
-        //   한 주기가 끝날 때마다 책상 위 플라스크가 차올랐다가 비워지고 골드가 들어온다.
+        static readonly string[] TreeTabKey = { "tree.tabCursor", "tree.tabTower", "tree.tabCulture", "tree.tabEssence" };
+        static readonly string[] EssIcon = { "sword", "bolt", "crosshair", "coin", "ring", "tower", "blast", "mult" };
+
+        // 정수 강화 화면 — 지역 8개를 2열 4행 카드로. 노드 트리가 아니라 목록이라
+        //   확대·이동이 없고, 한 눈에 "어느 지역을 더 돌아야 하나"가 읽히는 게 목적이다.
+        void DrawEssenceScreen(Rect area)
+        {
+            var gc = GUI.color;
+            float pad = 10f * uiScale;
+
+            var hd = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(18f * uiScale),
+                fontStyle = FontStyle.Bold, normal = { textColor = Gold } };
+            FlatText(hd);
+            var hint = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(12f * uiScale),
+                normal = { textColor = new Color(0.68f, 0.72f, 0.70f) } };
+            FlatText(hint);
+            var hdC = new GUIContent(Loc.T("tree.essTitle"));
+            var hintC = new GUIContent(Loc.T("tree.essHint"));
+            float hdH = hd.CalcHeight(hdC, area.width) + 2f * uiScale;
+            float hintH = hint.CalcHeight(hintC, area.width) + 4f * uiScale;
+            float headH = hdH + hintH;
+            GUI.Label(new Rect(area.x, area.y, area.width, hdH), hdC, hd);
+            GUI.Label(new Rect(area.x, area.y + hdH, area.width, hintH), hintC, hint);
+
+            var grid = new Rect(area.x, area.y + headH, area.width, area.height - headH);
+            float cw = (grid.width - pad) * 0.5f;
+            float ch = (grid.height - pad * 3f) / 4f;
+            float k = Mathf.Clamp(ch / (96f * uiScale), 0.58f, 1.15f);
+
+            var ns = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleLeft,
+                fontSize = Mathf.Max(9, Mathf.RoundToInt(14f * uiScale * k)), fontStyle = FontStyle.Bold,
+                normal = { textColor = Ink } };
+            FlatText(ns);
+            var rs = new GUIStyle(ns) { fontSize = Mathf.Max(8, Mathf.RoundToInt(10f * uiScale * k)), fontStyle = FontStyle.Normal };
+            rs.normal.textColor = new Color(0.62f, 0.66f, 0.70f); FlatText(rs);
+            var es = new GUIStyle(rs) { fontSize = Mathf.Max(8, Mathf.RoundToInt(12f * uiScale * k)) };
+            es.normal.textColor = new Color(0.46f, 0.92f, 0.74f); FlatText(es);
+            var ss = new GUIStyle(rs);
+            ss.normal.textColor = new Color(0.78f, 0.74f, 0.52f); FlatText(ss);
+            var bst = Btn(Mathf.Max(9, Mathf.RoundToInt(12f * uiScale * k)));
+
+            for (int i = 0; i < Essence.Count; i++)
+            {
+                var card = new Rect(grid.x + (i % 2) * (cw + pad), grid.y + (i / 2) * (ch + pad), cw, ch);
+                // 한 번도 못 깬 지역은 잠긴 카드 — 정수를 가진 적이 있으면 환생해도 계속 열려 있다
+                bool known = stagesCleared > i || essence[i] > 0 || essLv[i] > 0;
+                DrawSkinPanel(card, known && CanBuyEssence(i));
+
+                float iconSz = Mathf.Min(ch * 0.46f, 40f * uiScale);
+                var ir = new Rect(card.x + pad, card.y + (ch - iconSz) * 0.5f, iconSz, iconSz);
+                var tex = (iconTex != null && iconTex.TryGetValue(EssIcon[i], out var it)) ? it : null;
+                if (tex != null)
+                {
+                    GUI.color = !known ? new Color(1f, 1f, 1f, 0.16f)
+                              : CanBuyEssence(i) ? new Color(1f, 0.86f, 0.42f) : new Color(0.72f, 0.80f, 0.80f, 0.85f);
+                    GUI.DrawTexture(ir, tex, ScaleMode.ScaleToFit);
+                    GUI.color = Color.white;
+                }
+
+                int lv = essLv[i];
+                bool maxed = lv >= Essence.MaxLv;
+                float btnW = Mathf.Min(74f * uiScale, cw * 0.26f), btnH = Mathf.Min(28f * uiScale, ch * 0.42f);
+                float tx = ir.xMax + 8f * uiScale;
+                float tw = Mathf.Max(30f, card.xMax - pad - btnW - 8f * uiScale - tx);
+
+                if (!known)
+                {
+                    var lk = new GUIStyle(rs) { alignment = TextAnchor.MiddleLeft };
+                    lk.normal.textColor = new Color(0.55f, 0.58f, 0.62f); FlatText(lk);
+                    GUI.Label(new Rect(tx, card.y, tw, ch), Loc.T("ess.locked"), lk);
+                    continue;
+                }
+
+                string nameTxt = Loc.T("ess." + i);
+                string regTxt  = Loc.T("s." + i) + " · " + Loc.F("ess.owned", essence[i]);
+                string effTxt  = lv > 0 ? Loc.F("essd." + i, Fmt(Essence.ValueAt(i, lv)))
+                                        : Loc.F("ess.per", Loc.F("essd." + i, Fmt(Essence.PerLv[i])));
+                string subTxt  = maxed ? Loc.F("ess.max", lv) : Loc.F("ess.next", lv, Essence.CostAt(lv));
+
+                float h1 = ns.CalcHeight(new GUIContent(nameTxt), tw);
+                float h2 = rs.CalcHeight(new GUIContent(regTxt), tw);
+                float h3 = es.CalcHeight(new GUIContent(effTxt), tw);
+                float h4 = ss.CalcHeight(new GUIContent(subTxt), tw);
+                float ty = card.y + Mathf.Max(0f, ch - (h1 + h2 + h3 + h4)) * 0.5f;
+                GUI.Label(new Rect(tx, ty, tw, h1), nameTxt, ns);
+                GUI.Label(new Rect(tx, ty + h1, tw, h2), regTxt, rs);
+                GUI.Label(new Rect(tx, ty + h1 + h2, tw, h3), effTxt, es);
+                GUI.Label(new Rect(tx, ty + h1 + h2 + h3, tw, h4), subTxt, ss);
+
+                if (!maxed)
+                {
+                    var br = new Rect(card.xMax - pad - btnW, card.y + (ch - btnH) * 0.5f, btnW, btnH);
+                    bool prev = GUI.enabled;
+                    GUI.enabled = CanBuyEssence(i) && transDir == 0;
+                    var bs2 = new GUIStyle(bst);
+                    bs2.normal.textColor = bs2.hover.textColor = bs2.active.textColor = bs2.focused.textColor = UiSkin.Ink;
+                    FlatText(bs2);
+                    if (UiBtn(br, Loc.T("cu.buy"), bs2)) BuyEssence(i);
+                    GUI.enabled = prev;
+                }
+            }
+            GUI.color = gc;
+        }
+
+        // 정수 효과 수치 — 100 단위는 천단위 쉼표로, 소수는 한 자리까지
+        static string Fmt(float v) => v >= 100f ? v.ToString("N0") : v.ToString("0.#");
+
+        // ---- 배양 연구소 그림 -----------------------------------------------
+        //   round57: 피그마에서 장면을 잡고(파일 KzXFPO0v5oMqAL5lR2TSTg) 그대로 옮겼다.
+        //   좌표는 전부 그 아트보드(960x560) 기준이고, 화면 비율에 맞춰 통째로 축소·중앙정렬된다.
+        //   원근은 두 가지로만 만든다: 뒷줄은 0.78배, 그리고 반투명.
+        static readonly Color LabWall    = Hx(0x2A353B), LabFloor  = Hx(0x1C2529);
+        static readonly Color LabEdge    = Hx(0x33434A), LabDeskTop = Hx(0x3A4A52), LabDeskFr = Hx(0x2B363C);
+        static readonly Color LabMint    = Hx(0x3DB39E), LabMintHi = Hx(0xA8EDD4), LabInk    = Hx(0x0E3B37);
+        static readonly Color LabCoat    = Hx(0xD7E6E3), LabSkin   = Hx(0xF4F9F8), LabGold   = Hx(0xE0A53C);
+        static readonly Color LabGlass   = Hx(0x44585F);   // 유리 몸통 — 어두우면 배경에 묻힌다
+        static readonly float[] JarFill  = { 18f, 25f, 30f, 22f, 28f, 20f, 26f, 24f };
+        static Color Hx(int v) => new Color(((v >> 16) & 255) / 255f, ((v >> 8) & 255) / 255f, (v & 255) / 255f);
+
+        float labOx, labOy, labK, labA = 1f;   // 아트보드 -> 화면 변환 + 줄별 투명도
+        Texture2D labDisc;
+
+        Rect LabRect(float x, float y, float w, float h)
+            => new Rect(labOx + x * labK, labOy + y * labK, w * labK, h * labK);
+
+        void LabBox(float x, float y, float w, float h, Color c, float a = 1f)
+        {
+            c.a *= a * labA;
+            GUI.color = c;
+            GUI.DrawTexture(LabRect(x, y, w, h), Texture2D.whiteTexture);
+        }
+
+        void LabDot(float x, float y, float w, float h, Color c, float a = 1f)
+        {
+            c.a *= a * labA;
+            GUI.color = c;
+            GUI.DrawTexture(LabRect(x, y, w, h), labDisc);
+        }
+
+        // 위아래가 둥근 기둥 — 원 두 개 + 가운데 사각. 끝이 말린 시험관에 쓴다.
+        void LabCapV(float x, float y, float w, float h, Color c, float a = 1f)
+        {
+            if (h <= w) { LabDot(x, y, w, h, c, a); return; }
+            LabDot(x, y, w, w, c, a);
+            LabDot(x, y + h - w, w, w, c, a);
+            LabBox(x, y + w * 0.5f, w, h - w, c, a);
+        }
+
+        // 위만 둥근 — 앉은 몸통, 모자. 원이 사각 위로 겹쳐 올라가 윗면만 말린다.
+        void LabRoundTop(float x, float y, float w, float h, float rh, Color c, float a = 1f)
+        {
+            LabDot(x, y, w, rh * 2f, c, a);
+            LabBox(x, y + rh, w, h - rh, c, a);
+        }
+
+        // 책상 한 칸 — 의자 · 앉은 연구원 · 모니터 · 배양관. u 는 이번 주기 진행도(0~1).
+        //   그리는 순서가 곧 앞뒤 관계다: 상판을 맨 마지막에 올려 다리 쪽을 가린다.
+        void DrawLabBench(float bx, float by, float s, float u)
+        {
+            float bob = Mathf.Sin(u * Mathf.PI * 6f) * 1.2f * s;   // 작업 중 까딱임
+            float X(float v) => bx + v * s;
+            float Y(float v) => by + v * s;
+            float S(float v) => v * s;
+
+            LabBox(X(48), Y(54), S(14), S(56), LabDeskFr);                        // 의자 등받이
+            LabRoundTop(X(44), Y(60) + bob, S(58), S(52), S(26), LabCoat);        // 앉은 몸통
+            LabBox(X(92), Y(82) + bob * 1.6f, S(26), S(11), LabCoat);             // 배양관 쪽으로 뻗은 팔
+            LabBox(X(56), Y(57) + bob, S(36), S(4), LabInk, 0.20f);               // 턱 그림자
+            LabDot(X(58), Y(26) + bob, S(32), S(32), LabSkin);                    // 머리
+            LabRoundTop(X(56), Y(20) + bob, S(36), S(13), S(6.5f), LabMint);      // 모자
+            LabBox(X(74), Y(36) + bob, S(20), S(8), LabInk, 0.60f);               // 고글
+            LabBox(X(62), Y(56) + bob, S(22), S(6), LabMintHi);                   // 목깃
+
+            // 모니터 — 눈금이 주기에 맞춰 흔들려서 "돌아가는 중"이 보인다
+            LabBox(X(12), Y(72), S(46), S(34), LabFloor);
+            LabBox(X(16), Y(76), S(38), S(26), LabInk);
+            for (int t = 0; t < 6; t++)
+            {
+                float th = 6f + 5f * Mathf.Abs(Mathf.Sin(u * 6.283f + t * 0.9f)) + t % 3 * 2f;
+                LabBox(X(19 + t * 6), Y(100 - th), S(3), S(th), LabMint, 0.85f);
+            }
+            LabBox(X(31), Y(106), S(8), S(6), LabEdge);
+
+            // 배양관 — 유리 기둥 안에서 배양액이 차오르고 거품이 올라간다
+            LabCapV(X(108), Y(58), S(20), S(50), LabGlass);
+            LabBox(X(110), Y(62), S(16), S(44), LabInk, 0.88f);                   // 안쪽 통
+            LabBox(X(106), Y(56), S(24), S(5), LabDeskTop);                       // 주둥이
+            float bh = 44f * Mathf.Clamp01(u);
+            if (bh > 2f)
+            {
+                LabBox(X(110), Y(106 - bh), S(16), S(bh), LabMint);
+                LabBox(X(110), Y(106 - bh), S(16), S(4), LabMintHi);               // 수면
+                for (int q = 0; q < 2; q++)
+                {
+                    float bu = Mathf.Repeat(u * 2.6f + q * 0.5f, 1f);
+                    float byy = 104f - bu * (bh - 6f);
+                    if (byy > 106f - bh) LabDot(X(113 + q * 5), Y(byy), S(5 - q), S(5 - q), LabMintHi, 0.7f - q * 0.2f);
+                }
+            }
+            LabBox(X(111.5f), Y(66), S(3), S(28), Color.white, 0.16f);            // 유리 광택
+
+            // 막 비워진 직후의 금빛 — 돈이 들어왔다는 신호
+            if (u < 0.12f)
+            {
+                float g = 1f - u / 0.12f;
+                float rise = S(6f * (1f - g));
+                LabDot(X(106), Y(36) - rise, S(24), S(24), LabGold, 0.22f * g);
+                LabDot(X(113), Y(43) - rise, S(10), S(10), LabGold, 0.95f * g);
+            }
+
+            LabBox(X(9), Y(108), S(132), S(14), LabDeskTop);                      // 상판
+            LabBox(X(9), Y(108), S(132), S(3), Color.white, 0.10f);
+            LabBox(X(20), Y(122), S(110), S(22), LabDeskFr);                      // 앞판
+        }
+
         void DrawCultureField(Rect area)
         {
             var gc = GUI.color;
-            var disc = discSprite != null ? discSprite.texture : Texture2D.whiteTexture;
-            int n = MinerCount;
+            labDisc = discSprite != null ? discSprite.texture : Texture2D.whiteTexture;
+            labK = Mathf.Min(area.width / 960f, area.height / 560f);
+            labOx = area.center.x - 480f * labK;
+            labOy = area.center.y - 280f * labK;
+            labA = 1f;
 
-            // 책상을 격자로 — 한 줄에 최대 5석
-            int cols = Mathf.Min(5, Mathf.Max(1, n));
-            int rows = Mathf.CeilToInt(n / (float)cols);
-            float cw = Mathf.Min(area.width / (cols + 1f), 190f * uiScale);
-            float ch = Mathf.Min(area.height / (rows + 1.4f), 150f * uiScale);
-            float gw = cw * cols, gh = ch * rows;
-            float gx = area.center.x - gw * 0.5f, gy = area.center.y - gh * 0.5f;
+            LabBox(0, 0, 960, 392, LabWall);                     // 벽
+            LabBox(0, 392, 960, 168, LabFloor);                  // 바닥
+            LabBox(0, 389, 960, 3, LabEdge);                     // 벽-바닥 경계
 
-            for (int i = 0; i < n; i++)
+            // 천장 배관
+            LabBox(0, 40, 960, 16, LabEdge);
+            LabBox(0, 43, 960, 3, Color.white, 0.12f);
+            LabBox(0, 66, 960, 10, LabEdge);
+            for (int d = 0; d < 3; d++)
             {
-                int cx = i % cols, cy = i / cols;
-                float x = gx + cx * cw + cw * 0.5f;
-                float y = gy + cy * ch + ch * 0.5f;
-                float u = Mathf.Clamp01(minerPhase[i]);           // 이번 주기 진행도
-                float s0 = Mathf.Min(cw, ch);
-
-                // 책상
-                float deskW = s0 * 0.62f, deskH = s0 * 0.10f;
-                GUI.color = new Color(0.30f, 0.44f, 0.52f, 0.95f);
-                GUI.DrawTexture(new Rect(x - deskW * 0.5f, y + s0 * 0.14f, deskW, deskH), Texture2D.whiteTexture);
-
-                // 연구원 — 몸통 + 머리. 작업 중엔 아주 살짝 앞뒤로 까딱인다.
-                float bob = Mathf.Sin(u * Mathf.PI * 6f) * s0 * 0.012f;
-                float bodyW = s0 * 0.26f, bodyH = s0 * 0.22f;
-                GUI.color = new Color(0.78f, 0.90f, 0.95f, 1f);
-                GUI.DrawTexture(new Rect(x - bodyW * 0.5f, y - s0 * 0.02f + bob, bodyW, bodyH), disc);
-                float headR = s0 * 0.13f;
-                GUI.color = new Color(0.88f, 0.95f, 0.99f, 1f);
-                GUI.DrawTexture(new Rect(x - headR, y - s0 * 0.20f + bob, headR * 2f, headR * 2f), disc);
-
-                // 책상 위 플라스크 — 주기만큼 차오른다
-                float fw = s0 * 0.16f, fh = s0 * 0.20f;
-                float fx = x + deskW * 0.26f, fy = y + s0 * 0.14f - fh;
-                GUI.color = new Color(0.24f, 0.36f, 0.42f, 0.55f);
-                GUI.DrawTexture(new Rect(fx, fy, fw, fh), Texture2D.whiteTexture);
-                float lvl = fh * u;
-                GUI.color = new Color(0.42f, 0.90f, 0.62f, 0.95f);
-                GUI.DrawTexture(new Rect(fx, fy + fh - lvl, fw, lvl), Texture2D.whiteTexture);
-
-                // 막 비워진 직후엔 위로 작은 빛이 뜬다 — 돈이 들어온 신호
-                if (u < 0.12f)
-                {
-                    float a = 1f - u / 0.12f;
-                    float ps = s0 * 0.12f * (0.6f + a * 0.6f);
-                    GUI.color = new Color(1f, 0.88f, 0.42f, a * 0.9f);
-                    GUI.DrawTexture(new Rect(fx + fw * 0.5f - ps * 0.5f, fy - ps * (0.4f + a), ps, ps), disc);
-                }
+                float dx = 180f + d * 300f;
+                LabBox(dx, 76, 10, 84, LabEdge);
+                LabBox(dx - 7f, 92, 24, 12, LabEdge);
             }
+
+            // 배양병 선반 — 뒷줄 머리 위로 지나간다
+            LabBox(70, 136, 820, 12, LabEdge);
+            LabBox(70, 136, 820, 3, Color.white, 0.10f);
+            for (int j = 0; j < 8; j++)
+            {
+                float jx = 110f + j * 100f;
+                float lv = JarFill[j];
+                LabBox(jx - 2f, 76, 40, 10, LabEdge);                         // 뚜껑
+                LabRoundTop(jx, 84, 36, 52, 8, LabGlass);                     // 병 몸통
+                LabBox(jx + 3f, 90, 30, 43, LabInk, 0.88f);                   // 안쪽
+                LabBox(jx + 3f, 133f - lv, 30, lv, LabMint, 0.95f);           // 배양액
+                LabBox(jx + 3f, 133f - lv, 30, 3, LabMintHi);                 // 수면
+                LabDot(jx + 11f, 133f - lv * 0.62f, 9, 9, LabMintHi, 0.55f);  // 떠 있는 군체
+                LabBox(jx + 6f, 94, 4, 28, Color.white, 0.13f);               // 유리 광택
+            }
+
+            // 책상은 앞줄부터 채운다 — 연구원이 한 명이어도 크게 보이는 쪽에 앉는다
+            int n = MinerCount;
+            int fc = Mathf.Min(n, 5), bc = Mathf.Max(0, n - 5);
+            if (bc > 0)
+            {
+                labA = 0.5f;
+                const float bw = 117f, bgap = 30f;
+                float x0 = 480f - (bc * bw + (bc - 1) * bgap) * 0.5f;
+                for (int i = 0; i < bc; i++)
+                    DrawLabBench(x0 + i * (bw + bgap), 196f, 0.78f, Mathf.Clamp01(minerPhase[5 + i]));
+                labA = 1f;
+            }
+            {
+                const float bw = 150f, bgap = 32f;
+                float x0 = 480f - (fc * bw + (fc - 1) * bgap) * 0.5f;
+                for (int i = 0; i < fc; i++)
+                    DrawLabBench(x0 + i * (bw + bgap), 332f, 1f, Mathf.Clamp01(minerPhase[i]));
+            }
+
+            GUI.color = new Color(1f, 1f, 1f, 0.55f);            // 가장자리 어둠 — 전투 화면과 같은 질감
+            GUI.DrawTexture(LabRect(0, 0, 960, 560), UiSkin.Vignette);
             GUI.color = gc;
         }
 
@@ -4745,6 +5051,17 @@ namespace BlackholeGame
                 GUI.color = gcB;
             }
             else treePan = new Vector2(0f, Mathf.Clamp(treePan.y, 0f, maxPan));
+
+            // round57: 정수 탭 — 보스가 떨어뜨린 재화로 지역별 특화를 산다.
+            if (treeTab == 3)
+            {
+                DrawEssenceScreen(area);
+                GUI.color = c0;
+                DrawTreeTabs(area, tabBarH);
+                DrawStatPanel(statRect, null);
+                DrawTreeBottomBar(barH);
+                return;
+            }
 
             // round55: 배양 탭은 노드 트리가 아니라 채취장 화면이다.
             if (treeTab == 2)

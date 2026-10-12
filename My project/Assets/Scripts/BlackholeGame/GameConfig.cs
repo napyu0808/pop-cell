@@ -59,8 +59,20 @@ namespace BlackholeGame
             towerPattern[tower] = pat;     // 새로 뚫은 패턴을 바로 쓴다 — 바꾸고 싶으면 타워 탭에서 고른다
         }
 
+        // ---- 보스 정수(round57) ------------------------------------------------
+        //   노드처럼 누적 적용하지 않는다. 레벨에서 매 프레임 다시 써 넣는 값이라
+        //   세이브·환생·클론 어디서도 어긋날 수가 없다(GameManager.SyncEssence).
+        public float essFlat, essAllPct, essCritAdd, essSpeedPct, essRangePct, essGoldPct, essTowerFlat;
+
         public float GetHitDamage()
-            => (baseAttack + flatBonus) * (1f + multBucketPercent / 100f);
+            => (baseAttack + flatBonus + essFlat) * (1f + (multBucketPercent + essAllPct) / 100f);
+
+        // 아래 네 개는 "정수까지 포함한 실제 값". 전투·표시 코드는 전부 이쪽을 쓴다.
+        public float CritNow     => Mathf.Min(UpgradeTree.CritCap, critChance + essCritAdd);
+        public float IntervalNow => Mathf.Max(0.05f, attackInterval / (1f + essSpeedPct / 100f));
+        public float RadiusNow   => cursorRadius * (1f + essRangePct / 100f);
+        public float GoldPctNow  => goldMultPercent + essGoldPct;
+        public float TowerFlatNow(int i) => towerFlat[i] + essTowerFlat;
 
         public Stats Clone() => new Stats
         {
@@ -76,21 +88,23 @@ namespace BlackholeGame
             towerPattern = (int[])towerPattern.Clone(), towerPatMask = (int[])towerPatMask.Clone(),
             towerBeams = (int[])towerBeams.Clone(), towerTargets = (int[])towerTargets.Clone(),
             towerFlat = (float[])towerFlat.Clone(), towerBossMul = (float[])towerBossMul.Clone(),
+            essFlat = essFlat, essAllPct = essAllPct, essCritAdd = essCritAdd, essSpeedPct = essSpeedPct,
+            essRangePct = essRangePct, essGoldPct = essGoldPct, essTowerFlat = essTowerFlat,
         };
 
         // 치명타는 타격 시점에 공식 바깥에서 롤
         public (float amount, bool crit) RollDamage()
         {
             float dmg = GetHitDamage();
-            bool isCrit = UnityEngine.Random.value < critChance;
+            bool isCrit = UnityEngine.Random.value < CritNow;
             return (isCrit ? dmg * critMult : dmg, isCrit);
         }
 
         // 참고용: 범위 안 적 1마리 기준 이론 DPS
         public float EstimateDps()
         {
-            float aps = 1f / Mathf.Max(0.0001f, attackInterval);
-            float critFactor = 1f + critChance * (critMult - 1f);
+            float aps = 1f / Mathf.Max(0.0001f, IntervalNow);
+            float critFactor = 1f + CritNow * (critMult - 1f);
             return GetHitDamage() * aps * critFactor;
         }
     }

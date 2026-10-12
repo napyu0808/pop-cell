@@ -29,6 +29,8 @@ namespace BlackholeGame
         public List<string> metaBought = new List<string>();
         public List<string> repLv = new List<string>();   // round44: 반복 강화 레벨 "id:lv" (환생·새 게임이면 리셋)
         public List<string> cultureLv = new List<string>();  // round55: 배양(자원 채취) 강화 "id:lv"
+        public int[] essence = new int[0];                   // round57: 보스 정수 보유(지역별). 환생해도 남는다
+        public int[] essLv   = new int[0];                   // round57: 정수 강화 레벨(지역별)
         public float lastGoldPerSec;                         // round55 유물 — round56에 배양 산출이 고정치가 되며 안 쓴다(구세이브 호환)
         public int winStreak;                                // round55: 연속 클리어 수(시간 초과로 0)
 
