@@ -107,14 +107,17 @@ CU_CYCLE_STEP  = 0.15
 CU_CYCLE_MIN   = 1.1
 CU_LOAD_BASE   = 10.0
 CU_LOAD_MUL    = 1.55
-CU_COST0       = [8800.0, 2200.0, 11000.0]  # 연구원 / 산출 / 속도
+CU_COST0       = [500.0, 2200.0, 11000.0]  # 연구원 / 산출 / 속도
 CU_COST_MUL    = [5.0, 1.75, 2.0]
-CU_MAX_LV      = [CU_MINER_MAX - 1, 25, 22]
+CU_MAX_LV      = [CU_MINER_MAX, 25, 22]
 
 
 def cu_income(lv):
-    """초당 골드. lv = (연구원, 산출, 속도) 레벨."""
-    workers = 1 + lv[0]
+    """초당 골드. lv = (연구원, 산출, 속도) 레벨.
+
+    연구원은 0명에서 시작한다 — 레벨이 곧 인원이고, 안 사면 수입도 0이다.
+    """
+    workers = lv[0]
     cycle = max(CU_CYCLE_MIN, CU_CYCLE_BASE - CU_CYCLE_STEP * lv[2])
     load = CU_LOAD_BASE * CU_LOAD_MUL ** lv[1]
     return workers / cycle * load

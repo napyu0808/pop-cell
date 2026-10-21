@@ -130,7 +130,7 @@ namespace BlackholeGame
         //   운반체가 영양소 더미와 코어 사이를 왕복한다. 코어에 닿을 때마다 적재량만큼 골드.
         //   게임이 켜져 있는 동안만 돈다(타이틀 제외) — 껐을 때는 안 오른다는 게 사용자 요구.
         //   적재량은 "최근 판의 초당 골드"에 비례해서, 지역이 올라가도 알아서 스케일된다.
-        //   round56: 8지역까지 꾸준히 올릴 거리가 되게 단계를 크게 늘렸다(연구원 9 + 산출 25 + 속도 18 = 52단계).
+        //   round56: 8지역까지 꾸준히 올릴 거리가 되게 단계를 크게 늘렸다(연구원 10 + 산출 25 + 속도 22 = 57단계).
         public const int MinerMax = 10;
         const float MinerCycleBase = 4.0f, MinerCycleStep = 0.15f, MinerCycleMin = 1.1f;
         //   산출은 판 실적이 아니라 고정치다(사용자 결정). 단계마다 배수로 올라가서
@@ -140,9 +140,12 @@ namespace BlackholeGame
         const float MinerLoadBase = 10f, MinerLoadMul = 1.55f;
         //   round57: 비용 배수가 효과 배수(1.55)보다 크면 레벨마다 회수 기간이 길어져 아무도 안 산다.
         //   산출은 1.60 으로 바로 위에 붙여 회수 145초 -> 365초로 아주 천천히만 늘게 했다.
-        static readonly long[] CultureCost0 = { 8800, 2200, 11000 };  // 연구원 / 산출 / 속도 기본 가격
+        //   연구원은 공짜로 한 명 딸려오지 않는다 — 0명에서 시작해 첫 한 명을 500골드에 산다.
+        //   연구소를 "이미 돌아가는 설비"가 아니라 플레이어가 직접 여는 것으로 만들기 위해서다.
+        //   천장은 그대로 10명이라, 레벨 상한이 9에서 10으로 한 칸 올라간다.
+        static readonly long[] CultureCost0 = { 500, 2200, 11000 };  // 연구원 / 산출 / 속도 기본 가격
         static readonly float[] CultureCostMul = { 5.0f, 1.75f, 2.0f };
-        static readonly int[] CultureMaxLv = { MinerMax - 1, 25, 22 };
+        static readonly int[] CultureMaxLv = { MinerMax, 25, 22 };
         static readonly string[] CultureKey = { "cwk", "cld", "csp" };
 
         readonly Dictionary<string, int> cultureLv = new Dictionary<string, int>();
@@ -157,7 +160,7 @@ namespace BlackholeGame
             double c = CultureCost0[i] * System.Math.Pow(CultureCostMul[i], CultureLv(i));
             return (long)System.Math.Min(long.MaxValue / 4, System.Math.Round(c));
         }
-        int MinerCount => 1 + CultureLv(0);
+        int MinerCount => CultureLv(0);
         float MinerCycleSec => Mathf.Max(MinerCycleMin, MinerCycleBase - MinerCycleStep * CultureLv(2));
 
         float MinerLoad => MinerLoadBase * Mathf.Pow(MinerLoadMul, CultureLv(1));
