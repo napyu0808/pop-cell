@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "UnityMCP": {
+      "command": "uvx",
+      "args": [
+        "--python",
+        "3.12",
+        "--from",
+        "mcpforunityserver==10.2.0",
+        "mcp-for-unity"
+      ]
+    }
+  }
+}
