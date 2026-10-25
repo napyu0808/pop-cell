@@ -143,8 +143,11 @@ namespace BlackholeGame
         //   연구원은 공짜로 한 명 딸려오지 않는다 — 0명에서 시작해 첫 한 명을 500골드에 산다.
         //   연구소를 "이미 돌아가는 설비"가 아니라 플레이어가 직접 여는 것으로 만들기 위해서다.
         //   천장은 그대로 10명이라, 레벨 상한이 9에서 10으로 한 칸 올라간다.
-        static readonly long[] CultureCost0 = { 500, 2200, 11000 };  // 연구원 / 산출 / 속도 기본 가격
-        static readonly float[] CultureCostMul = { 5.0f, 1.75f, 2.0f };
+        //   2시간 재밸런싱: 배수가 커서 꼭대기가 터져 있었다 — 연구원 9.8억, 산출 1.5억, 속도 230억.
+        //   전 강화를 1,000만 미만으로 묶는 규칙에 맞춰 배수를 내리고 기준가를 새 골드 규모에 맞췄다.
+        //   첫 연구원 500골드는 그대로다.
+        static readonly long[] CultureCost0 = { 500, 800, 2000 };  // 연구원 / 산출 / 속도 기본 가격
+        static readonly float[] CultureCostMul = { 2.4f, 1.35f, 1.32f };
         static readonly int[] CultureMaxLv = { MinerMax, 25, 22 };
         static readonly string[] CultureKey = { "cwk", "cld", "csp" };
 
@@ -158,7 +161,17 @@ namespace BlackholeGame
         long CultureCost(int i)
         {
             double c = CultureCost0[i] * System.Math.Pow(CultureCostMul[i], CultureLv(i));
-            return (long)System.Math.Min(long.MaxValue / 4, System.Math.Round(c));
+            return NiceCost(System.Math.Min(long.MaxValue / 4.0, c));
+        }
+
+        // 가격은 맨 왼쪽 두 자리만 0이 아니고 나머지는 0이다 — 1,300,000 은 되고 1,260,600 은 안 된다.
+        // 지수식으로 뽑은 값을 그대로 보여주면 자릿수가 지저분해지므로 여기서 한 번 정리한다.
+        static long NiceCost(double c)
+        {
+            if (c <= 0) return 0;
+            int e = (int)System.Math.Floor(System.Math.Log10(c));
+            double scale = System.Math.Pow(10, System.Math.Max(0, e - 1));
+            return (long)(System.Math.Round(c / scale) * scale);
         }
         int MinerCount => CultureLv(0);
         float MinerCycleSec => Mathf.Max(MinerCycleMin, MinerCycleBase - MinerCycleStep * CultureLv(2));

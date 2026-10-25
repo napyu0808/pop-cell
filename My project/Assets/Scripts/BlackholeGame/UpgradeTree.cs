@@ -78,10 +78,12 @@ namespace BlackholeGame
         // ---- 반복 강화 1회당 수치·가격 (같은 값으로 같은 양) ----
         // 1회 수치는 작게 — 여러 번(수십~수백 레벨) 사게 해서 +1/+10/최대 버튼이 의미 있게
         public const float RepFlat = 10f, RepMult = 1f, RepAps = 0.05f, RepRange = 0.01f, RepCritX = 0.02f, RepGold = 1f;
-        public static readonly long[] RepCost = { 11000000, 11000000, 11000000, 11000000, 11000000, 11000000 };   // flat, mult, speed, range, critx, gold
+        public static readonly long[] RepCost = { 9800000, 9800000, 9800000, 9800000, 9800000, 9800000 };   // flat, mult, speed, range, critx, gold
 
-        // tier별 노드 비용 — balance_sim(tune42)으로 맞춘다.
-        static readonly long[] TierCost = { 40, 12854, 317045, 2655247, 34265731, 217398725, 2039877494, 15737700588 };
+        // tier별 노드 비용 — balance_sim 으로 맞춘다.
+        //   값은 맨 왼쪽 1~3자리만 0이 아니고 나머지는 0이다(사용자 규칙). 중간에 숫자가 끼면 안 된다.
+        //   최고가는 1,000만 미만으로 묶여 있다 — 예전 157억짜리 꼭대기는 후반에 도달 불가능한 벽이었다.
+        static readonly long[] TierCost = { 50, 1500, 9800, 44000, 170000, 700000, 2600000, 9500000 };
         public static long Cost(int tier) =>
             tier >= 0 && tier < TierCost.Length ? TierCost[tier]
             : (long)System.Math.Round(TierCost[TierCost.Length - 1] * System.Math.Pow(2.6, tier - TierCost.Length + 1));
@@ -96,16 +98,17 @@ namespace BlackholeGame
                         RFlat, RMult, RSpeed, RRange, RCritX, RGold }
 
         // 가지 정의 — (타입, id 접두어, 노드 수, 시작 티어). 노드 수는 머리 노드를 포함한 전체 길이.
-        //   합계 147 + 자동공격 + 백신 = 149, 코어까지 150. (반복 강화 6개는 별도)
+        //   길이를 예전의 0.6배로 줄였다. 트리 전체가 332 -> 191 노드가 되고, 그만큼 한 지역에서
+        //   사야 할 것이 줄어 플레이타임이 짧아진다. 가지의 모양과 순서는 그대로다.
         public struct LaneDef { public T type; public string key; public int len; public int tier0; }
         static LaneDef L(T t, string key, int len, int tier0 = 0) => new LaneDef { type = t, key = key, len = len, tier0 = tier0 };
         public static readonly LaneDef
-            LFlat  = L(T.Flat,  "flat",  17),  LMult  = L(T.Mult,  "mult",  14),  LSpeed = L(T.Speed, "speed", 13),
-            LCritC = L(T.CritC, "critc", 10),  LRange = L(T.Range, "range", 13),  LCritX = L(T.CritX, "critx", 15),
-            LTime  = L(T.Time,  "time",   8),  LGold  = L(T.Gold,  "gold",  15),  LSkip  = L(T.Skip,  "skip",  3),
-            LSCount= L(T.SCount,"scount", 9),  LSpawn = L(T.Spawn, "spawn",  9),
-            LBDmg  = L(T.BombDmg, "bombdmg", 6, 1), LBRad = L(T.BombRad, "bombrad", 10, 1), LBFreq = L(T.BombFreq, "bombfreq", 5, 1),
-            LBTime = L(T.BombTime, "bombtime", 5, 1);
+            LFlat  = L(T.Flat,  "flat",  10),  LMult  = L(T.Mult,  "mult",   8),  LSpeed = L(T.Speed, "speed",  8),
+            LCritC = L(T.CritC, "critc",  6),  LRange = L(T.Range, "range",  8),  LCritX = L(T.CritX, "critx",  9),
+            LTime  = L(T.Time,  "time",   5),  LGold  = L(T.Gold,  "gold",   9),  LSkip  = L(T.Skip,  "skip",  3),
+            LSCount= L(T.SCount,"scount", 5),  LSpawn = L(T.Spawn, "spawn",  5),
+            LBDmg  = L(T.BombDmg, "bombdmg", 4, 1), LBRad = L(T.BombRad, "bombrad", 6, 1), LBFreq = L(T.BombFreq, "bombfreq", 3, 1),
+            LBTime = L(T.BombTime, "bombtime", 3, 1);
         public const int BombUnlockTier = 1;   // 백신은 1지역을 깬 뒤 — 기본 조작에 익숙해진 다음 새 요소
 
         // ---- 자동 타워(round50 개편) ---------------------------------------------------
@@ -114,7 +117,7 @@ namespace BlackholeGame
         //   공격 패턴만 늘어난다 — 타워 탭에서 뚫은 패턴 중 아무거나 골라 쓴다.
         //   3~6지역에서 힘이 되게 티어를 잡았고, 저격은 보스가 단단해지는 7~8지역용이다.
         public const int TowerUnlockTier = 0;   // round53: 처음부터 — 환생 직후 초기자금으로 타워부터 가는 선택지
-        public const long TowerUnlockCost = 1000;
+        public const long TowerUnlockCost = 500;
 
         // round54: 공격력 갈래는 "커서 배수" 가 아니라 고정 공격력이다. 커서를 안 키워도 타워 혼자
         //   잡몹을 치우라고 — 커서 배수(towerDmgMul)는 0.5 로 고정하고 노드를 두지 않는다.
@@ -124,7 +127,7 @@ namespace BlackholeGame
         public const float TowerSpeedMul = 0.85f, TowerIntervalMin = 0.10f;   // round51: 풀강 초당 4발 -> 10발
         public const float TowerSpinAdd = 14f, TowerSpinMax = 300f;
 
-        const int TwPerBranch = 5;                                   // 갈래 하나당 노드 수
+        const int TwPerBranch = 2;                                   // 갈래 하나당 노드 수(타워 171 -> 90 노드)
         //  단계: 0 기본(단발) · 1 화염방사 · 2 레이저 · 3 저격
         //   round53: 1단계는 티어 0 — 지역을 하나도 안 깨도 산다. 환생하고 초기자금을 들고
         //   시작할 때 "이번엔 타워부터" 로 갈 수 있게.
