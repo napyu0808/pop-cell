@@ -1471,10 +1471,15 @@ namespace BlackholeGame
         }
 
         // ---- 저장/불러오기 ----
+
+        // 밸런스 세대. 올리면, 그 이전에 저장된 판은 불러올 때 진행만 환생처럼 되돌린다.
+        //   2시간 재밸런싱에서 1 이 됐다.
+        const int BalanceVer = 1;
         void SaveProgress()
         {
             var d = new SaveData
             {
+                balanceVer = BalanceVer,
                 stagesCleared = stagesCleared,
                 currentStage = currentStage,
                 gold = gold,
@@ -1635,27 +1640,37 @@ namespace BlackholeGame
             bought.Clear();
             repLv.Clear();
             GrabRoot();
-            gold = d.gold;
-            stagesCleared = d.stagesCleared;
-            currentStage = Mathf.Clamp(d.currentStage, 0, StageConfig.Stages.Length - 1);
-            retryCount = d.retryCount;
-            maxScore = d.maxScore;
-            foreach (var id in d.bought)
+            // 재밸런싱 이전 세이브는 이번 회차를 되돌린다. 그대로 이어붙이면 둘 다 망가진다 —
+            //   당시 소지금은 새 트리 전체(2억 2,521만)보다 큰 경우가 많아 불러오자마자 게임이 끝나고,
+            //   짧아진 가지에서 사라진 노드 id 는 아래 NodeById 가 null 을 주며 조용히 버려져서
+            //   거기에 쓴 골드도 능력치도 돌아오지 않는다. 환생과 같은 선을 긋는다 —
+            //   진행(골드·노드·지역)은 리셋, 영구 보상(샤드·메타·정수·승천·배양)은 유지.
+            bool stale = d.balanceVer < BalanceVer;
+            gold = stale ? 2000L * MetaLv("m_start") : d.gold;
+            stagesCleared = stale ? 0 : d.stagesCleared;
+            currentStage = stale ? 0 : Mathf.Clamp(d.currentStage, 0, StageConfig.Stages.Length - 1);
+            retryCount = stale ? 0 : d.retryCount;
+            maxScore = stale ? 0 : d.maxScore;
+            if (stale) bossSeenMask = 0;
+            if (!stale)
             {
-                var n = NodeById(id);
-                if (n != null && !n.repeat && bought.Add(id)) n.apply(stats);
-            }
-            // 반복 강화는 일반 노드를 다 적용한 뒤에 — 가지 노드의 공속 하한(0.06)이 반복 강화로 내린 값을
-            // 다시 끌어올리지 않게 순서를 고정한다.
-            foreach (var e in d.repLv)
-            {
-                var pp = e.Split(':');
-                if (pp.Length != 2 || !int.TryParse(pp[1], out var lv) || lv <= 0) continue;
-                var n = NodeById(pp[0]);
-                if (n == null || !n.repeat) continue;
-                repLv[n.id] = lv;
-                bought.Add(n.id);
-                for (int k = 0; k < lv; k++) n.apply(stats);
+                foreach (var id in d.bought)
+                {
+                    var n = NodeById(id);
+                    if (n != null && !n.repeat && bought.Add(id)) n.apply(stats);
+                }
+                // 반복 강화는 일반 노드를 다 적용한 뒤에 — 가지 노드의 공속 하한(0.06)이 반복 강화로 내린 값을
+                // 다시 끌어올리지 않게 순서를 고정한다.
+                foreach (var e in d.repLv)
+                {
+                    var pp = e.Split(':');
+                    if (pp.Length != 2 || !int.TryParse(pp[1], out var lv) || lv <= 0) continue;
+                    var n = NodeById(pp[0]);
+                    if (n == null || !n.repeat) continue;
+                    repLv[n.id] = lv;
+                    bought.Add(n.id);
+                    for (int k = 0; k < lv; k++) n.apply(stats);
+                }
             }
             cultureLv.Clear();
             foreach (var e in d.cultureLv)
@@ -1663,7 +1678,7 @@ namespace BlackholeGame
                 var pp = e.Split(':');
                 if (pp.Length == 2 && int.TryParse(pp[1], out var clv) && clv > 0) cultureLv[pp[0]] = clv;
             }
-            winStreak = d.winStreak;
+            winStreak = stale ? 0 : d.winStreak;
             // 길이를 믿지 않는다 — 지역이 늘어난 뒤의 옛 세이브도 그대로 읽히게
             for (int i = 0; i < Essence.Count; i++)
             {
@@ -1674,6 +1689,13 @@ namespace BlackholeGame
             wave.LoadStage(currentStage);
             wave.ApplyAscension(ascensionLevel);
             state = State.Map;
+            if (stale)
+            {
+                // 말없이 되돌리면 "세이브가 날아갔다"로 읽힌다. 무엇이 남았는지까지 같이 보여준다.
+                cheatMsg = Loc.T("save.rebalanced");
+                cheatMsgUntil = Time.unscaledTime + 8f;
+                SaveProgress();   // 새 세대 도장을 찍어 다음 로드부터는 그냥 이어진다
+            }
         }
 
         void NewGame()

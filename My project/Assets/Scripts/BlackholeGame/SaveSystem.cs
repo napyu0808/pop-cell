@@ -12,6 +12,12 @@ namespace BlackholeGame
     public class SaveData
     {
         public int version = 1;
+        // 밸런스 세대. 0 = 2시간 재밸런싱 이전에 저장된 판.
+        //   그때의 골드는 지금 경제에서 의미가 없다(트리 총액이 3,559억 -> 2억 2,521만이라
+        //   당시 중반 소지금만으로도 새 트리를 통째로 살 수 있다). 또 가지가 짧아지며 사라진
+        //   노드 id 는 불러올 때 조용히 버려져서, 쓴 골드만 사라지고 능력치는 안 돌아온다.
+        //   그래서 구세대 세이브는 '진행'만 환생처럼 되돌리고 영구 보상은 남긴다 — GameManager.ContinueGame() 의 stale 분기.
+        public int balanceVer;
         public int stagesCleared;
         public int currentStage;
         public long gold;   // round44: long (JsonUtility 지원)
