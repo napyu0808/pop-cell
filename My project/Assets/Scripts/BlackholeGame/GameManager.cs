@@ -2014,7 +2014,7 @@ namespace BlackholeGame
             bursts.Clear();
             splats.Clear();
             boss = null;
-            foreach (var sr in FindObjectsByType<SpriteRenderer>(FindObjectsSortMode.None))
+            foreach (var sr in FindObjectsByType<SpriteRenderer>())
             {
                 string nm = sr.gameObject.name;
                 if (nm == "Enemy" || nm == "Burst" || nm == "Boss" || nm == "PROBE" || nm == "Splat")
@@ -4754,6 +4754,9 @@ namespace BlackholeGame
             {
                 int lv = CultureLv(i);
                 bool maxed = lv >= CultureMaxLv[i];
+                // 연구원이 한 명도 없으면 산출과 속도는 곱할 대상이 없다 — 사 봐야 골드만 사라진다.
+                // 연구원이 공짜로 딸려오던 시절에는 생길 수 없던 상태라 이제야 막는다.
+                bool locked = i > 0 && MinerCount <= 0;
                 long cost = CultureCost(i);
                 float iconSz = Mathf.Min(rowH - 8f * uiScale, 26f * uiScale);
                 var ir = new Rect(x + pad, rowY + (rowH - iconSz) * 0.5f, iconSz, iconSz);
@@ -4761,7 +4764,7 @@ namespace BlackholeGame
                 var gc0 = GUI.color;
                 if (tex != null)
                 {
-                    GUI.color = maxed ? new Color(1f, 1f, 1f, 0.32f) : new Color(1f, 0.86f, 0.42f);
+                    GUI.color = (maxed || locked) ? new Color(1f, 1f, 1f, 0.32f) : new Color(1f, 0.86f, 0.42f);
                     GUI.DrawTexture(ir, tex, ScaleMode.ScaleToFit);
                 }
                 GUI.color = gc0;
@@ -4773,7 +4776,9 @@ namespace BlackholeGame
                 string effTxt  = i == 0 ? Loc.F("cu.workers", MinerCount.ToString(), MinerMax.ToString())
                                : i == 1 ? Loc.F("cu.load", MinerLoad.ToString("N0"))
                                         : Loc.F("cu.speed", MinerCycleSec.ToString("0.0"));
-                string subTxt  = maxed ? Loc.T("tree.repMaxShort") : "Lv " + lv + " · $" + cost.ToString("N0");
+                string subTxt  = maxed  ? Loc.T("tree.repMaxShort")
+                               : locked ? Loc.T("cu.needWorker")
+                                        : "Lv " + lv + " · $" + cost.ToString("N0");
                 float h1 = ns.CalcHeight(new GUIContent(nameTxt), nameW);
                 float h2 = es.CalcHeight(new GUIContent(effTxt), nameW);
                 float h3 = ss.CalcHeight(new GUIContent(subTxt), nameW);
@@ -4786,7 +4791,7 @@ namespace BlackholeGame
                 {
                     var br = new Rect(x + w - pad - btnW, rowY + (rowH - btnH2) * 0.5f, btnW, btnH2);
                     bool prev = GUI.enabled;
-                    GUI.enabled = gold >= cost && transDir == 0;
+                    GUI.enabled = !locked && gold >= cost && transDir == 0;
                     var bs2 = new GUIStyle(bst);
                     bs2.normal.textColor = bs2.hover.textColor = bs2.active.textColor = bs2.focused.textColor = UiSkin.Ink;
                     FlatText(bs2);

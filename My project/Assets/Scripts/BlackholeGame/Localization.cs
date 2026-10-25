@@ -190,6 +190,7 @@ namespace BlackholeGame
             ["cu.workers"]       = new[] { "{0} / {1}명이 배양을 돌린다", "{0} / {1}名が培養を回す", "{0} / {1} researchers working" },
             ["cu.load"]          = new[] { "1회 배양당 ${0}", "1回の培養で ${0}", "${0} per batch" },
             ["cu.speed"]         = new[] { "배양 주기 {0}초", "培養周期 {0}秒", "{0}s per batch" },
+            ["cu.needWorker"]    = new[] { "연구원이 없으면 소용없다", "研究員がいないと無意味", "Needs a researcher" },
             ["cu.buy"]           = new[] { "강화", "強化", "Upgrade" },
             ["tree.toTop"]     = new[] { "맨 위로", "最上部へ", "Top" },
             ["tree.toBottom"]  = new[] { "맨 아래로", "最下部へ", "Bottom" },
