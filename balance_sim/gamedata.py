@@ -264,15 +264,17 @@ def build():
     def rep(nid, parent, t, ci):
         nodes.append(Node(nid, parent, REPEAT_TIER, t, nid, repeat=True, cost=REP_COST[ci]))
 
-    make("auto", "root", "Auto", 0, "auto")
-    rep("rmult", lane("mult", "auto"), "RMult", 1)
-    rep("rflat", lane("flat", "auto"), "RFlat", 0)
-    rep("rspeed", lane("speed", "auto"), "RSpeed", 2)
+    # 코어에서 뻗는 줄기 순서 = 방향(오른쪽·아래·왼쪽·위). 오른쪽 첫 노드는 고정 공격력.
+    make("flat0", "root", "Flat", tier_of("flat", 0), "flat")
+    rep("rmult", lane("mult", "flat0"), "RMult", 1)
+    rep("rflat", lane("flat", "flat0", 1), "RFlat", 0)
+    rep("rspeed", lane("speed", "flat0"), "RSpeed", 2)
     make("range0", "root", "Range", tier_of("range", 0), "range")
     lane("critc", "range0")
     rep("rrange", lane("range", "range0", 1), "RRange", 3)
     rep("rcritx", lane("critx", "range0"), "RCritX", 4)
-    make("gold0", "root", "Gold", tier_of("gold", 0), "gold")
+    make("auto", "root", "Auto", 0, "auto")     # 왼쪽 줄기의 첫 노드. 골드 1 은 한 칸 뒤.
+    make("gold0", "auto", "Gold", tier_of("gold", 0), "gold")
     lane("time", "gold0")
     rep("rgold", lane("gold", "gold0", 1), "RGold", 5)
     lane("skip", "gold0")

@@ -300,11 +300,12 @@ namespace BlackholeGame
             var list = new List<UpgradeNode>();
             list.Add(new UpgradeNode(RootId, null, Vector2.zero, "hex", "n.core", 0, 0, "nd.core", 0f, s => s.flatBonus += 8f));
 
-            // 공격 — 머리는 자동공격(첫 구매)
-            Make(list, "auto", RootId, T.Auto, 0);
-            Rep(list, "rmult",  Lane(list, LMult, "auto"),  T.RMult, 1);
-            Rep(list, "rflat",  Lane(list, LFlat, "auto"),  T.RFlat, 0);
-            Rep(list, "rspeed", Lane(list, LSpeed, "auto"), T.RSpeed, 2);
+            // 공격 — 머리는 고정 공격력 1(오른쪽 첫 노드). 코어에서 뻗는 줄기 순서가 곧 방향이다:
+            //   오른쪽 -> 아래 -> 왼쪽 -> 위. 그래서 이 블록이 맨 앞이어야 오른쪽에 온다.
+            Make(list, LFlat.key + 0, RootId, T.Flat, TierOf(LFlat, 0));
+            Rep(list, "rmult",  Lane(list, LMult, LFlat.key + 0),  T.RMult, 1);
+            Rep(list, "rflat",  Lane(list, LFlat, LFlat.key + 0, 1), T.RFlat, 0);
+            Rep(list, "rspeed", Lane(list, LSpeed, LFlat.key + 0), T.RSpeed, 2);
 
             // 치명/범위 — 머리 = 범위 1
             Make(list, LRange.key + 0, RootId, T.Range, TierOf(LRange, 0));
@@ -312,8 +313,9 @@ namespace BlackholeGame
             Rep(list, "rrange", Lane(list, LRange, LRange.key + 0, 1), T.RRange, 3);
             Rep(list, "rcritx", Lane(list, LCritX, LRange.key + 0), T.RCritX, 4);
 
-            // 경제 — 머리 = 골드 1
-            Make(list, LGold.key + 0, RootId, T.Gold, TierOf(LGold, 0));
+            // 경제 — 왼쪽 줄기. 자동공격이 첫 노드이고, 골드 1 은 그 한 칸 뒤로 밀렸다.
+            Make(list, "auto", RootId, T.Auto, 0);
+            Make(list, LGold.key + 0, "auto", T.Gold, TierOf(LGold, 0));
             Lane(list, LTime, LGold.key + 0);
             Rep(list, "rgold", Lane(list, LGold, LGold.key + 0, 1), T.RGold, 5);
             Lane(list, LSkip, LGold.key + 0);

@@ -1486,7 +1486,6 @@ namespace BlackholeGame
             mapScroll = -1f;
             RebuildBaseStats();
             stats = baseStats.Clone();
-            GrabRoot();
             wave.LoadStage(0);
             wave.ApplyAscension(ascensionLevel);
             SaveProgress();
@@ -1509,13 +1508,8 @@ namespace BlackholeGame
             SaveProgress();
         }
 
-        // 코어(root) 는 항상 자동 보유 — 이게 있어야 depth-0 노드가 구매 가능해진다
-        void GrabRoot()
-        {
-            if (nodes == null) return;
-            var r = nodes.Find(n => n.IsRoot);
-            if (r != null && bought.Add(r.id)) r.apply(stats);
-        }
+        // 코어(root) 는 자동으로 주지 않는다 — 시작할 땐 코어만 비활성(사각)으로 놓이고, 0골드짜리 코어를
+        //   눌러 켜야 네 줄기의 첫 노드가 드러난다. 저장된 판은 bought 에 "root" 가 들어 있어 그대로 이어진다.
 
         // ---- 저장/불러오기 ----
 
@@ -1686,7 +1680,6 @@ namespace BlackholeGame
             stats = baseStats.Clone();
             bought.Clear();
             repLv.Clear();
-            GrabRoot();
             // 재밸런싱 이전 세이브는 이번 회차를 되돌린다. 그대로 이어붙이면 둘 다 망가진다 —
             //   당시 소지금은 새 트리 전체(2억 2,521만)보다 큰 경우가 많아 불러오자마자 게임이 끝나고,
             //   짧아진 가지에서 사라진 노드 id 는 아래 NodeById 가 null 을 주며 조용히 버려져서
@@ -1773,7 +1766,6 @@ namespace BlackholeGame
             // round54: 이 기기에서 처음 하는 판이면 코어("고정 공격력 +8")를 안 준다 — 0골드짜리라
             //   첫 노드를 직접 사 보는 게 트리를 이해하는 가장 빠른 길이다. 두 번째부터는 예전처럼 쥐여준다.
             bool firstRun = !SaveSystem.FirstRunDone();
-            if (!firstRun) GrabRoot();
             gold = 2000 * MetaLv("m_start");   // 메타를 지웠으니 0
             currentStage = 0;
             stagesCleared = 0;
@@ -2845,7 +2837,6 @@ namespace BlackholeGame
                     repLv.Clear();
                     gold = 2000 * MetaLv("m_start");   // 방금 초기화했으니 사실상 0
                     stats = baseStats.Clone();
-                    GrabRoot();
                     stagesCleared = 0;
                     currentStage = 0;
                     maxScore = 0;
