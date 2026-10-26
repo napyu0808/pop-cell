@@ -107,7 +107,6 @@ namespace BlackholeGame
         // 트리 화면에 "재도전"을 띄울지 — 전투가 끝나고(Result) 들어왔을 때만. 지도에서 그냥 구경하러
         // 들어온 경우엔 재도전할 "직전 전투"가 없으므로 숨긴다.
         bool treeFromResult = false;
-        bool langOpen = false;      // 타이틀 우측 상단 언어 드롭다운이 펼쳐져 있는지
         int ascensionLevel = 0;    // 다음 판에 적용될 승천 난이도 — Win 화면 화살표로 플레이어가 직접 고름
         int maxAscensionUnlocked = 0;  // 지금까지 클리어로 열어본 최고 승천치 — 화살표 선택 상한(영구, 새로시작에만 리셋)
         int lastAscendShardGain = 0;   // Win 화면에 표시할, 방금 승천으로 받은 shard 양
@@ -179,14 +178,20 @@ namespace BlackholeGame
         float MinerLoad => MinerLoadBase * Mathf.Pow(MinerLoadMul, CultureLv(1));
         float CultureGoldPerSec => MinerCount / Mathf.Max(0.01f, MinerCycleSec) * MinerLoad;
         int treeTab;                // round47: 0 = 커서 강화, 1 = 자동 타워
-        float treeMaxPan;           // 트리 세로 스크롤 최대치(맨 위) — 하단 '맨 위로' 버튼이 쓴다
-        bool treeBarDrag;           // 스크롤바 핸들을 잡고 있는 중
-        float treeBarGrabOff;       // 핸들 안에서 잡은 지점(위에서부터) — 드래그가 튀지 않게
         List<UpgradeNode> nodes;
         readonly Dictionary<string, Vector2> npos = new Dictionary<string, Vector2>();
 
         float treeZoom = 0f;
         Vector2 treePan;
+        // 좌우 패닝 한계. DrawTree 가 매 프레임 계산하고, WASD 처리(Update)가 같은 값으로 묶는다.
+        float treePanXMin, treePanXMax, treePanYMin, treePanYMax;
+        // 노드별 줄기 방향(0=R 1=D 2=L 3=U). 연결선이 가로로 꺾일지 세로로 꺾일지 고를 때 쓴다.
+        Dictionary<string, int> treeDirOf = new Dictionary<string, int>();
+        const float TreePanKeySpeed = 900f;   // 키로 끌 때 초당 픽셀
+
+        // 타격 팽창 — 18% 는 "맞았다"가 보이면서도 적의 실제 크기를 오해하게 하지는 않는 선이다.
+        //   0.13초는 커서 기본 공격 간격(0.72초)보다 한참 짧아, 연타해도 계속 부푼 채로 남지 않는다.
+        const float HitPopAmt = 0.18f, HitPopSec = 0.13f;
 
         class Enemy
         {
@@ -194,6 +199,9 @@ namespace BlackholeGame
             public Transform tr;
             public SpriteRenderer sr;
             public float hp, hpMax, r, flash;
+            // 맞은 순간 잠깐 부푸는 양(1 에서 0 으로). 흰 번쩍임만으로는 "맞았다"가 색으로만 오는데,
+            //   크기가 같이 움직이면 손에 닿는 느낌이 생긴다. 죽는 적한테도 켜 두면 터지기 직전에 한 번 부푼다.
+            public float hitPop;
             public Vector2 vel;
             public Color baseColor;
             public float wobSpeed, wobPhase;
@@ -281,6 +289,11 @@ namespace BlackholeGame
         Camera cam;
         Sprite discSprite, splatSprite;
         Texture2D nodeRingTex;   // 트리 노드용 네온 글로우 링(round40)
+        // 노드 사각->원 전환 진행도(0~1). 산 노드만 들어오고, 세이브로 불러온 것은 항목이 없어 1로 본다
+        //   — 지난 회차에 산 노드들이 트리를 열 때마다 한꺼번에 펼쳐지면 그게 더 산만하다.
+        readonly Dictionary<string, float> nodeMorph = new Dictionary<string, float>();
+        readonly List<string> morphKeys = new List<string>();   // 순회 중 수정을 피하려는 임시 버퍼
+        const float NodeMorphSec = 0.28f;
         Sprite[] cellSprites;   // 지역(0~7)별로 다른 잡몹 실루엣 — round39
         float[] cellVisualBoost; // 종별 시각 배율(1.0 이상) — 타격판정보다 그림이 작아 보이는 문제 보정
         float[] bossVisualBoost; // 보스도 같은 문제(종마다 실제로 차지하는 면적이 다름) — 지역별 배율
@@ -354,7 +367,6 @@ namespace BlackholeGame
 
         void Awake()
         {
-            Loc.LoadPref();
             stats = new Stats();       // 직렬화된 옛 값 무시, 항상 코드 기본값
             wave = new WaveConfig();
             fieldSize = new Vector2(26f, 16f);   // 보스 텔레포트가 의미있게 넓혀둠(기존 16×10) — 커서 상대 크기 체감도 줄어듦
@@ -949,6 +961,41 @@ namespace BlackholeGame
                 }
             tex.SetPixels32(px); tex.Apply();
             return Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), size, 0, SpriteMeshType.FullRect);
+        }
+
+        // 노드 모양 — 사각형에서 원으로 가는 중간 단계들을 미리 구워 둔다.
+        //   매 프레임 텍스처를 새로 만들 수는 없고, 사각형과 원을 겹쳐 알파로 섞으면 전환 중에
+        //   모서리가 두 겹으로 비친다. 모서리 반경만 다른 그림을 몇 장 구워 두고 골라 쓰면
+        //   진짜로 모양이 바뀌는 것처럼 보인다. 단계는 이 정도면 계단이 안 보인다.
+        const int NodeShapeSteps = 10;
+        Texture2D[] nodeShapeTex;
+
+        Texture2D[] BuildNodeShapeTex()
+        {
+            const int size = 64;
+            var outp = new Texture2D[NodeShapeSteps];
+            float half = size * 0.5f;
+            for (int s = 0; s < NodeShapeSteps; s++)
+            {
+                float k = s / (float)(NodeShapeSteps - 1);          // 0 = 사각, 1 = 원
+                float r = Mathf.Lerp(size * 0.10f, half - 1f, k);   // 모서리 반경
+                float ext = half - 1f - r;                           // 직선 구간 길이
+                var tex = new Texture2D(size, size, TextureFormat.RGBA32, false) { filterMode = FilterMode.Bilinear };
+                var px = new Color32[size * size];
+                for (int y = 0; y < size; y++)
+                    for (int x = 0; x < size; x++)
+                    {
+                        // 둥근 사각형까지의 거리 — 모서리 반경 r 인 사각형의 외곽 거리장
+                        float dx = Mathf.Abs(x + 0.5f - half) - ext;
+                        float dy = Mathf.Abs(y + 0.5f - half) - ext;
+                        float d = (dx > 0f && dy > 0f) ? Mathf.Sqrt(dx * dx + dy * dy) : Mathf.Max(dx, dy);
+                        float a = Mathf.Clamp01(r - d);
+                        px[y * size + x] = new Color32(255, 255, 255, (byte)(a * 255f));
+                    }
+                tex.SetPixels32(px); tex.Apply();
+                outp[s] = tex;
+            }
+            return outp;
         }
 
         // 트리 노드 뱃지 테두리 — 링 라인에서 안팎으로 부드럽게 번지는 네온 글로우.
@@ -1715,8 +1762,14 @@ namespace BlackholeGame
             //   지운 뒤 RebuildBaseStats() 로 순정 baseStats 를 다시 만들어야 능력치에서도 빠진다.
             metaLv.Clear();
             metaCurrency = 0;
+            // 같은 이유로 배양·정수·연속클리어도 지운다. 환생은 이것들을 남기지만 "새로 시작"은 남기지
+            //   않는다 — 지우고 시작했는데 연구원이 그대로 돌아가고 있으면 지워진 것으로 보이지 않는다.
+            cultureLv.Clear();
+            for (int i = 0; i < Essence.Count; i++) { essence[i] = 0; essLv[i] = 0; }
+            winStreak = 0;
             RebuildBaseStats();
             stats = baseStats != null ? baseStats.Clone() : stats;
+            SyncEssence();   // stats 를 새로 만든 뒤에 — 먼저 부르면 바로 위 Clone 이 덮어쓴다
             // round54: 이 기기에서 처음 하는 판이면 코어("고정 공격력 +8")를 안 준다 — 0골드짜리라
             //   첫 노드를 직접 사 보는 게 트리를 이해하는 가장 빠른 길이다. 두 번째부터는 예전처럼 쥐여준다.
             bool firstRun = !SaveSystem.FirstRunDone();
@@ -1930,7 +1983,7 @@ namespace BlackholeGame
                 if (dist > Range + e.r) continue;
                 if (dist > 0.01f && Vector2.Angle(dir, d) > HalfAng) continue;
                 if (e == boss && e.shielded) continue;
-                e.hp -= dmg * (e == boss ? stats.towerBossMul[i] * EssBossMul : 1f); e.flash = 0.06f;
+                e.hp -= dmg * (e == boss ? stats.towerBossMul[i] * EssBossMul : 1f); e.flash = 0.06f; e.hitPop = 1f;
                 if (e.hp <= 0f && KillEnemy(e, false)) stop = true;
             }
             enemies.RemoveAll(x => x.dead);
@@ -1960,7 +2013,7 @@ namespace BlackholeGame
                 float side = Mathf.Abs(d.x * dir.y - d.y * dir.x);
                 if (side > HalfW + e.r) continue;
                 if (e == boss && e.shielded) continue;
-                e.hp -= dmg * (e == boss ? stats.towerBossMul[i] * EssBossMul : 1f); e.flash = 0.06f;
+                e.hp -= dmg * (e == boss ? stats.towerBossMul[i] * EssBossMul : 1f); e.flash = 0.06f; e.hitPop = 1f;
                 if (e.hp <= 0f && KillEnemy(e, false)) stop = true;
             }
             enemies.RemoveAll(x => x.dead);
@@ -1995,7 +2048,7 @@ namespace BlackholeGame
             foreach (var e in sniperPick)
             {
                 if (e.dead || (e == boss && e.shielded)) continue;
-                e.hp -= dmg * (e == boss ? stats.towerBossMul[i] * EssBossMul : 1f); e.flash = 0.10f;
+                e.hp -= dmg * (e == boss ? stats.towerBossMul[i] * EssBossMul : 1f); e.flash = 0.10f; e.hitPop = 1f;
                 if (e.hp <= 0f) KillEnemy(e, true);
                 SpawnTowerFx(i, 2, ((Vector2)e.tr.position - TowerPos[i]).magnitude,
                              Mathf.Atan2(e.tr.position.x - TowerPos[i].x, e.tr.position.y - TowerPos[i].y) * Mathf.Rad2Deg);
@@ -2031,7 +2084,7 @@ namespace BlackholeGame
                     if (!(isBoss && e.shielded))
                     {
                         e.hp -= b.dmg * (isBoss ? b.bossMul * EssBossMul : 1f);
-                        e.flash = 0.06f;
+                        e.flash = 0.06f; e.hitPop = 1f;
                         if (e.hp <= 0f && KillEnemy(e, false)) stop = true;
                     }
                     if (b.tr) Destroy(b.tr.gameObject);
@@ -2285,7 +2338,7 @@ namespace BlackholeGame
             boss.tr.position = to;
             float ang = Random.value * Mathf.PI * 2f;
             boss.vel = new Vector2(Mathf.Cos(ang), Mathf.Sin(ang)) * 0.35f;
-            boss.flash = 0.15f;
+            boss.flash = 0.15f; boss.hitPop = 1f;
             SpawnBurst(to, Color.white, boss.r * 1.3f);
             if (sound != null) sound.Play(Sfx.Boss, 0.45f, 1.5f);
         }
@@ -2410,6 +2463,33 @@ namespace BlackholeGame
             UpdateTransition(dt);
 
             var kb = Keyboard.current;
+
+            // 노드 사각->원 전환 — 트리를 보고 있지 않아도 흘려보낸다. 사고 바로 지도로 나가면
+            //   다음에 들어왔을 때 멈춰 있던 전환이 그제서야 재생되는데, 그게 더 이상하다.
+            if (nodeMorph.Count > 0)
+            {
+                morphKeys.Clear();
+                foreach (var kv in nodeMorph) if (kv.Value < 1f) morphKeys.Add(kv.Key);
+                for (int i = 0; i < morphKeys.Count; i++)
+                    nodeMorph[morphKeys[i]] = Mathf.Min(1f, nodeMorph[morphKeys[i]] + Time.unscaledDeltaTime / NodeMorphSec);
+            }
+
+            // 트리 패닝 — 축척을 고정한 뒤로 가지가 화면보다 넓어질 수 있어 좌우 이동이 필요해졌다.
+            //   OnGUI 의 KeyDown 이벤트는 키 반복에 맞춰 띄엄띄엄 와서 끄는 맛이 안 난다. 여기서 매 프레임 민다.
+            //   한계값(treePanX*, treePanY*)은 DrawTree 가 그 프레임에 계산해 둔 것을 그대로 쓴다.
+            if (state == State.Tree && kb != null && !repOpen)
+            {
+                float kx = (kb.aKey.isPressed || kb.leftArrowKey.isPressed ? 1f : 0f)
+                         - (kb.dKey.isPressed || kb.rightArrowKey.isPressed ? 1f : 0f);
+                float ky = (kb.wKey.isPressed || kb.upArrowKey.isPressed ? 1f : 0f)
+                         - (kb.sKey.isPressed || kb.downArrowKey.isPressed ? 1f : 0f);
+                if (kx != 0f || ky != 0f)
+                {
+                    float sp = TreePanKeySpeed * Time.unscaledDeltaTime;
+                    treePan.x = Mathf.Clamp(treePan.x + kx * sp, treePanXMin, treePanXMax);
+                    treePan.y = Mathf.Clamp(treePan.y + ky * sp, treePanYMin, treePanYMax);
+                }
+            }
 
             // ESC — 상태별 처리
             if (kb != null && kb.escapeKey.wasPressedThisFrame)
@@ -2562,7 +2642,12 @@ namespace BlackholeGame
                 e.tr.position = p;
                 e.tr.Rotate(0f, 0f, e.rotSpeed * dt);   // 이동 방향과 별개로 계속 회전 — 불규칙하게 뒤척이는 느낌
 
-                float dd = e.r * 2f * e.visScale;
+                // 타격 팽창 — 맞자마자 최대로 부풀고 HitPopSec 동안 제자리로 돌아온다.
+                //   올라가는 데 시간을 쓰면 때린 순간과 반응이 어긋나 둔해 보인다. 끝만 부드러우면 된다.
+                if (e.hitPop > 0f) e.hitPop = Mathf.Max(0f, e.hitPop - dt / HitPopSec);
+                float pop = 1f + HitPopAmt * e.hitPop * e.hitPop * (3f - 2f * e.hitPop);
+
+                float dd = e.r * 2f * e.visScale * pop;
                 float sx = 1f + 0.055f * Mathf.Sin(t * e.wobSpeed + e.wobPhase);
                 float sy = 1f + 0.055f * Mathf.Sin(t * e.wobSpeed * 1.13f + e.wobPhase + 1.7f);
                 e.tr.localScale = new Vector3(dd * sx, dd * sy, 1f);
@@ -2672,7 +2757,7 @@ namespace BlackholeGame
                 if (blocked) amount = 0f;
 
                 if (!blocked) e.hp -= isBoss ? amount * EssBossMul : amount;
-                e.flash = 0.08f;
+                e.flash = 0.08f; e.hitPop = 1f;
 
                 if (floaters.Count < 40)
                     floaters.Add(new Floater
@@ -2879,7 +2964,7 @@ namespace BlackholeGame
                         if (isBoss && o.shielded) continue;
                         float dmg = isBoss ? o.hpMax * stats.BombBossFrac * BombBossTickFrac * EssBossMul : hit;
                         o.hp -= dmg;
-                        o.flash = 0.05f;
+                        o.flash = 0.05f; o.hitPop = 1f;
                         if (o.hp <= 0f && KillEnemy(o, false)) stop = true;
                     }
                     enemies.RemoveAll(x => x.dead);
@@ -2959,6 +3044,7 @@ namespace BlackholeGame
             if (n == null || !IsBuyable(n) || gold < n.cost) return;
             gold -= n.cost;
             bought.Add(n.id);
+            nodeMorph[n.id] = 0f;   // 사각 -> 원 전환 시작
             n.apply(stats);
             if (sound != null) sound.Play(Sfx.Buy, 0.75f);
             SaveProgress();
@@ -3259,6 +3345,7 @@ namespace BlackholeGame
             if (bought == null) bought = new HashSet<string>();          // 직렬화 안 됨
             if (splatSprite == null) splatSprite = BuildSplatSprite();
             if (nodeRingTex == null) nodeRingTex = BuildNodeRingTex();
+            if (nodeShapeTex == null) nodeShapeTex = BuildNodeShapeTex();
             if (stats == null) stats = new Stats();
             if (wave == null) wave = new WaveConfig();
             if (cam == null) return;
@@ -3426,20 +3513,54 @@ namespace BlackholeGame
             GUI.DrawTexture(new Rect(0, 0, w, h), UiSkin.VGrad);
 
             //   값은 Figma bg_glass 의 배치를 화면 비율로 옮긴 것. (x, y, 지름, 알파)
+            //   깊이는 세 겹으로 만든다. 현미경은 한 평면만 초점이 맞고 위아래는 흐려지므로,
+            //   멀수록 크고 흐리고 거의 안 움직이게, 가까울수록 작고 또렷하고 빨리 흐르게 둔다.
+            //   같은 크기 원을 흩뿌리면 아무리 많이 놔도 벽지처럼 납작해진다 — 깊이는 시차가 만든다.
             float tt = Application.isPlaying ? Time.unscaledTime : 0f;
+
+            // 먼 층 — 초점 밖의 큰 덩어리. 화면 밖으로 반쯤 걸쳐 두어 "더 있다"는 느낌을 준다.
+            for (int i = 0; i < BgFar.Length; i++)
+            {
+                var b = BgFar[i];
+                float fx = Mathf.Sin(tt * 0.031f + i * 2.3f) * 7f * uiScale;
+                float fy = Mathf.Cos(tt * 0.024f + i * 1.1f) * 5f * uiScale;
+                float fd = b.z * h;
+                GUI.color = new Color(0.70f, 0.92f, 0.94f, b.w);
+                GUI.DrawTexture(new Rect(b.x * w - fd * 0.5f + fx, b.y * h - fd * 0.5f + fy, fd, fd), UiSkin.Bubble);
+            }
+
+            // 가운데 층 — 핵이 보이는 세포. 이 층이 "무엇을 들여다보는 중인지"를 말해준다.
             for (int i = 0; i < BgCells.Length; i++)
             {
                 var b = BgCells[i];
                 float drift = Mathf.Sin(tt * 0.11f + i * 1.7f) * 10f * uiScale;      // 아주 느린 부유
+                float sway = Mathf.Cos(tt * 0.07f + i * 2.9f) * 6f * uiScale;
                 float d = b.z * h;
-                float cx = b.x * w, cy = b.y * h + drift;
+                float cx = b.x * w + sway, cy = b.y * h + drift;
                 GUI.color = new Color(0.78f, 0.95f, 0.95f, b.w * 0.95f);
                 GUI.DrawTexture(new Rect(cx - d * 0.5f, cy - d * 0.5f, d, d), UiSkin.Bubble);
+                // 막 — 몸통보다 한 겹 크게 얹어 가장자리를 두껍게. 윤곽이 생기면 '덩어리'로 읽힌다.
+                float md = d * 1.10f;
+                GUI.color = new Color(0.56f, 0.85f, 0.88f, b.w * 0.30f);
+                GUI.DrawTexture(new Rect(cx - md * 0.5f, cy - md * 0.5f, md, md), UiSkin.Bubble);
                 // 핵 — 가운데에서 살짝 비낀 작은 원
                 float nd = d * 0.26f;
                 GUI.color = new Color(0.62f, 0.88f, 0.90f, b.w * 1.05f);
                 GUI.DrawTexture(new Rect(cx - nd * 0.5f + d * 0.08f, cy - nd * 0.5f + d * 0.06f, nd, nd), UiSkin.Bubble);
             }
+
+            // 가까운 층 — 작은 부유물. 가장 빨리 흐르고 화면을 가로질러 돌아온다.
+            for (int i = 0; i < BgDust.Length; i++)
+            {
+                var b = BgDust[i];
+                float sp = 0.012f + (i % 5) * 0.004f;
+                float px = Mathf.Repeat(b.x + tt * sp, 1.12f) - 0.06f;   // 양옆으로 조금 넘겨 등장·퇴장을 감춘다
+                float py = b.y + Mathf.Sin(tt * 0.19f + i * 0.9f) * 0.012f;
+                float dd = b.z * h;
+                GUI.color = new Color(0.46f, 0.80f, 0.84f, b.w);
+                GUI.DrawTexture(new Rect(px * w - dd * 0.5f, py * h - dd * 0.5f, dd, dd), UiSkin.Bubble);
+            }
+
             GUI.color = Color.white;
             GUI.DrawTexture(new Rect(0, 0, w, h), UiSkin.Vignette);
             GUI.color = gc;
@@ -3454,6 +3575,24 @@ namespace BlackholeGame
             new Vector4(0.51f, 0.11f, 0.18f, 0.22f), new Vector4(0.39f, 0.65f, 0.21f, 0.24f),
             new Vector4(0.62f, 0.46f, 0.14f, 0.26f), new Vector4(0.27f, 0.42f, 0.12f, 0.22f),
             new Vector4(0.94f, 0.52f, 0.16f, 0.20f), new Vector4(0.04f, 0.52f, 0.14f, 0.22f),
+        };
+
+        // 먼 층 — 초점 밖. 지름이 화면 높이를 넘고 알파가 10% 아래여야 '흐림'으로 읽힌다.
+        static readonly Vector4[] BgFar =
+        {
+            new Vector4(0.18f, 0.30f, 1.15f, 0.085f), new Vector4(0.82f, 0.68f, 1.35f, 0.075f),
+            new Vector4(0.56f, 0.06f, 0.90f, 0.070f), new Vector4(0.36f, 0.96f, 1.05f, 0.065f),
+        };
+
+        // 가까운 층 — 작은 부유물. x 는 시작 위치일 뿐이고 매 프레임 흘러간다.
+        static readonly Vector4[] BgDust =
+        {
+            new Vector4(0.05f, 0.23f, 0.030f, 0.26f), new Vector4(0.22f, 0.61f, 0.022f, 0.22f),
+            new Vector4(0.37f, 0.14f, 0.026f, 0.24f), new Vector4(0.49f, 0.88f, 0.019f, 0.20f),
+            new Vector4(0.61f, 0.35f, 0.034f, 0.27f), new Vector4(0.73f, 0.72f, 0.023f, 0.21f),
+            new Vector4(0.88f, 0.26f, 0.028f, 0.25f), new Vector4(0.14f, 0.45f, 0.020f, 0.19f),
+            new Vector4(0.66f, 0.55f, 0.025f, 0.23f), new Vector4(0.31f, 0.78f, 0.031f, 0.22f),
+            new Vector4(0.94f, 0.64f, 0.021f, 0.20f), new Vector4(0.44f, 0.42f, 0.027f, 0.24f),
         };
 
         // 스킨 버튼 위에 얹을 글자 전용 스타일 — 배경은 비우고 글자만 진한 청록
@@ -3585,7 +3724,7 @@ namespace BlackholeGame
                     normal = { textColor = new Color(Gold.r, Gold.g, Gold.b, alpha) }   // 어두운 감염지 위 — 밝은 노랑
                 };
                 FlatText(gs);   // 마우스 오버해도 흰색으로 안 바뀜
-                string gtxt = $"+${gf.amount:N0}";
+                string gtxt = "+$" + Money(gf.amount);
                 GUI.Label(FitRect(gs, gtxt, p), gtxt, gs);
             }
 
@@ -3659,8 +3798,8 @@ namespace BlackholeGame
                 fontSize = Mathf.RoundToInt(13f * s), normal = { textColor = new Color(0.20f, 0.24f, 0.28f) } };
             FlatText(sub);
             string infoTxt = ascensionLevel > 0
-                ? Loc.F("map.infoAsc", gold.ToString("N0"), retryCount, stagesCleared, n, ascensionLevel)
-                : Loc.F("map.info", gold.ToString("N0"), retryCount, stagesCleared, n);
+                ? Loc.F("map.infoAsc", Money(gold), retryCount, stagesCleared, n, ascensionLevel)
+                : Loc.F("map.info", Money(gold), retryCount, stagesCleared, n);
             GUI.Label(new Rect(0, h * 0.045f + 38f * s, w, 24f * s), infoTxt, sub);
 
             // ---- 우측 상단 설정(톱니바퀴) — 누르면 계속하기/설정/타이틀로 메뉴 ----
@@ -4017,37 +4156,6 @@ namespace BlackholeGame
             FlatText(sub);
             GUI.Label(new Rect(0, h * 0.13f + 92f * uiScale, w, 34f * uiScale), Loc.T("title.sub"), sub);
 
-            // ---- 우측 상단 언어 드롭다운 (설정창에서 이 자리로 옮김, round37) ----
-            // 닫혀 있을 땐 현재 언어만, 누르면 3개가 펼쳐지고 고르면 바로 적용된다.
-            {
-                float lw = Mathf.Min(150f * uiScale, w * 0.22f), lh = 34f * uiScale;
-                float lx = w - lw - 22f * uiScale, ly = 18f * uiScale;
-                var lst = Btn(Mathf.RoundToInt(14f * uiScale));
-                lst.normal.textColor = InkDark; FlatText(lst);
-                // 펼친 목록이 먼저 클릭을 받도록, 열려 있으면 목록을 "나중에" 그린다(IMGUI 는 먼저 그린 쪽이 우선)
-                if (langOpen)
-                {
-                    for (int li = 0; li < Loc.LangNames.Length; li++)
-                    {
-                        bool sel = (int)Loc.Cur == li;
-                        var ist = Btn(Mathf.RoundToInt(14f * uiScale));
-                        ist.normal.textColor = sel ? new Color(0.12f, 0.42f, 0.22f) : InkDark;
-                        FlatText(ist);
-                        var ir = new Rect(lx, ly + (lh + 4f * uiScale) * (li + 1), lw, lh);
-                        if (UiBtn(ir, (sel ? "▶ " : "   ") + Loc.LangNames[li], ist))
-                        { Loc.SetLang((Lang)li); langOpen = false; }
-                    }
-                }
-                if (UiBtn(new Rect(lx, ly, lw, lh), Loc.LangNames[(int)Loc.Cur] + (langOpen ? "  ▲" : "  ▼"), lst))
-                    langOpen = !langOpen;
-                // 목록 밖을 누르면 닫힌다
-                if (langOpen && Event.current.type == EventType.MouseDown)
-                {
-                    var box = new Rect(lx, ly, lw, lh + (lh + 4f * uiScale) * Loc.LangNames.Length);
-                    if (!box.Contains(Event.current.mousePosition)) langOpen = false;
-                }
-            }
-
             // 승천 난이도 선택 — 한 번이라도 승천을 해봤으면(8지역 클리어) 타이틀에서 미리 고르고 플레이 시작.
             // 그 전엔 통째로 안 보임(버튼 위치는 기본값 h*0.56 그대로). 보일 때는 실제로 그린 높이만큼
             // 버튼 줄을 아래로 밀어서 겹치지 않게 한다(해상도/uiScale 달라져도 안전하도록 계산으로).
@@ -4237,8 +4345,8 @@ namespace BlackholeGame
             float ly = panel.y + 94f * K, lh = 33f * K;
             GUI.Label(new Rect(panel.x, ly, pw, lh), Loc.T("res.cycle"), head);
             GUI.Label(new Rect(panel.x, ly + lh, pw, lh), Loc.F("res.kills", cycleKills), big);
-            GUI.Label(new Rect(panel.x, ly + lh * 2f, pw, lh), Loc.F("res.gain", cycleGold.ToString("N0")), bigY);
-            GUI.Label(new Rect(panel.x, ly + lh * 3f + 6f * K, pw, lh), Loc.F("res.have", gold.ToString("N0")), headY);
+            GUI.Label(new Rect(panel.x, ly + lh * 2f, pw, lh), Loc.F("res.gain", Money(cycleGold)), bigY);
+            GUI.Label(new Rect(panel.x, ly + lh * 3f + 6f * K, pw, lh), Loc.F("res.have", Money(gold)), headY);
             if (essGainedThisRun > 0)
             {
                 var essSt = new GUIStyle(big) { normal = { textColor = new Color(0.46f, 0.92f, 0.74f) } };
@@ -4302,7 +4410,7 @@ namespace BlackholeGame
             int mm = Mathf.FloorToInt(winTimeSec / 60f), ss = Mathf.FloorToInt(winTimeSec % 60f);
             GUI.Label(new Rect(panel.x, curY, pw, lh), Loc.F("win.time", mm, ss.ToString("00")), head); curY += lh;
             GUI.Label(new Rect(panel.x, curY, pw, lh), Loc.F("win.line1", winKills), head); curY += lh;
-            GUI.Label(new Rect(panel.x, curY, pw, lh), Loc.F("win.goldEarned", winGold.ToString("N0")), goldL); curY += lh;
+            GUI.Label(new Rect(panel.x, curY, pw, lh), Loc.F("win.goldEarned", Money(winGold)), goldL); curY += lh;
             GUI.Label(new Rect(panel.x, curY, pw, lh), Loc.F("win.ascend", lastAscendLevelPlayed, lastAscendShardGain), ascL); curY += lh + 14f;
 
             // 버튼은 "타이틀로" 하나만 — 다음 승천 난이도는 타이틀 화면에서 고른다(여기서 바로 이어가는
@@ -4341,12 +4449,24 @@ namespace BlackholeGame
         // round41: 직각(ㄱ자) 꺾임 3단 — 부모(a, 아래)에서 수직으로 올라가다 부모·자식 행의 중간
         //   높이에서 꺾여 자식의 x로 이동한 뒤 다시 수직으로 자식(b)까지. 같은 부모를 둔 형제들은
         //   전부 같은 중간 높이에서 꺾이므로 "선반(shelf)" 하나에 나란히 매달린 것처럼 보인다.
-        static void DrawConnector(Vector2 a, Vector2 b, float w, Color col)
+        // 부모에서 자식으로 가는 ㄱ자 경로. 줄기가 위아래로 뻗으면 세로로 먼저 꺾고, 좌우로 뻗으면
+        //   가로로 먼저 꺾어야 선이 가지를 따라간다 — 반대로 하면 노드 사이를 가로질러 지나간다.
+        static void DrawConnector(Vector2 a, Vector2 b, float w, Color col, bool horizontal)
         {
-            float midY = (a.y + b.y) * 0.5f;
-            DrawAxisLine(a, new Vector2(a.x, midY), w, col);
-            DrawAxisLine(new Vector2(a.x, midY), new Vector2(b.x, midY), w, col);
-            DrawAxisLine(new Vector2(b.x, midY), b, w, col);
+            if (horizontal)
+            {
+                float midX = (a.x + b.x) * 0.5f;
+                DrawAxisLine(a, new Vector2(midX, a.y), w, col);
+                DrawAxisLine(new Vector2(midX, a.y), new Vector2(midX, b.y), w, col);
+                DrawAxisLine(new Vector2(midX, b.y), b, w, col);
+            }
+            else
+            {
+                float midY = (a.y + b.y) * 0.5f;
+                DrawAxisLine(a, new Vector2(a.x, midY), w, col);
+                DrawAxisLine(new Vector2(a.x, midY), new Vector2(b.x, midY), w, col);
+                DrawAxisLine(new Vector2(b.x, midY), b, w, col);
+            }
         }
 
         // round45: 반복 강화 — 트리 안이 아니라 능력치 패널 바로 아래 고정 패널.
@@ -4566,6 +4686,19 @@ namespace BlackholeGame
         // 정수 효과 수치 — 100 단위는 천단위 쉼표로, 소수는 한 자리까지
         static string Fmt(float v) => v >= 100f ? v.ToString("N0") : v.ToString("0.#");
 
+        // 돈은 자릿수가 아니라 크기로 읽혀야 한다 — 1,234,567 은 세어 봐야 알지만 1.23M 은 바로 보인다.
+        //   천 단위로 K M B T, 소수는 최대 두 자리이고 뒤에 붙는 0 은 버린다(630K 이지 630.00K 가 아니다).
+        //   1,000 미만은 그대로 둔다. 초반 가격이 세 자리인데 0.05K 라고 쓰면 오히려 못 읽는다.
+        public static string Money(double v)
+        {
+            double a = System.Math.Abs(v);
+            if (a < 1000d) return v.ToString("N0");
+            string[] suf = { "K", "M", "B", "T", "Qa", "Qi" };
+            int k = 0;
+            while (a >= 1000d && k < suf.Length) { a /= 1000d; v /= 1000d; k++; }
+            return v.ToString("0.##") + suf[k - 1];
+        }
+
         // ---- 배양 연구소 그림 -----------------------------------------------
         //   round57: 피그마에서 장면을 잡고(파일 KzXFPO0v5oMqAL5lR2TSTg) 그대로 옮겼다.
         //   좌표는 전부 그 아트보드(960x560) 기준이고, 화면 비율에 맞춰 통째로 축소·중앙정렬된다.
@@ -4772,7 +4905,7 @@ namespace BlackholeGame
                 normal = { textColor = new Color(0.55f, 0.88f, 0.70f) } };
             FlatText(rate);
             GUI.Label(new Rect(x + pad, y + pad * 0.6f + head, w - pad * 2f, head),
-                      Loc.F("tree.cultureRate", CultureGoldPerSec.ToString("N0")), rate);
+                      Loc.F("tree.cultureRate", Money(CultureGoldPerSec)), rate);
 
             var ns = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleLeft,
                 fontSize = Mathf.Max(9, Mathf.RoundToInt(12f * uiScale * rowK)), normal = { textColor = Ink } };
@@ -4809,11 +4942,11 @@ namespace BlackholeGame
                 float nameW = Mathf.Max(30f, w - pad * 2f - (ir.width + 6f * uiScale) - btnW - 6f * uiScale);
                 string nameTxt = Loc.T("n.culture" + i);
                 string effTxt  = i == 0 ? Loc.F("cu.workers", MinerCount.ToString(), MinerMax.ToString())
-                               : i == 1 ? Loc.F("cu.load", MinerLoad.ToString("N0"))
+                               : i == 1 ? Loc.F("cu.load", Money(MinerLoad))
                                         : Loc.F("cu.speed", MinerCycleSec.ToString("0.0"));
                 string subTxt  = maxed  ? Loc.T("tree.repMaxShort")
                                : locked ? Loc.T("cu.needWorker")
-                                        : "Lv " + lv + " · $" + cost.ToString("N0");
+                                        : "Lv " + lv + " · $" + Money(cost);
                 float h1 = ns.CalcHeight(new GUIContent(nameTxt), nameW);
                 float h2 = es.CalcHeight(new GUIContent(effTxt), nameW);
                 float h3 = ss.CalcHeight(new GUIContent(subTxt), nameW);
@@ -4982,7 +5115,7 @@ namespace BlackholeGame
                 string eff = n.desc != null && n.desc.StartsWith("nd.") ? Loc.F("rs." + n.desc.Substring(3), n.descArg) : "";
                 string sub = locked ? Loc.F("tree.lockTier", n.tier)
                            : !open ? Loc.T("tree.repLocked")
-                           : "Lv " + RepLevel(n.id) + " · $" + n.cost.ToString("N0");
+                           : "Lv " + RepLevel(n.id) + " · $" + Money(n.cost);
 
                 // 비율이 아니라 글자 높이로 쌓아야 행이 줄어도 안 깎인다. 남는 높이는 위아래로 나눈다.
                 float h1 = ns.CalcHeight(new GUIContent(Loc.T(n.label)), nameW);
@@ -5013,20 +5146,6 @@ namespace BlackholeGame
 
         }
 
-        // round47: 기준 가로 칸 수 = 커서 탭(가장 넓은 탭)의 가지 끝 개수. 탭이 바뀌어도 노드 크기와
-        //   행 간격이 그대로이게 하는 기준값 — 노드 목록은 세션 내내 안 변하니 한 번만 센다.
-        int treeRefCols;
-        int TreeRefCols()
-        {
-            if (treeRefCols > 0 || nodes == null) return Mathf.Max(1, treeRefCols);
-            var parents = new HashSet<string>();
-            foreach (var n in nodes) if (!n.repeat && n.tab == 0) parents.Add(n.parentId);
-            int leaves = 0;
-            foreach (var n in nodes) if (!n.repeat && n.tab == 0 && !n.IsRoot && !parents.Contains(n.id)) leaves++;
-            treeRefCols = Mathf.Max(1, leaves);
-            return treeRefCols;
-        }
-
         void DrawTree()
         {
             // round41: 어두운 배경 -> 타이틀/지도와 같은 밝은 유리 톤으로 통일
@@ -5038,7 +5157,9 @@ namespace BlackholeGame
             float barH = 118f * uiScale;
             Rect statRect = StatPanelRect(barH);   // 우측 상단 능력치 패널
 
-            const float nodeSz = 72f, rowSpacing = 230f, colUnit = 120f;   // round50: 노드 10% 축소(80 -> 72)
+            // 자동 축척을 없앤 뒤로 이 값이 화면에 그대로 나온다 — 예전엔 어차피 줄여 그려서 커도 티가 안 났다.
+            //   참고한 트리처럼 한 화면에 가지 모양이 보이려면 노드가 작고 간격이 촘촘해야 한다.
+            const float nodeSz = 36f, rowSpacing = 84f, colUnit = 58f;
 
             // round41: 부채꼴로 뻗던 걸 걷어내고 "티어 = 한 행"인 계층형(org-chart) 레이아웃으로 —
             //   같은 부모의 자식들이 한 선반(shelf)처럼 가로로 늘어서고, 세분화될수록(자식이 많을수록)
@@ -5063,138 +5184,153 @@ namespace BlackholeGame
             }
 
             var depthOf = new Dictionary<string, int>();
-            var weightOf = new Dictionary<string, int>();
-            // 가중치 = 그 아래 "잎(가지 끝)" 개수 — 가지 하나가 차지하는 가로 칸 수.
-            //   round43: 전체 트리 기준(드러난 것만이 아니라). 스크롤 방식에선 열이 제자리에 있어야
-            //   한다 — 드러난 것 기준이면 노드를 살 때마다 가지들이 옆으로 밀려 움직였다.
-            int ComputeDepthWeight(UpgradeNode n, int depth)
+            void ComputeDepth(UpgradeNode n, int depth)
             {
                 depthOf[n.id] = depth;
-                int w = 0;
                 if (childrenOf.TryGetValue(n.id, out var kids))
-                    foreach (var k in kids) w += ComputeDepthWeight(k, depth + 1);
-                if (w == 0) w = 1;   // 가지 끝 = 한 칸
-                weightOf[n.id] = w;
-                return w;
+                    foreach (var k in kids) ComputeDepth(k, depth + 1);
             }
-            if (rootNode != null) ComputeDepthWeight(rootNode, 0);
+            if (rootNode != null) ComputeDepth(rootNode, 0);
 
-            var xOf = new Dictionary<string, float>();
-            void AssignX(UpgradeNode n, float xMin, float xMax)
+            // 줄기에 수직인 자리 — "윤곽 맞대기" 로 배치한다. 예전에는 가지 끝(잎) 개수만큼 칸을 줘서,
+            //   잎이 많은 서브트리(타워의 변신 뒤쪽)가 옆 갈래를 몇 칸씩 밀어냈다. 이제는 서브트리의
+            //   깊이별 좌우 끝을 재서, 겹치지 않는 한 형제끼리 한 칸(colUnit) 간격으로 바짝 붙인다.
+            //   전체 트리 기준이라(드러난 것만이 아니라) 노드를 살 때 자리가 움직이지 않는다.
+            var xOf = new Dictionary<string, float>();      // 그 줄기 축(=줄기 뿌리) 기준 수직 위치
+            var relOf = new Dictionary<string, float>();    // 부모 기준 수직 위치(단위: 칸)
+            (List<float> lo, List<float> hi) Pack(UpgradeNode n)
             {
-                xOf[n.id] = (xMin + xMax) * 0.5f;
-                if (!childrenOf.TryGetValue(n.id, out var kids)) return;
-                int total = 0;
-                foreach (var k in kids) total += weightOf[k.id];
-                // 자식이 전부 아직 안 드러났어도(가중치 합 0) 위치는 줘야 한다 — 안 그러면 아래 npos
-                // 루프가 xOf 를 못 찾아 KeyNotFoundException. 그땐 균등 분배(어차피 안 그려짐).
-                float cursor = xMin;
-                foreach (var k in kids)
+                var lo = new List<float> { 0f };
+                var hi = new List<float> { 0f };
+                if (!childrenOf.TryGetValue(n.id, out var kids) || kids.Count == 0) return (lo, hi);
+                var offs = new float[kids.Count];
+                var cl = new List<float>();   // 지금까지 놓은 자식들의 깊이별 왼쪽/오른쪽 끝
+                var ch = new List<float>();
+                for (int i = 0; i < kids.Count; i++)
                 {
-                    float w = total > 0 ? (xMax - xMin) * weightOf[k.id] / total : (xMax - xMin) / kids.Count;
-                    AssignX(k, cursor, cursor + w);
-                    cursor += w;
+                    var (l, h) = Pack(kids[i]);
+                    float shift = 0f;
+                    if (i > 0)
+                    {
+                        shift = float.MinValue;
+                        int shared = Mathf.Min(ch.Count, h.Count);
+                        for (int d = 0; d < shared; d++) shift = Mathf.Max(shift, ch[d] + 1f - l[d]);
+                    }
+                    offs[i] = shift;
+                    for (int d = 0; d < l.Count; d++)
+                    {
+                        if (d < cl.Count) { cl[d] = Mathf.Min(cl[d], l[d] + shift); ch[d] = Mathf.Max(ch[d], h[d] + shift); }
+                        else { cl.Add(l[d] + shift); ch.Add(h[d] + shift); }
+                    }
                 }
+                float mid = (offs[0] + offs[kids.Count - 1]) * 0.5f;   // 부모는 자식들 한가운데
+                for (int i = 0; i < kids.Count; i++) relOf[kids[i].id] = offs[i] - mid;
+                for (int d = 0; d < cl.Count; d++) { lo.Add(cl[d] - mid); hi.Add(ch[d] - mid); }
+                return (lo, hi);
             }
-            float fullW = (rootNode != null ? weightOf[rootNode.id] : 1) * colUnit;
+            void AssignX(UpgradeNode n, float x)
+            {
+                xOf[n.id] = x;
+                if (!childrenOf.TryGetValue(n.id, out var kids)) return;
+                foreach (var k in kids) AssignX(k, x + relOf[k.id] * colUnit);
+            }
             if (rootNode != null)
             {
-                float rootHalfW = weightOf[rootNode.id] * colUnit * 0.5f;
-                AssignX(rootNode, -rootHalfW, rootHalfW);
-
-                // round47: 타워 탭은 줄기가 3개뿐이라 그대로 두면 배율이 커서 탭보다 훨씬 커져
-                //   노드가 거대해지고 행 간격도 벌어진다. 좁은 탭은 가로로만 늘려서
-                //   두 탭의 노드 크기·행 간격이 똑같게 맞춘다.
-                float refW = TreeRefCols() * colUnit;
-                if (fullW > 1f && fullW < refW - 1f)
-                {
-                    float k = refW / fullW;
-                    var xKeys = new List<string>(xOf.Keys);
-                    foreach (var xk in xKeys) xOf[xk] *= k;
-                    fullW = refW;
-                }
+                xOf[rootNode.id] = 0f;
+                if (childrenOf.TryGetValue(rootNode.id, out var rk))
+                    foreach (var k in rk) { Pack(k); AssignX(k, 0f); }   // 줄기마다 따로 — 서로의 폭이 겹쳐 밀리지 않는다
             }
 
-            // 배율 = 전체 가지 폭이 area 가로에 딱 맞게(좌우 여백 = 노드 반 개 + 약간). 고정.
-            float zoom = Mathf.Clamp(area.width / (fullW + nodeSz * 2.4f), 0.2f, 1.6f);   // round50: 좌우 여백을 노드 한 개 이상 둬서 끝 가지가 화면에 안 붙게
-            pivot.y = availTop - 22f - nodeSz * 0.5f * zoom;   // 스크롤 맨 아래에서 코어가 하단 바 바로 위
+            // 축척 고정. 예전에는 가지 전체 폭을 화면에 맞춰 줄였는데(area.width / 전체 폭),
+            //   트리가 자랄수록 노드가 작아져서 "많이 뚫을수록 보기 힘들어지는" 역진성이 있었다.
+            //   이제 노드 크기는 늘 같고, 화면보다 넓어진 트리는 좌우로 끌어서 본다.
+            float zoom = 1f;
+            pivot.y = (area.yMin + availTop) * 0.5f;   // 사방으로 뻗으므로 코어는 화면 한가운데에 둔다
+
+            // 코어에서 뻗는 줄기마다 방향을 하나씩 준다 — 오른쪽부터 시계 방향(R, D, L, U)으로 돌린다.
+            //   예전에는 깊이가 곧 "위"라서 가지가 구조적으로 위로만 자랐다. 이제 깊이는 "줄기 방향으로
+            //   얼마나 멀리"가 되고, 가로 분배값(xOf)은 그 줄기에 수직인 어긋남이 된다.
+            //   xOf 는 이미 줄기 뿌리 기준이라 baseOf 는 0 이다.
+            var dirOf = new Dictionary<string, int>();     // 0=R 1=D 2=L 3=U
+            var baseOf = new Dictionary<string, float>();  // 그 줄기 뿌리의 xOf — 수직 어긋남의 기준점
+            if (rootNode != null && childrenOf.TryGetValue(rootNode.id, out var rootKids))
+            {
+                var stack = new Stack<UpgradeNode>();
+                for (int i = 0; i < rootKids.Count; i++)
+                {
+                    int dir = i % 4;
+                    // 타워는 이름이 곧 방향이다 — 왼쪽 타워는 왼쪽, 오른쪽 타워는 오른쪽, 가운데는 아래.
+                    //   순서대로 돌리면 L 이 오른쪽으로 가서 이름과 위치가 거꾸로 된다.
+                    if (rootKids[i].id == "twL0") dir = 2;
+                    else if (rootKids[i].id == "twC0") dir = 1;
+                    else if (rootKids[i].id == "twR0") dir = 0;
+                    float bx = xOf[rootKids[i].id];
+                    stack.Push(rootKids[i]);
+                    while (stack.Count > 0)
+                    {
+                        var cur = stack.Pop();
+                        dirOf[cur.id] = dir;
+                        baseOf[cur.id] = bx;
+                        if (childrenOf.TryGetValue(cur.id, out var kids))
+                            foreach (var k in kids) stack.Push(k);
+                    }
+                }
+            }
+            treeDirOf = dirOf;
 
             npos.Clear();
             foreach (var n in nodes)
-                if (!n.repeat && (n.IsRoot || n.tab == treeTab)) npos[n.id] = new Vector2(pivot.x + xOf[n.id], pivot.y - depthOf[n.id] * rowSpacing);
+            {
+                if (n.repeat || !(n.IsRoot || n.tab == treeTab)) continue;
+                if (n.IsRoot) { npos[n.id] = pivot; continue; }
+                float along = depthOf[n.id] * rowSpacing;
+                float across = xOf[n.id] - (baseOf.TryGetValue(n.id, out var bv) ? bv : 0f);
+                switch (dirOf.TryGetValue(n.id, out var dv) ? dv : 3)
+                {
+                    case 0: npos[n.id] = new Vector2(pivot.x + along, pivot.y + across); break;   // 오른쪽
+                    case 1: npos[n.id] = new Vector2(pivot.x + across, pivot.y + along); break;   // 아래
+                    case 2: npos[n.id] = new Vector2(pivot.x - along, pivot.y + across); break;   // 왼쪽
+                    default: npos[n.id] = new Vector2(pivot.x + across, pivot.y - along); break;  // 위
+                }
+            }
 
-            // 위로는 "지금까지 드러난 것"까지만 올라간다 — 뚫을수록 더 위까지 볼 수 있다(round41 규칙 유지).
-            float minY = pivot.y;
+            // 드러난 노드가 차지하는 범위. 사방으로 뻗으므로 네 변을 다 본다
+            //   — 예전에는 "위로 얼마나"만 재면 됐다(가지가 위로만 자랐으므로).
+            float minX = float.MaxValue, maxX = float.MinValue;
+            float minY = float.MaxValue, maxY = float.MinValue;
             foreach (var n in nodes)
-                if (!n.repeat && (n.IsRoot || n.tab == treeTab) && IsRevealed(n) && npos[n.id].y < minY) minY = npos[n.id].y;   // 화면 좌표는 위로 갈수록 y가 작아짐
-            float topScreen0 = pivot.y + (minY - pivot.y) * zoom;          // 스크롤 0 일 때 가장 높은 노드의 화면 y
-            float maxPan = Mathf.Max(0f, (area.yMin + nodeSz * 0.5f * zoom + 8f) - topScreen0);
+                if (!n.repeat && (n.IsRoot || n.tab == treeTab) && IsRevealed(n))
+                {
+                    Vector2 q = npos[n.id];
+                    if (q.x < minX) minX = q.x; if (q.x > maxX) maxX = q.x;
+                    if (q.y < minY) minY = q.y; if (q.y > maxY) maxY = q.y;
+                }
+            if (minX > maxX) { minX = maxX = pivot.x; minY = maxY = pivot.y; }
 
-            treeMaxPan = maxPan;
-            if (treeZoom <= 0f)   // 들어올 때/"화면 리셋" — 지금 살 수 있는 맨 위(경계)가 보이게 끝까지 올려둔다
-                treePan = new Vector2(0f, maxPan);
+            bool resetView = treeZoom <= 0f;   // 0 은 "아직 자리를 안 잡았다"는 표시로 쓰인다
             treeZoom = zoom;
+            float margin = nodeSz * 0.5f + 10f;
+            // 트리가 화면보다 좁으면 끌 곳이 없다는 뜻이지만, 완전히 고정하면 "드래그가 먹지 않는다"로
+            //   읽힌다. 어느 쪽이든 화면 1/4 만큼은 늘 움직일 여지를 둔다.
+            float centerPanX = area.center.x - (minX + maxX) * 0.5f;
+            float slackX = area.width * 0.25f;
+            treePanXMin = Mathf.Min(area.xMax - margin - maxX, centerPanX - slackX);
+            treePanXMax = Mathf.Max(area.xMin + margin - minX, centerPanX + slackX);
+            treePan.x = Mathf.Clamp(treePan.x, treePanXMin, treePanXMax);
+
+            float viewTop = area.yMin, viewBot = availTop;
+            float centerPanY = (viewTop + viewBot) * 0.5f - (minY + maxY) * 0.5f;
+            float slackY = (viewBot - viewTop) * 0.25f;
+            treePanYMin = Mathf.Min(viewBot - margin - maxY, centerPanY - slackY);
+            treePanYMax = Mathf.Max(viewTop + margin - minY, centerPanY + slackY);
+            if (resetView) treePan = new Vector2(centerPanX, centerPanY);   // 들어올 때/"화면 리셋" — 코어가 가운데
+            treePan.y = Mathf.Clamp(treePan.y, treePanYMin, treePanYMax);
 
             Event ev = Event.current;
-            if (repOpen) { }   // 큰 창이 떠 있으면 뒤 트리는 스크롤되지 않는다
-            else if (ev.type == EventType.ScrollWheel)
-            {   // 휠 한 칸에 노드 두 줄씩. delta.y 는 브라우저·OS 마다 크기가 달라 부호만 쓴다.
-                treePan.y -= Mathf.Sign(ev.delta.y) * rowSpacing * 2f * Mathf.Max(0.05f, treeZoom);
-                ev.Use();
-            }
+            if (repOpen) { }   // 큰 창이 떠 있으면 뒤 트리는 움직이지 않는다
             else if (ev.type == EventType.MouseDrag && (ev.button == 1 || ev.button == 2))
-            { treePan.y += ev.delta.y; ev.Use(); }
-
-            // round46: 웹페이지식 세로 스크롤바 — 트리 영역 오른쪽 끝. 트랙을 누르면 그 위치로 점프,
-            //   핸들은 끌어서 이동. treePan.y 는 0(맨 아래) ~ maxPan(맨 위) 이라 화면과는 방향이 반대다.
-            if (maxPan > 1f)
-            {
-                float barW = 14f * uiScale;
-                var track = new Rect(area.xMax - barW, area.yMin, barW, area.height);
-                // 핸들 크기 = 보이는 높이 / 전체 높이
-                float viewH = area.height;
-                float totalH = viewH + maxPan;
-                float handH = Mathf.Max(36f * uiScale, track.height * (viewH / totalH));
-                float tRaw = 1f - treePan.y / maxPan;            // 0 = 맨 위(스크롤 최대), 1 = 맨 아래
-                float handY = track.y + (track.height - handH) * tRaw;
-                var handle = new Rect(track.x, handY, barW, handH);
-
-                if (ev.type == EventType.MouseDown && ev.button == 0 && track.Contains(ev.mousePosition))
-                {
-                    if (handle.Contains(ev.mousePosition)) { treeBarDrag = true; treeBarGrabOff = ev.mousePosition.y - handle.y; }
-                    else   // 트랙 클릭 = 그 지점으로
-                    {
-                        treeBarDrag = true; treeBarGrabOff = handH * 0.5f;
-                        float t2 = Mathf.Clamp01((ev.mousePosition.y - treeBarGrabOff - track.y) / Mathf.Max(1f, track.height - handH));
-                        treePan.y = (1f - t2) * maxPan;
-                    }
-                    ev.Use();
-                }
-                if (treeBarDrag)
-                {
-                    if (ev.type == EventType.MouseDrag)
-                    {
-                        float t2 = Mathf.Clamp01((ev.mousePosition.y - treeBarGrabOff - track.y) / Mathf.Max(1f, track.height - handH));
-                        treePan.y = (1f - t2) * maxPan;
-                        ev.Use();
-                    }
-                    else if (ev.type == EventType.MouseUp) { treeBarDrag = false; ev.Use(); }
-                }
-
-                treePan = new Vector2(0f, Mathf.Clamp(treePan.y, 0f, maxPan));
-                // 다시 계산(드래그로 바뀌었을 수 있음)
-                tRaw = 1f - treePan.y / maxPan;
-                handle.y = track.y + (track.height - handH) * tRaw;
-
-                var gcB = GUI.color;
-                GUI.color = new Color(0.20f, 0.26f, 0.30f, 0.30f);
-                GUI.DrawTexture(track, Texture2D.whiteTexture);
-                bool hot = treeBarDrag || handle.Contains(ev.mousePosition);
-                GUI.color = hot ? new Color(0.22f, 0.40f, 0.46f, 0.95f) : new Color(0.28f, 0.46f, 0.52f, 0.75f);
-                GUI.DrawTexture(handle, Texture2D.whiteTexture);
-                GUI.color = gcB;
-            }
-            else treePan = new Vector2(0f, Mathf.Clamp(treePan.y, 0f, maxPan));
+            { treePan.x += ev.delta.x; treePan.y += ev.delta.y; ev.Use(); }   // 사방으로 뻗으므로 휠·스크롤바 없이 끌어서만 움직인다
+            treePan.y = Mathf.Clamp(treePan.y, treePanYMin, treePanYMax);
 
             // round57: 정수 탭 — 보스가 떨어뜨린 재화로 지역별 특화를 산다.
             if (treeTab == 3)
@@ -5236,7 +5372,8 @@ namespace BlackholeGame
             for (int pass = 0; pass < 2; pass++)
                 foreach (var n in nodes)
                     if (!n.IsRoot && !n.repeat && n.tab == treeTab && IsRevealed(n) && IsBought(n.id) == (pass == 1))
-                        DrawConnector(npos[n.parentId], npos[n.id], lineW, pass == 1 ? lineOn : lineOff);
+                        DrawConnector(npos[n.parentId], npos[n.id], lineW, pass == 1 ? lineOn : lineOff,
+                                      treeDirOf.TryGetValue(n.id, out var nd) && (nd == 0 || nd == 2));
 
             // 노드 — 아이콘만. 효과는 마우스 오버 툴팁으로.
             UpgradeNode hovered = null;
@@ -5252,29 +5389,37 @@ namespace BlackholeGame
                 bool pathAfford = by && gold >= n.cost;    // 지금 이 노드를 살 돈이 있음
 
                 bool locked = n.tier > stagesCleared;
-                // round40: 사각 칩 -> 원형 네온 뱃지. 안쪽 부드러운 원(discSprite) + 바깥 글로우 링(nodeRingTex).
-                //  구매함 = 하늘색  ·  지금 살 수 있음(돈 있음) = 초록  ·  살 순 있으나 골드 부족 = 갈색  ·  잠김 = 어두움
-                Color fillCol = locked ? new Color(0.08f, 0.08f, 0.10f, 0.92f)
-                             : bt ? new Color(0.10f, 0.22f, 0.34f, 1f)
-                             : pathAfford ? new Color(0.09f, 0.22f, 0.13f, 1f)
-                             : by ? new Color(0.24f, 0.17f, 0.07f, 1f)
-                             : new Color(0.10f, 0.10f, 0.12f, 1f);
-                // round41: 밝은 배경에서도 또렷하도록 링 색도 짙게 — 예전 파스텔톤은 Glass 배경에
-                // 묻혀서 거의 안 보였다.
-                Color glowCol = bt ? new Color(0.06f, 0.32f, 0.62f, 1f)      // 짙은 하늘색(구매함)
-                             : pathAfford ? new Color(0.08f, 0.42f, 0.20f, 1f)  // 짙은 초록(살 수 있음)
-                             : by ? new Color(0.62f, 0.34f, 0.06f, 1f)          // 짙은 주황(부족)
-                             : new Color(0.40f, 0.42f, 0.46f, 0.8f);            // 짙은 회색(잠김)
-                if (discSprite != null)
+                // 구매 전 = 사각형, 구매 후 = 초록 원. 살 수 있는지는 사각형의 "속 색" 으로 알려 준다.
+                //   초록은 산 노드 전용이라 쓰지 않는다. 테두리 링은 상태와 상관없이 같은 톤으로 둔다.
+                Color fillCol = bt ? new Color(0.13f, 0.58f, 0.27f, 1f)             // 초록(구매함)
+                             : pathAfford ? new Color(0.92f, 0.70f, 0.16f, 1f)      // 밝은 황금색(지금 살 수 있음)
+                             : by ? new Color(0.15f, 0.15f, 0.18f, 1f)              // 짙은 회색(살 수 있으나 돈 부족)
+                             : new Color(0.02f, 0.02f, 0.03f, 1f);                  // 검정(아직 못 삼)
+                Color glowCol = bt ? new Color(0.07f, 0.40f, 0.17f, 1f)
+                             : new Color(0.30f, 0.31f, 0.35f, 0.85f);
+                // 모양이 상태를 말한다 — 아직 안 산 노드는 사각, 산 노드는 원.
+                //   사는 순간 그 사이를 0.28초에 건너간다. 색만 바뀌면 뭐가 달라졌는지 눈이 못 쫓는다.
+                float mp = bt ? (nodeMorph.TryGetValue(n.id, out var mv) ? Mathf.Clamp01(mv) : 1f) : 0f;
+                var shapeTex = nodeShapeTex != null
+                             ? nodeShapeTex[Mathf.Clamp(Mathf.RoundToInt(mp * (NodeShapeSteps - 1)), 0, NodeShapeSteps - 1)]
+                             : (discSprite != null ? discSprite.texture : null);
+                // 전환 한가운데서 살짝 부풀렸다 돌아온다 — 모양만 갈아끼우면 밋밋하다
+                float bump = 1f + 0.16f * Mathf.Sin(Mathf.PI * mp);
+                var srect = new Rect(rect.center.x - rect.width * 0.5f * bump,
+                                     rect.center.y - rect.height * 0.5f * bump,
+                                     rect.width * bump, rect.height * bump);
+                if (shapeTex != null)
                 {
                     GUI.color = fillCol;
-                    GUI.DrawTexture(rect, discSprite.texture);
+                    GUI.DrawTexture(srect, shapeTex);
                 }
-                if (nodeRingTex != null)
+                // 원형 테두리는 산 노드만 — 사각형 둘레에 동그라미가 보이면 모양이 어긋난다.
+                //   사각 -> 원으로 바뀌는 동안 모양(mp)에 맞춰 서서히 나타난다.
+                if (nodeRingTex != null && bt && mp > 0.02f)
                 {
-                    float ringPad = nodeSz * (bt ? 0.06f : 0.10f);   // 구매함은 글로우가 더 두꺼워 보이게
-                    GUI.color = glowCol;
-                    GUI.DrawTexture(new Rect(rect.x - ringPad, rect.y - ringPad, rect.width + ringPad * 2f, rect.height + ringPad * 2f), nodeRingTex);
+                    float ringPad = nodeSz * 0.06f;
+                    GUI.color = new Color(glowCol.r, glowCol.g, glowCol.b, glowCol.a * mp);
+                    GUI.DrawTexture(new Rect(srect.x - ringPad, srect.y - ringPad, srect.width + ringPad * 2f, srect.height + ringPad * 2f), nodeRingTex);
                 }
 
                 var tex = (iconTex != null && iconTex.TryGetValue(n.icon, out var it)) ? it : (iconTex != null ? iconTex["dot"] : null);
@@ -5282,7 +5427,8 @@ namespace BlackholeGame
                 {
                     GUI.color = locked ? new Color(1f, 1f, 1f, 0.13f)
                               : bt ? Color.white
-                              : (pathAfford || by) ? Color.white : new Color(1f, 1f, 1f, 0.4f);
+                              : pathAfford ? new Color(0.10f, 0.07f, 0.02f, 1f)   // 황금색 위에서는 어두운 아이콘이 읽힌다
+                              : by ? Color.white : new Color(1f, 1f, 1f, 0.4f);
                     float pad = nodeSz * 0.18f;
                     GUI.DrawTexture(new Rect(rect.x + pad, rect.y + pad, rect.width - pad * 2f, rect.height - pad * 2f), tex, ScaleMode.ScaleToFit);
                 }
@@ -5310,8 +5456,22 @@ namespace BlackholeGame
                 string status;
                 if (bt) status = Loc.T("tree.owned");
                 else if (hovered.IsRoot) status = Loc.T("tree.free");
-                else if (hovered.tier > stagesCleared) status = Loc.F("tree.lockTier", hovered.tier);
-                else status = $"${hovered.cost:N0}";
+                else
+                {
+                    // 못 사는 이유를 한 줄로 — 막고 있는 것 중 먼저 풀어야 하는 순서대로 하나만 보여 준다.
+                    //   이전 노드 -> 지역 클리어 -> 골드. 다 풀렸으면 가격만.
+                    string price = $"${Money(hovered.cost)}";
+                    bool needPrev = !IsBought(hovered.parentId);
+                    bool needAll = false;
+                    if (hovered.alsoNeed != null)
+                        foreach (var need in hovered.alsoNeed) if (!IsBought(need)) needAll = true;
+                    string why = needPrev ? Loc.T("tree.needPrev")
+                               : needAll ? Loc.T("tree.needAll")
+                               : hovered.tier > stagesCleared ? Loc.F("tree.lockTier", hovered.tier)
+                               : gold < hovered.cost ? Loc.F("tree.needGold", Money(hovered.cost - gold))
+                               : null;
+                    status = why == null ? price : price + "\n" + why;
+                }
                 string top = Loc.T(hovered.label) + "\n" + (hovered.descArg != 0f ? Loc.F(hovered.desc, hovered.descArg) : Loc.T(hovered.desc));
                 var ts  = new GUIStyle(sLabel) { fontSize = Mathf.RoundToInt(13f * uiScale), wordWrap = true, alignment = TextAnchor.UpperLeft };
                 var tsY = new GUIStyle(ts) { fontStyle = FontStyle.Bold, normal = { textColor = bt ? Ink : Gold } };
@@ -5355,11 +5515,10 @@ namespace BlackholeGame
             float resetBtnW = Mathf.Min(116f * uiScale, Screen.width * 0.15f);
             float retryBtnW = Mathf.Min(110f * uiScale, Screen.width * 0.14f);
             float mapBtnW   = Mathf.Min(130f * uiScale, Screen.width * 0.16f);
-            float jumpBtnW  = Mathf.Min(92f * uiScale, Screen.width * 0.11f);   // round45: 맨 위로 / 맨 아래로
             float btnH = 34f * uiScale;
             float margin = 20f, btnGap = 10f * uiScale;
             bool showRetry = treeFromResult;   // 전투 직후에 들어온 경우에만 재도전
-            float groupW = jumpBtnW * 2f + btnGap * 2f + resetBtnW + btnGap + mapBtnW + (showRetry ? retryBtnW + btnGap : 0f);
+            float groupW = resetBtnW + btnGap + mapBtnW + (showRetry ? retryBtnW + btnGap : 0f);
             GUI.BeginGroup(new Rect(0f, Screen.height - barH, Screen.width, barH));
             {
                 // round41: 배경을 밝은 Glass 로 바꾸자 노란 보유금·흰 도움말이 거의 안 보였고, 트리 선도
@@ -5382,7 +5541,7 @@ namespace BlackholeGame
                 GUI.color = gcBar;
 
                 var goldS = new GUIStyle(sGold) { alignment = TextAnchor.UpperLeft, fontSize = Mathf.RoundToInt(18f * uiScale), fontStyle = FontStyle.Bold };
-                GUI.Label(new Rect(margin, 8f, 520f * uiScale, 30f * uiScale), Loc.F("res.have", gold.ToString("N0")), goldS);
+                GUI.Label(new Rect(margin, 8f, 520f * uiScale, 30f * uiScale), Loc.F("res.have", Money(gold)), goldS);
 
                 var info = new GUIStyle(sLabel) { alignment = TextAnchor.UpperLeft, fontSize = Mathf.RoundToInt(13f * uiScale), wordWrap = true };
                 float infoTop = 8f + 30f * uiScale;
@@ -5397,12 +5556,6 @@ namespace BlackholeGame
 
                 var bst = Btn(Mathf.RoundToInt(14f * uiScale));
                 float btnY = barH - btnH - margin;
-                // 맨 위로 / 맨 아래로 — 150노드를 휠로 훑지 않아도 되게
-                if (UiBtn(new Rect(bx1, btnY, jumpBtnW, btnH), Loc.T("tree.toTop"), bst))
-                { treePan = new Vector2(0f, treeMaxPan); }
-                if (UiBtn(new Rect(bx1 + jumpBtnW + btnGap, btnY, jumpBtnW, btnH), Loc.T("tree.toBottom"), bst))
-                { treePan = Vector2.zero; }
-                bx1 += (jumpBtnW + btnGap) * 2f;
                 float bx2 = bx1 + resetBtnW + btnGap;
                 float bx3 = bx2 + retryBtnW + btnGap;
                 if (UiBtn(new Rect(bx1, btnY, resetBtnW, btnH), Loc.T("tree.reset"), bst))

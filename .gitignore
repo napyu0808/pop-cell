@@ -48,3 +48,6 @@ My project/Assets/Screenshots/
 # balance_sim 폰트 파이프라인 중간 산출물
 balance_sim/_*.ttf
 balance_sim/_*.txt
+
+# 글꼴 원본(Google Fonts 에서 _rebuild_font.py 가 받는다)
+balance_sim/_fonts/

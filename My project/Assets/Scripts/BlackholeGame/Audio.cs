@@ -50,6 +50,74 @@ namespace BlackholeGame
 
         static float Bell(float ph) => Mathf.Sin(ph) + 0.34f * Mathf.Sin(ph * 2f) + 0.16f * Mathf.Sin(ph * 3f);
 
+        // 사인 테이블 — BGM 한 벌에 사인을 천만 번 넘게 부른다. WebGL은 스레드가 없어 이 생성이
+        //   그대로 시작 멈칫함이 되므로 직접 호출 대신 표를 쓴다. 4096칸 선형보간이면 패드·드론에는
+        //   차이가 들리지 않는다. 인자는 라디안이 아니라 '회전수'다(1 = 한 주기).
+        const int SinN = 4096;
+        static readonly float[] SinT = BuildSinTable();
+        static float[] BuildSinTable()
+        {
+            var t = new float[SinN + 1];
+            for (int i = 0; i <= SinN; i++) t[i] = Mathf.Sin(2f * Mathf.PI * i / SinN);
+            return t;
+        }
+        // 뜯은 현(Karplus-Strong) — 짧은 지연선에 잡음을 채우고 한 칸씩 평균내며 돌린다.
+        //   높은 배음부터 차례로 죽어서 기타·하프처럼 들린다. 사인을 쌓는 것보다 싸고,
+        //   무엇보다 지속음이 아니라 사그라든다 — 계속 울리는 소리가 없어야 귀가 쉰다.
+        static void PluckString(float[] d, int sr, float t0, float f, float amp, float damp, float dur)
+        {
+            int N = Mathf.Max(2, Mathf.RoundToInt(sr / f));
+            var buf = new float[N];
+            var rng = new System.Random(unchecked((int)(f * 1000f) ^ (int)(t0 * 97f)));
+            float prev = 0f;
+            for (int i = 0; i < N; i++)
+            {
+                // 잡음을 한 번 저역통과해서 넣는다 — 생으로 넣으면 손톱으로 긁는 소리가 난다
+                prev = prev * 0.62f + (float)(rng.NextDouble() * 2.0 - 1.0) * 0.38f;
+                buf[i] = prev;
+            }
+            int i0 = Mathf.Max(0, (int)(t0 * sr));
+            int i1 = Mathf.Min(d.Length, i0 + (int)(dur * sr));
+            int k = 0;
+            for (int i = i0; i < i1; i++)
+            {
+                float cur = buf[k];
+                buf[k] = (cur + buf[(k + 1) % N]) * 0.5f * damp;
+                k = (k + 1) % N;
+                // 버퍼 끝에서 잘릴 때 딱 소리가 나지 않게 꼬리만 깎는다
+                float left = (i1 - i) / (float)sr;
+                d[i] += cur * amp * (left < 0.30f ? left / 0.30f : 1f);
+            }
+        }
+
+        // 신스 리드 — 즐거운 쪽. 배음을 쌓아 톱니에 가깝게 만들고 어택을 8ms 로 끊어 통통 튀게 한다.
+        //   뜯은 현이 바탕을 깔아 둔 뒤에 들어와야 "합류했다"로 들린다. 혼자 나오면 그냥 삐 소리다.
+        static void SynthLead(float[] d, int sr, float t0, float f, float amp, float dur)
+        {
+            int i0 = Mathf.Max(0, (int)(t0 * sr));
+            int i1 = Mathf.Min(d.Length, i0 + (int)(dur * sr));
+            double ph = 0, inc = f / (double)sr, ph2 = 0, inc2 = f * 1.006 / sr;
+            for (int i = i0; i < i1; i++)
+            {
+                float t = (i - i0) / (float)sr;
+                float env = Mathf.Clamp01(t / 0.008f) * Mathf.Exp(-t / (dur * 0.38f));
+                float s = Sin01(ph) + 0.5f * Sin01(ph * 2.0) + 0.33f * Sin01(ph * 3.0) + 0.22f * Sin01(ph * 4.0);
+                float s2 = Sin01(ph2) + 0.5f * Sin01(ph2 * 2.0);
+                d[i] += (s * 0.70f + s2 * 0.30f) * env * amp;
+                ph += inc; ph2 += inc2;
+            }
+        }
+
+        static float Sin01(double turns)
+        {
+            double p = turns - System.Math.Floor(turns);
+            double x = p * SinN;                 // float 로 먼저 줄이면 p 가 1 에 가까울 때
+            int i = (int)x;                      //   반올림으로 4096 이 되어 표 밖을 짚는다
+            if (i >= SinN) i = SinN - 1;
+            float f = (float)(x - i);
+            return SinT[i] + (SinT[i + 1] - SinT[i]) * f;
+        }
+
         // ---- 효과음 ----
 
         // 세포가 "뽁" 터지는 소리 (게임 제목이 POP Cell).
@@ -275,86 +343,114 @@ namespace BlackholeGame
         }
 
         // ---- BGM ----
-        // 힐링 게임풍 — 느긋한 66bpm, C장조에 메이저7 코드로 따뜻하게.
-        //   단조 + 8분음표 아르페지오는 긴장감을 주므로 쓰지 않는다.
-        //   대신 마디당 3음 정도로 성기게 흐르는 오르골 선율 + 아주 느린 패드.
-        //   8마디 29초 루프라 반복이 잘 안 느껴진다.
+        // 뜯은 현으로 시작해서 신스가 합류하는 구성.
+        //   드론은 뺐다. 55Hz 사인 두 개를 어긋나게 겹치면 초당 0.2회로 맥놀이가 생기는데,
+        //   그 "우우웅" 이 쉬지 않고 깔리면 편안한 게 아니라 머리가 아프다. 계속 울리는 소리를
+        //   없애고, 바탕을 사그라드는 소리(뜯은 현)로 바꾸면 소리 사이에 빈틈이 생겨 귀가 쉰다.
+        //
+        //   40초 루프를 둘로 나눠 앞 20초는 기타만, 뒤 20초에 신스가 들어온다. 루프가 한 바퀴 돌 때마다
+        //   "조용히 시작해서 밝아진다"가 반복되는 셈이라, 같은 길이로도 한 덩어리로 들리지 않는다.
+        //   화성은 서스펜디드·4도 쌓기다 — 장3도를 넣으면 바로 예쁜 노래가 되고 단3도면 슬퍼진다.
+        //   둘 다 피하고, 즐거운 느낌은 신스의 음색과 리듬으로만 낸다.
+        //
+        //   이음매: 패드는 f*L이 정수라야 루프 끝에서 위상이 0으로 돌아온다(Q가 맞춘다).
+        //   뜯은 현과 신스는 감쇠음이고, 버퍼 끝에서 잘리는 꼬리는 각 함수가 깎아 준다.
         //   Unity API를 쓰지 않으므로 백그라운드 스레드에서 생성해도 안전하다.
+        public const float BgmLoopSec = 40f;
+
         public static float[] BgmBuffer()
         {
-            const float bpm = 66f;
-            float beat = 60f / bpm, bar = beat * 4f;
-            const int BARS = 8;
             int SRB = BgmRate;
-            int n = (int)(SRB * bar * BARS);
+            float L = BgmLoopSec;
+            int n = (int)(SRB * L);
             var d = new float[n];
 
-            //              Cmaj7  Fmaj7  Am7    Fmaj7  Cmaj7  Fmaj7  Dm7    G6sus
-            float[] bass = { 36, 41, 45, 41, 36, 41, 38, 43 };
+            // 루프 경계에서 위상이 딱 맞게 주파수를 격자에 올린다
+            float Q(float f) => Mathf.Max(1f, Mathf.Round(f * L)) / L;
+
+            // 네 개의 열린 화음을 10초씩. 3도가 없어 장단이 정해지지 않는다.
             float[,] chord =
             {
-                { 52, 55, 59 },   // Cmaj7  E3 G3 B3
-                { 57, 60, 64 },   // Fmaj7  A3 C4 E4
-                { 60, 64, 67 },   // Am7    C4 E4 G4
-                { 57, 60, 64 },   // Fmaj7
-                { 52, 55, 59 },   // Cmaj7
-                { 57, 60, 64 },   // Fmaj7
-                { 53, 57, 60 },   // Dm7    F3 A3 C4
-                { 60, 62, 67 },   // G6sus  C4 D4 G4
+                { 57, 59, 64 },   // A3 B3 E4   Asus2
+                { 53, 55, 60 },   // F3 G3 C4   Fsus2
+                { 60, 62, 67 },   // C4 D4 G4   Csus2
+                { 55, 60, 62 },   // G3 C4 D4   Gsus4
             };
-            // 오르골 선율: (박 위치, 코드 구성음 인덱스, 옥타브 이동)
-            float[] mBeat = { 0f, 1.5f, 2.5f };
-            int[] mTone = { 0, 2, 1 };
+            float[] bassNote = { 45, 41, 48, 43 };   // A2 F2 C3 G2 — 기타가 짚기 좋은 자리
+            int CH = chord.GetLength(0);
+            float seg = L / CH;
 
-            for (int b = 0; b < BARS; b++)
+            // ---- 1) 뜯은 현 — 베이스와 아르페지오. 이 층이 곡의 바탕이다.
+            //      (구간 내 초, 화음 구성음 인덱스, 옥타브 더하기, 세기)
+            float[,] arp =
             {
-                float barT = b * bar;
+                { 1.3f, 0, 12, 0.56f }, { 2.6f, 2, 12, 0.49f }, { 4.0f, 1, 12, 0.53f },
+                { 6.3f, 0, 12, 0.46f }, { 7.6f, 2, 12, 0.42f }, { 8.8f, 1, 24, 0.30f },
+            };
+            for (int c = 0; c < CH; c++)
+            {
+                float t0 = c * seg;
+                PluckString(d, SRB, t0,        Freq(bassNote[c]), 1.05f, 0.9976f, 4.6f);
+                PluckString(d, SRB, t0 + 5.0f, Freq(bassNote[c]), 0.66f, 0.9976f, 4.2f);
+                for (int k = 0; k < arp.GetLength(0); k++)
+                    PluckString(d, SRB, t0 + arp[k, 0],
+                                Freq(chord[c, (int)arp[k, 1]] + arp[k, 2]),
+                                arp[k, 3], 0.9962f, 3.0f);
+            }
 
-                // 베이스 — 마디당 1음, 아주 둥글고 낮게
+            // ---- 2) 신스 리드 — 뒤 20초에만. 즐거운 쪽을 담당한다.
+            //      구간 2는 0.72배로 들어와서 구간 3에 제 음량이 된다 — 합류가 들리게.
+            float[,] lead =
+            {
+                { 0.45f, 0 }, { 0.90f, 2 }, { 1.35f, 1 }, { 2.10f, 2 },
+                { 3.00f, 0 }, { 3.45f, 1 }, { 4.35f, 2 }, { 5.25f, 1 },
+                { 6.15f, 0 }, { 7.05f, 2 }, { 7.50f, 1 }, { 8.40f, 0 },
+            };
+            for (int c = 2; c < CH; c++)
+            {
+                float gain = c == 2 ? 0.72f : 1f;
+                float t0 = c * seg;
+                for (int k = 0; k < lead.GetLength(0); k++)
                 {
-                    float f = Freq(bass[b]), ph = 0f;
-                    int i0 = (int)(barT * SRB), i1 = Mathf.Min(n, (int)((barT + bar) * SRB));
-                    for (int i = i0; i < i1; i++)
-                    {
-                        float t = (float)i / SRB - barT;
-                        ph += 2f * Mathf.PI * f / SRB;
-                        d[i] += Mathf.Sin(ph) * AR(t, bar, 0.10f, 0.9f) * 0.26f;
-                    }
-                }
-
-                // 패드 — 마디 전체, 느린 호흡. 디튠 2개를 겹쳐 따뜻하게
-                for (int c = 0; c < 3; c++)
-                {
-                    float f = Freq(chord[b, c]);
-                    float ph = 0f, ph2 = 0f;
-                    int i0 = (int)(barT * SRB), i1 = Mathf.Min(n, (int)((barT + bar) * SRB));
-                    for (int i = i0; i < i1; i++)
-                    {
-                        float t = (float)i / SRB - barT;
-                        ph += 2f * Mathf.PI * f / SRB;
-                        ph2 += 2f * Mathf.PI * (f * 1.0035f) / SRB;
-                        float breathe = 0.85f + 0.15f * Mathf.Sin(2f * Mathf.PI * 0.16f * (barT + t));
-                        d[i] += (Mathf.Sin(ph) + Mathf.Sin(ph2)) * 0.5f
-                                * AR(t, bar, 0.85f, 0.85f) * breathe * 0.095f;
-                    }
-                }
-
-                // 오르골 선율 — 성기게. 마디마다 옥타브를 살짝 바꿔 흐름을 준다
-                for (int k = 0; k < mBeat.Length; k++)
-                {
-                    float t0 = barT + mBeat[k] * beat;
-                    int oct = (b % 4 == 2 && k == 2) ? 24 : 12;      // 가끔 위에서 반짝
-                    float f = Freq(chord[b, mTone[k]] + oct), ph = 0f;
-                    float amp = oct > 12 ? 0.055f : 0.085f;
-                    int i0 = (int)(t0 * SRB), i1 = Mathf.Min(n, (int)((t0 + beat * 2f) * SRB));
-                    for (int i = i0; i < i1; i++)
-                    {
-                        float t = (float)i / SRB - t0;
-                        ph += 2f * Mathf.PI * f / SRB;
-                        d[i] += Bell(ph) * Pluck(t, 3.2f) * amp;
-                    }
+                    int oct = (k % 4 == 3) ? 24 : 12;      // 가끔 한 옥타브 위에서 튀게
+                    SynthLead(d, SRB, t0 + lead[k, 0],
+                              Freq(chord[c, (int)lead[k, 1]] + oct),
+                              0.28f * gain, 0.42f);
                 }
             }
+
+            // ---- 3) 패드 — 아주 작게. 뜯은 현 사이의 빈틈만 메우는 접착제다.
+            //      디튠은 넣지 않는다. 맥놀이가 곧 "우우웅" 이기 때문이다.
+            float Weight(int c, float t)
+            {
+                float dt = t - (c + 0.5f) * seg;
+                dt -= Mathf.Round(dt / L) * L;              // 루프를 가로질러 최단 거리
+                float u = Mathf.Abs(dt) / seg;
+                return u >= 1f ? 0f : 0.5f * (1f + Mathf.Cos(Mathf.PI * u));
+            }
+            int NV = CH * 3;
+            var phC = new double[NV]; var incC = new double[NV];
+            for (int c = 0; c < CH; c++)
+                for (int v = 0; v < 3; v++) incC[c * 3 + v] = Q(Freq(chord[c, v] + 12)) / SRB;
+            double phB = 0, incB = 2.0 / L / SRB;           // 호흡 — 루프당 2회라야 이음매가 맞는다
+
+            for (int i = 0; i < n; i++)
+            {
+                float t = (float)i / SRB;
+                float breathe = 0.85f + 0.15f * Sin01(phB);
+                int cA = (int)Mathf.Floor(t / seg - 0.5f);
+                for (int k = 0; k < 2; k++)
+                {
+                    int c = ((cA + k) % CH + CH) % CH;
+                    float w = Weight(c, t);
+                    if (w <= 0f) continue;
+                    float s = Sin01(phC[c * 3]) + Sin01(phC[c * 3 + 1]) + Sin01(phC[c * 3 + 2]);
+                    d[i] += s * 0.333f * w * breathe * 0.18f;
+                }
+                for (int v = 0; v < NV; v++) phC[v] += incC[v];
+                phB += incB;
+            }
+
             Limit(d);
             return d;
         }
@@ -384,6 +480,32 @@ namespace BlackholeGame
         System.Threading.Tasks.Task<float[]> bgmTask;
         float bgmRetry;   // 브라우저 자동재생 차단 대비 재시도 쿨다운
 
+        // ---- BGM 재생목록 ----
+        //   Resources/BGM 의 파일을 이 순서대로 틀고, 마지막 곡이 끝나면 처음으로 돌아간다.
+        //   파일 이름 뒤쪽은 만든 사람과 출처 번호다 — 출처를 잃지 않으려고 그대로 둔다.
+        //   파일이 하나도 없으면 아래 합성 BGM 으로 떨어진다(빌드에서 파일이 빠져도 무음이 되지 않게).
+        static readonly string[] BgmTracks =
+        {
+            "BGM/BGM_01",   // 0:56
+            "BGM/BGM_02",   // 1:57   (원본 monume-retro-arcade-game-music-577980)
+            "BGM/BGM_03",   // 1:18   (원본 mondamusic-retro-arcade-game-music-512837)
+            "BGM/BGM_04",   // 0:36
+        };
+        readonly System.Collections.Generic.List<AudioClip> bgmList = new System.Collections.Generic.List<AudioClip>();
+        int bgmIdx = -1;
+        // 이 곡이 한 번이라도 실제로 울렸는가. "멈춰 있다"의 이유가 둘이라 이게 필요하다 —
+        //   아직 한 번도 안 울렸으면 브라우저가 막은 것이고(다시 틀어야 한다),
+        //   울리다가 멈췄으면 곡이 끝난 것이다(다음 곡으로 가야 한다).
+        //   경과 시간을 직접 세면 안 된다. GameManager 가 넘기는 dt 는 0.1초로 잘리고, 히트스톱이면
+        //   Tick 자체를 건너뛰며, timeScale 도 탄다 — 오디오는 그동안에도 흐르므로 항상 모자라게 쌓인다.
+        bool bgmStarted;
+        // 곡 끝은 점점 작아지며, 다음 곡은 점점 커지며 들어온다. 뚝 끊고 뚝 시작하면 전환이 사고처럼 들린다.
+        //   위치는 bgmSrc.time 을 쓴다 — 오디오 시스템이 주는 실제 재생 위치라 프레임 시간과 달리 어긋나지 않는다.
+        const float BgmFadeOut = 2.5f, BgmFadeIn = 1.0f;
+        float bgmFade = 1f;
+
+        void ApplyBgmVolume() { if (bgmSrc) bgmSrc.volume = bgmVol * 0.85f * bgmFade; }
+
         // 한 번의 타격 펄스로 20~30마리가 동시에 죽는다 → 그대로 재생하면 소리가 뭉개진다.
         // 토큰 버킷으로 초당 개수를 제한하고 피치를 흩어 "뽁뽁뽁"으로 들리게 한다.
         float popBudget;
@@ -392,7 +514,7 @@ namespace BlackholeGame
         public float BgmVolume
         {
             get => bgmVol;
-            set { bgmVol = Mathf.Clamp01(value); if (bgmSrc) bgmSrc.volume = bgmVol * 0.85f; }
+            set { bgmVol = Mathf.Clamp01(value); ApplyBgmVolume(); }
         }
         public float SfxVolume
         {
@@ -432,14 +554,40 @@ namespace BlackholeGame
             clips[(int)Sfx.Win] = SynthClips.Win();
             clips[(int)Sfx.Timeout] = SynthClips.Timeout();
 
+            foreach (var path in BgmTracks)
+            {
+                var c = Resources.Load<AudioClip>(path);
+                if (c != null) bgmList.Add(c);
+                else Debug.LogWarning("[POP Cell] BGM 파일을 못 찾음: " + path);
+            }
+
+            if (bgmList.Count > 0)
+            {
+                bgmSrc.loop = false;    // 한 곡이 끝나면 Tick 이 다음 곡으로 넘긴다
+                PlayNextBgm();
+            }
 #if UNITY_WEBGL && !UNITY_EDITOR
-            // WebGL 은 스레드가 없다 → Task.Run 이 돌지 않아 BGM 이 영영 안 만들어진다(브라우저 무음).
-            // 여기서는 그냥 동기로 만든다. 로딩 직후 ~0.4초 멈칫하지만 스플래시 구간이라 티가 안 난다.
-            bgmSrc.clip = SynthClips.FromBuffer("bgm_loop", SynthClips.BgmBuffer(), SynthClips.BgmRate);
-            bgmSrc.Play();
+            // 파일이 없을 때만 합성으로 떨어진다. WebGL 은 스레드가 없어 Task.Run 이 돌지 않으므로
+            // (브라우저 무음) 여기서는 동기로 만든다 — 그만큼 시작이 멈칫한다.
+            else
+            {
+                bgmSrc.clip = SynthClips.FromBuffer("bgm_loop", SynthClips.BgmBuffer(), SynthClips.BgmRate);
+                bgmSrc.Play();
+            }
 #else
-            bgmTask = System.Threading.Tasks.Task.Run(() => SynthClips.BgmBuffer());
+            else bgmTask = System.Threading.Tasks.Task.Run(() => SynthClips.BgmBuffer());
 #endif
+        }
+
+        void PlayNextBgm()
+        {
+            if (bgmList.Count == 0) return;
+            bgmIdx = (bgmIdx + 1) % bgmList.Count;
+            bgmSrc.clip = bgmList[bgmIdx];
+            bgmStarted = false;
+            bgmFade = 0f;          // 무음에서 시작해 페이드인
+            ApplyBgmVolume();
+            bgmSrc.Play();
         }
 
         public void Tick(float dt)
@@ -449,7 +597,34 @@ namespace BlackholeGame
             // 브라우저는 사용자 조작 전까지 AudioContext 를 정지시켜 둔다 → 로드 직후의 Play() 가
             // 씹힐 수 있다. 클립이 있는데 멈춰 있으면(볼륨이 0이 아닌 한) 다시 틀어준다.
             // 첫 클릭(타이틀의 게임 시작 등)으로 컨텍스트가 살아나면 이 시점에 재생이 붙는다.
-            if (bgmSrc != null && bgmSrc.clip != null && !bgmSrc.isPlaying && bgmVol > 0.0001f)
+            if (bgmList.Count > 0 && bgmSrc != null)
+            {
+                if (bgmSrc.isPlaying)
+                {
+                    bgmStarted = true;
+                    var cl = bgmSrc.clip;
+                    float pos = bgmSrc.time;
+                    float len = cl != null ? cl.length : 0f;
+                    // 짧은 곡에서 페이드가 곡을 삼키지 않게 길이의 1/4 로 묶는다
+                    float fo = Mathf.Min(BgmFadeOut, len * 0.25f);
+                    float fi = Mathf.Min(BgmFadeIn, len * 0.25f);
+                    float f = 1f;
+                    if (fi > 0f && pos < fi) f = pos / fi;
+                    if (fo > 0f && len - pos < fo) f = Mathf.Min(f, Mathf.Max(0f, (len - pos) / fo));
+                    bgmFade = f;
+                    ApplyBgmVolume();
+                }
+                else if (bgmStarted)
+                {
+                    PlayNextBgm();      // 울리다가 멈췄다 = 곡이 끝났다
+                }
+                else if (bgmVol > 0.0001f)
+                {
+                    bgmRetry -= dt;     // 아직 한 번도 안 울렸다 = 브라우저가 막고 있다
+                    if (bgmRetry <= 0f) { bgmRetry = 0.5f; bgmSrc.Play(); }
+                }
+            }
+            else if (bgmSrc != null && bgmSrc.clip != null && !bgmSrc.isPlaying && bgmVol > 0.0001f)
             {
                 bgmRetry -= dt;
                 if (bgmRetry <= 0f) { bgmRetry = 0.5f; bgmSrc.Play(); }
