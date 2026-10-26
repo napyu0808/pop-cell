@@ -3641,7 +3641,7 @@ namespace BlackholeGame
             var hGold = new GUIStyle(sGold) { normal = { textColor = Gold } }; FlatText(hGold);
             var hCen  = new GUIStyle(sCenter) { normal = { textColor = Ink } }; FlatText(hCen);
 
-            GUI.Label(new Rect(14f * s, 10f * s, 520f * s, 32f * s), $"$ {gold:N0}", hGold);
+            GUI.Label(new Rect(14f * s, 10f * s, 520f * s, 32f * s), "$ " + Money(gold), hGold);
             GUI.Label(new Rect(0, 8f * s, Screen.width, 30f * s),
                 bossWave ? Loc.T("hud.boss") : Loc.F("hud.wave", waveNum, wave.totalWaves), hCen);
 
@@ -5316,6 +5316,9 @@ namespace BlackholeGame
             float slackX = area.width * 0.25f;
             treePanXMin = Mathf.Min(area.xMax - margin - maxX, centerPanX - slackX);
             treePanXMax = Mathf.Max(area.xMin + margin - minX, centerPanX + slackX);
+            // 들어올 때/"화면 리셋" — 코어가 가운데 오게. 드러난 노드들의 한가운데로 맞추면 한쪽으로만 뻗은
+            //   탭(타워)에서는 코어가 화면 밖으로 밀려난다. 한계를 넘으면 아래 clamp 가 가장 가까운 곳으로 당긴다.
+            if (resetView) treePan = Vector2.zero;
             treePan.x = Mathf.Clamp(treePan.x, treePanXMin, treePanXMax);
 
             float viewTop = area.yMin, viewBot = availTop;
@@ -5323,7 +5326,6 @@ namespace BlackholeGame
             float slackY = (viewBot - viewTop) * 0.25f;
             treePanYMin = Mathf.Min(viewBot - margin - maxY, centerPanY - slackY);
             treePanYMax = Mathf.Max(viewTop + margin - minY, centerPanY + slackY);
-            if (resetView) treePan = new Vector2(centerPanX, centerPanY);   // 들어올 때/"화면 리셋" — 코어가 가운데
             treePan.y = Mathf.Clamp(treePan.y, treePanYMin, treePanYMax);
 
             Event ev = Event.current;
