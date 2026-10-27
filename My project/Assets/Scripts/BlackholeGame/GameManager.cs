@@ -94,6 +94,7 @@ namespace BlackholeGame
         int bossSeenMask = 0;     // 보스 웨이브까지 가본 지역 비트마스크 → 지도에서 그림자→실제 보스
         bool hasSave = false;     // 타이틀 '이어하기' 표시용
         string cheatMsg; float cheatMsgUntil;   // 치트 적용 안내(화면 위 잠깐)
+        bool rebirthAsk;   // 지도에서 '과거로 돌아가기' 확인 창이 떠 있는지
         float newConfirmUntil = -1f;   // 세이브가 있을 때 '새로 시작'은 두 번 눌러야 — 첫 클릭 후 이 시각까지 확인 대기
         int mapIndex = 0;         // 지역 캐러셀에서 고른 칸
         float mapScroll = -1f;    // 캐러셀 부드러운 이동 (음수 = 초기화 전)
@@ -2514,10 +2515,13 @@ namespace BlackholeGame
                 }
             }
 
+            if (state != State.Map) rebirthAsk = false;   // 확인 창은 지도에서만 산다
+
             // ESC — 상태별 처리
             if (kb != null && kb.escapeKey.wasPressedThisFrame)
             {
-                if (state == State.Playing)      { pauseReturn = State.Playing; state = State.Paused; }
+                if (rebirthAsk)                  { rebirthAsk = false; }   // 확인 창이 떠 있으면 그것부터 닫는다
+                else if (state == State.Playing) { pauseReturn = State.Playing; state = State.Paused; }
                 else if (state == State.Paused)  { state = pauseReturn; }
                 else if (state == State.Settings)
                 {
@@ -3860,7 +3864,11 @@ namespace BlackholeGame
             float cxMid = w * 0.5f;
 
             var ev = Event.current;
-            if (ev.type == EventType.ScrollWheel)
+            // 확인 창이 떠 있는 동안은 뒤의 지도가 눌리면 안 된다 — IMGUI 버튼은 GUI.enabled 로 막고,
+            //   직접 처리하는 휠·드래그는 아래에서 따로 건너뛴다.
+            bool mapWasEnabled = GUI.enabled;
+            if (rebirthAsk) GUI.enabled = false;
+            if (!rebirthAsk && ev.type == EventType.ScrollWheel)
             { mapIndex = Mathf.Clamp(mapIndex + (ev.delta.y > 0f ? 1 : -1), 0, n - 1); ev.Use(); }
 
             // round49: 잡고 좌우로 끌어서 넘기기. 카드 루프보다 먼저 봐야 드래그가 클릭으로 안 샌다.
@@ -3868,7 +3876,8 @@ namespace BlackholeGame
             //   못 받아 그 상태가 남고, 지도로 돌아왔을 때 화살표를 눌러도 화면이 안 움직였다.
             var dragArea = new Rect(0f, cyMid - cardH * 0.75f, w, cardH * 1.5f);
             bool blockCardClick = false;
-            if (ev.type == EventType.MouseDown && ev.button == 0)
+            if (rebirthAsk) { mapPressValid = false; mapDragMoved = false; }
+            else if (ev.type == EventType.MouseDown && ev.button == 0)
             {
                 mapPressValid = dragArea.Contains(ev.mousePosition);
                 mapDragMoved = false;
@@ -3959,7 +3968,7 @@ namespace BlackholeGame
                 if (canRebirth)
                 {
                     if (UiBtn(rbRect, Loc.F("map.rebirth", ShardGainNow()), bst))
-                        BeginTransition(Prestige);
+                        rebirthAsk = true;   // 진행이 통째로 초기화되니 바로 실행하지 않고 한 번 묻는다
                     GUI.Label(new Rect(0, byy + bh + 3f * s, w, 18f * s),
                         Loc.F("map.rebirthInfo", ShardGainNow(), metaCurrency, ascensionLevel, ascensionLevel + 1), sub);
                 }
@@ -3970,6 +3979,27 @@ namespace BlackholeGame
                     GUI.Box(rbRect, Loc.T("map.rebirthLock"), bst);
                     GUI.color = gc;
                 }
+            }
+
+            // '과거로 돌아가기' 확인 창 — 일시정지 메뉴와 같은 어두운 판. 진행이 통째로 지워지는 버튼이라
+            //   바로 실행하지 않고 한 번 더 묻는다. 뒤의 지도는 위에서 GUI.enabled 로 막아 두었다.
+            GUI.enabled = mapWasEnabled;
+            if (rebirthAsk)
+            {
+                FillScreen(new Color(0.10f, 0.11f, 0.13f, 0.88f));
+                float aw = Mathf.Min(560f * s, w * 0.92f);
+                var qt = new GUIStyle(sBig) { alignment = TextAnchor.MiddleCenter, fontSize = Mathf.RoundToInt(28f * s) };
+                GUI.Label(new Rect(0, h * 0.24f, w, 56f * s), Loc.T("map.rebirthAskTitle"), qt);
+                var qb = new GUIStyle(sLabel) { alignment = TextAnchor.UpperCenter, wordWrap = true, fontSize = Mathf.RoundToInt(15f * s) };
+                GUI.Label(new Rect((w - aw) * 0.5f, h * 0.24f + 70f * s, aw, 120f * s),
+                          Loc.F("map.rebirthAskBody", ShardGainNow()), qb);
+                var qbtn = Btn(Mathf.RoundToInt(16f * s));
+                float qbw = 200f * s, qbh = 52f * s, qgap = 16f * s;
+                float qy = h * 0.24f + 205f * s, qx = w * 0.5f - qbw - qgap * 0.5f;
+                if (UiBtn(new Rect(qx, qy, qbw, qbh), Loc.T("map.rebirthYes"), qbtn))
+                { rebirthAsk = false; BeginTransition(Prestige); }
+                if (UiBtn(new Rect(qx + qbw + qgap, qy, qbw, qbh), Loc.T("map.rebirthNo"), qbtn))
+                    rebirthAsk = false;
             }
         }
 
