@@ -16,6 +16,8 @@ REPEAT_TIER = 7         # 반복 강화는 마지막 티어
 FLAT_BY_TIER = [20, 24, 30, 50, 88, 156, 290, 560]
 # 비용은 맨 왼쪽 1~3자리만 0이 아니고 나머지는 0이다(사용자 규칙). 최고가는 1,000만 미만.
 TIER_COST    = [50, 1500, 9800, 44000, 170000, 700000, 2600000, 9500000]
+# 코어를 켜면 나오는 네 줄기의 첫 노드(UpgradeTree.HeadCost). 첫 런 ~18골드, 두 번째 런을 끝내면 하나.
+HEAD_COST    = 20
 
 ROOT_FLAT    = 8.0
 MULT_PP, MULT_CAP        = 21.0, 300.0
@@ -250,8 +252,8 @@ def build():
     """UpgradeTree.BuildAll 과 같은 순서·부모·티어. 루트 + 149 일반 + 반복 6."""
     nodes = [Node("root", None, 0, None, "root", cost=0)]
 
-    def make(nid, parent, t, tier, lane):
-        nodes.append(Node(nid, parent, tier, t, lane))
+    def make(nid, parent, t, tier, lane, cost=None):
+        nodes.append(Node(nid, parent, tier, t, lane, cost=cost))
 
     def lane(key, parent, frm=0):
         t = LANES[key][0]
@@ -265,20 +267,20 @@ def build():
         nodes.append(Node(nid, parent, REPEAT_TIER, t, nid, repeat=True, cost=REP_COST[ci]))
 
     # 코어에서 뻗는 줄기 순서 = 방향(오른쪽·아래·왼쪽·위). 오른쪽 첫 노드는 고정 공격력.
-    make("flat0", "root", "Flat", tier_of("flat", 0), "flat")
+    make("flat0", "root", "Flat", tier_of("flat", 0), "flat", HEAD_COST)
     rep("rmult", lane("mult", "flat0"), "RMult", 1)
     rep("rflat", lane("flat", "flat0", 1), "RFlat", 0)
     rep("rspeed", lane("speed", "flat0"), "RSpeed", 2)
-    make("range0", "root", "Range", tier_of("range", 0), "range")
+    make("range0", "root", "Range", tier_of("range", 0), "range", HEAD_COST)
     lane("critc", "range0")
     rep("rrange", lane("range", "range0", 1), "RRange", 3)
     rep("rcritx", lane("critx", "range0"), "RCritX", 4)
-    make("auto", "root", "Auto", 0, "auto")     # 왼쪽 줄기의 첫 노드. 골드 1 은 한 칸 뒤.
+    make("auto", "root", "Auto", 0, "auto", HEAD_COST)     # 왼쪽 줄기의 첫 노드. 골드 1 은 한 칸 뒤.
     make("gold0", "auto", "Gold", tier_of("gold", 0), "gold")
     lane("time", "gold0")
     rep("rgold", lane("gold", "gold0", 1), "RGold", 5)
     lane("skip", "gold0")
-    make("spawn0", "root", "Spawn", tier_of("spawn", 0), "spawn")
+    make("spawn0", "root", "Spawn", tier_of("spawn", 0), "spawn", HEAD_COST)
     lane("scount", "spawn0"); lane("spawn", "spawn0", 1)
     make("bomb", "spawn0", "Bomb", BOMB_UNLOCK_TIER, "bomb")
     lane("bombdmg", "bomb"); lane("bombrad", "bomb"); lane("bombfreq", "bomb"); lane("bombtime", "bomb")
@@ -415,7 +417,7 @@ def wave_cfg(stage, asc=0):
 # GameManager 가 살아있는 Play 모드에서 UpgradeTree.BuildAll() 로 뽑은 값 (round38).
 EXPECTED_DPS = [126, 276, 582, 1188, 3768, 8319, 19799, 46580]
 EXPECTED_HIT = [70, 116, 183, 298, 693, 1116, 1936, 3602]
-EXPECTED_TOTAL_COST = 225_212_250  # 일반 노드만(반복 제외) — 2시간 재밸런싱
+EXPECTED_TOTAL_COST = 225_212_130  # 일반 노드만(반복 제외) — 2시간 재밸런싱
 EXPECTED_NODES = 191   # 루트+커서 95 + 타워 90 + 반복 6
 
 

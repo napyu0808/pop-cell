@@ -268,10 +268,14 @@ namespace BlackholeGame
             }
         }
 
-        static UpgradeNode Make(List<UpgradeNode> list, string id, string parent, T t, int tier)
+        // 코어를 켜면 나오는 네 줄기의 첫 노드 값. 첫 런이 18골드쯤 벌고 두 번째 런을 끝내면 하나를
+        //   살 수 있게 맞춘 값이다(티어 0 표값 50 보다 낮다).
+        public const long HeadCost = 20;
+
+        static UpgradeNode Make(List<UpgradeNode> list, string id, string parent, T t, int tier, long costOverride = -1)
         {
             var e = Effect(t, tier);
-            var n = new UpgradeNode(id, parent, Vector2.zero, e.icon, e.label, Cost(tier), tier, e.desc, e.descArg, e.apply);
+            var n = new UpgradeNode(id, parent, Vector2.zero, e.icon, e.label, costOverride >= 0 ? costOverride : Cost(tier), tier, e.desc, e.descArg, e.apply);
             list.Add(n);
             return n;
         }
@@ -302,26 +306,26 @@ namespace BlackholeGame
 
             // 공격 — 머리는 고정 공격력 1(오른쪽 첫 노드). 코어에서 뻗는 줄기 순서가 곧 방향이다:
             //   오른쪽 -> 아래 -> 왼쪽 -> 위. 그래서 이 블록이 맨 앞이어야 오른쪽에 온다.
-            Make(list, LFlat.key + 0, RootId, T.Flat, TierOf(LFlat, 0));
+            Make(list, LFlat.key + 0, RootId, T.Flat, TierOf(LFlat, 0), HeadCost);
             Rep(list, "rmult",  Lane(list, LMult, LFlat.key + 0),  T.RMult, 1);
             Rep(list, "rflat",  Lane(list, LFlat, LFlat.key + 0, 1), T.RFlat, 0);
             Rep(list, "rspeed", Lane(list, LSpeed, LFlat.key + 0), T.RSpeed, 2);
 
             // 치명/범위 — 머리 = 범위 1
-            Make(list, LRange.key + 0, RootId, T.Range, TierOf(LRange, 0));
+            Make(list, LRange.key + 0, RootId, T.Range, TierOf(LRange, 0), HeadCost);
             Lane(list, LCritC, LRange.key + 0);
             Rep(list, "rrange", Lane(list, LRange, LRange.key + 0, 1), T.RRange, 3);
             Rep(list, "rcritx", Lane(list, LCritX, LRange.key + 0), T.RCritX, 4);
 
             // 경제 — 왼쪽 줄기. 자동공격이 첫 노드이고, 골드 1 은 그 한 칸 뒤로 밀렸다.
-            Make(list, "auto", RootId, T.Auto, 0);
+            Make(list, "auto", RootId, T.Auto, 0, HeadCost);
             Make(list, LGold.key + 0, "auto", T.Gold, TierOf(LGold, 0));
             Lane(list, LTime, LGold.key + 0);
             Rep(list, "rgold", Lane(list, LGold, LGold.key + 0, 1), T.RGold, 5);
             Lane(list, LSkip, LGold.key + 0);
 
             // 소환/백신 — 머리 = 소환 1, 그 위에 [백신] 해금 노드가 따로 갈라져 3갈래
-            Make(list, LSpawn.key + 0, RootId, T.Spawn, TierOf(LSpawn, 0));
+            Make(list, LSpawn.key + 0, RootId, T.Spawn, TierOf(LSpawn, 0), HeadCost);
             Lane(list, LSCount, LSpawn.key + 0);
             Lane(list, LSpawn, LSpawn.key + 0, 1);
             Make(list, "bomb", LSpawn.key + 0, T.Bomb, BombUnlockTier);
