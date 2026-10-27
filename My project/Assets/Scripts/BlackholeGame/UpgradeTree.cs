@@ -74,6 +74,10 @@ namespace BlackholeGame
                            RangeAdd = 0.21f, GoldPP = 18f, TimeAdd = 15f, SpawnMul = 0.85f,
                            BombDmgAdd = 0.5f, BombRadAdd = 0.10f, BombIntervalSub = 2f, BombFieldAdd = 2f;
         public const int SkipAdd = 2;
+        // 콤보 — 기본은 1.6초 안에 다음 처치가 없으면 끊기고, 연속 1회마다 골드 +0.5%(40연속 +20%)다.
+        //   유지시간 노드는 그 1.6초를, 배율 노드는 "연속 1회당" 보너스를 키운다. 두 줄 다 3칸이고
+        //   다 사면 유지 3.4초, 40연속 +44%.
+        public const float ComboTimeAdd = 0.6f, ComboMulAdd = 0.002f;
 
         // ---- 반복 강화 1회당 수치·가격 (같은 값으로 같은 양) ----
         // 1회 수치는 작게 — 여러 번(수십~수백 레벨) 사게 해서 +1/+10/최대 버튼이 의미 있게
@@ -97,6 +101,7 @@ namespace BlackholeGame
             : Mathf.RoundToInt(FlatByTier[FlatByTier.Length - 1] * Mathf.Pow(1.9f, tier - FlatByTier.Length + 1));
 
         public enum T { Flat, Mult, Speed, CritC, CritX, Range, Gold, Time, Spawn, SCount, Skip, Auto, Bomb, BombDmg, BombRad, BombFreq, BombTime,
+                        ComboTime, ComboMul,
                         RFlat, RMult, RSpeed, RRange, RCritX, RGold }
 
         // 가지 정의 — (타입, id 접두어, 노드 수, 시작 티어). 노드 수는 머리 노드를 포함한 전체 길이.
@@ -110,7 +115,8 @@ namespace BlackholeGame
             LTime  = L(T.Time,  "time",   5),  LGold  = L(T.Gold,  "gold",   9),  LSkip  = L(T.Skip,  "skip",  3),
             LSCount= L(T.SCount,"scount", 5),  LSpawn = L(T.Spawn, "spawn",  5),
             LBDmg  = L(T.BombDmg, "bombdmg", 4, 1), LBRad = L(T.BombRad, "bombrad", 6, 1), LBFreq = L(T.BombFreq, "bombfreq", 3, 1),
-            LBTime = L(T.BombTime, "bombtime", 3, 1);
+            LBTime = L(T.BombTime, "bombtime", 3, 1),
+            LCTime = L(T.ComboTime, "ctime", 3, 1), LCMul = L(T.ComboMul, "cmul", 3, 2);   // 왼쪽(경제·유틸) 줄기의 콤보 두 줄
         public const int BombUnlockTier = 1;   // 백신은 1지역을 깬 뒤 — 기본 조작에 익숙해진 다음 새 요소
 
         // ---- 자동 타워(round50 개편) ---------------------------------------------------
@@ -250,6 +256,8 @@ namespace BlackholeGame
                 case T.Range:  return ("ring", "n.range", "nd.range", RangeAdd, s => s.cursorRadius += RangeAdd);
                 case T.Gold:   return ("coin", "n.gold", "nd.gold", GoldPP, s => s.goldMultPercent += GoldPP);
                 case T.Time:   return ("clock", "n.time", "nd.time", TimeAdd, s => s.bonusTimeSec = CT(s.bonusTimeSec + TimeAdd));
+                case T.ComboTime: return ("hourglass", "n.ctime", "nd.ctime", ComboTimeAdd, s => s.comboWindowAdd += ComboTimeAdd);
+                case T.ComboMul:  return ("combo", "n.cmul", "nd.cmul", ComboMulAdd * 100f, s => s.comboPerAdd += ComboMulAdd);
                 case T.Spawn:  return ("chevrons", "n.spawn", "nd.spawn", SpawnMul, s => s.spawnIntervalMult = CS(s.spawnIntervalMult * SpawnMul));
                 case T.SCount: return ("cells", "n.scount", "nd.scount", 1f, s => s.spawnCount = CN(s.spawnCount + 1));
                 case T.Skip:   return ("skip", "n.skip", "nd.skip", SkipAdd, s => s.startWave += SkipAdd);
@@ -328,6 +336,8 @@ namespace BlackholeGame
             Lane(list, LTime, LGold.key + 0);
             Rep(list, "rgold", Lane(list, LGold, LGold.key + 0, 1), T.RGold, 5);
             Lane(list, LSkip, LGold.key + 0);
+            Lane(list, LCTime, LGold.key + 0);
+            Lane(list, LCMul, LGold.key + 0);
 
             // 소환/백신 — 머리 = 소환 1, 그 위에 [백신] 해금 노드가 따로 갈라져 3갈래
             Make(list, LSpawn.key + 0, RootId, T.Spawn, TierOf(LSpawn, 0), HeadCost);

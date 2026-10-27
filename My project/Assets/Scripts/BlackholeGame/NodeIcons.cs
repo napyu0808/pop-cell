@@ -80,6 +80,10 @@ namespace BlackholeGame
                     Ln(px, 24, 12, 20, 8, 1); Ln(px, 24, 12, 28, 8, 1);
                 }),
                 // 제한시간(Time) — 시계
+                // 콤보 유지(ComboTime) — 모래시계
+                ["hourglass"] = Make(px => { Ln(px, 8, 4, 20, 4, 1); Ln(px, 8, 24, 20, 24, 1); Ln(px, 8, 4, 20, 24, 0); Ln(px, 20, 4, 8, 24, 0); }),
+                // 콤보 배율(ComboMul) — 계단식으로 올라가는 막대
+                ["combo"]     = Make(px => { Ln(px, 6, 24, 6, 18, 1); Ln(px, 14, 24, 14, 12, 1); Ln(px, 22, 24, 22, 5, 1); }),
                 ["clock"]     = Make(px => { Ring(px, 14, 14, 10, 1); Ln(px, 14, 14, 14, 6, 0); Ln(px, 14, 14, 20, 17, 0); }),
                 // 소환가속·소환수(Spawn·SCount) — 겹화살표(더 빠르게/더 많이)
                 ["chevrons"]  = Make(px => { Ln(px, 8, 6, 14, 14, 0); Ln(px, 14, 14, 8, 22, 0); Ln(px, 14, 6, 20, 14, 0); Ln(px, 20, 14, 14, 22, 0); }),

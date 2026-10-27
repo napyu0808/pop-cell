@@ -44,7 +44,8 @@ namespace BlackholeGame
         //   "끊기면 아깝다" 가 되게 한다. 40연속에서 +20% 로 상한.
         const float ComboBonusPer = 0.005f;
         const int ComboBonusMax = 40;
-        float ComboMul => 1f + ComboBonusPer * Mathf.Min(comboCount, ComboBonusMax);
+        float ComboMul => 1f + (ComboBonusPer + stats.comboPerAdd) * Mathf.Min(comboCount, ComboBonusMax);
+        float ComboWindowNow => ComboWindow + stats.comboWindowAdd;   // 유지시간 노드가 늘린다
 
         // ---- 연속 클리어(round55) -------------------------------------------------
         //   실패해도 골드를 그대로 챙기니 한 판 한 판이 "도전"이 아니라 "정산"이었다.
@@ -1600,7 +1601,7 @@ namespace BlackholeGame
                           Loc.F("hud.streak", winStreak, Mathf.RoundToInt((StreakMul - 1f) * 100f)), sst);
             }
             if (comboCount < 3) return;
-            float k = Mathf.Clamp01(comboLeft / ComboWindow);
+            float k = Mathf.Clamp01(comboLeft / ComboWindowNow);
             float grow = Mathf.Clamp01(comboCount / 40f);
             int fs = Mathf.RoundToInt((26f + 22f * grow) * uiScale);
             var st = new GUIStyle(sBig)
@@ -2455,7 +2456,7 @@ namespace BlackholeGame
         void BumpCombo(bool crit)
         {
             comboCount++;
-            comboLeft = ComboWindow;
+            comboLeft = ComboWindowNow;
             if (sound != null)
             {
                 float pitch = Mathf.Min(2.1f, 0.92f + comboCount * 0.035f) * Random.Range(0.97f, 1.04f);

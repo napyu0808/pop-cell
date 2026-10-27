@@ -23,6 +23,8 @@ namespace BlackholeGame
         public float spawnIntervalMult = 1f;   // 소환 가속 노드가 낮춘다 (하한 0.25). 낮을수록 적이 더 자주 등장
         public int spawnCount = 1;             // 소환 1회당 적 마릿수 (round42: 기본 1, 노드로 +1씩 최대 10)
         public int startWave = 1;              // 스킵 노드로 시작 웨이브 상승 (5,10,15,20)
+        public float comboWindowAdd = 0f;      // 콤보 유지시간 +초 (노드)
+        public float comboPerAdd = 0f;         // 연속 1회당 골드 보너스 가산(0.002 = +0.2%p) (노드)
         public bool autoAttack = false;        // 자동 공격 해금 여부. false면 좌클릭으로만 타격(초반 수동 구간)
 
         // ---- 백신 캡슐(round42) — "백신" 노드를 사야 그때부터 생성된다 ----
@@ -80,6 +82,7 @@ namespace BlackholeGame
             goldMultPercent = goldMultPercent, cursorRadius = cursorRadius,
             bonusTimeSec = bonusTimeSec, spawnIntervalMult = spawnIntervalMult,
             spawnCount = spawnCount, startWave = startWave, autoAttack = autoAttack,
+            comboWindowAdd = comboWindowAdd, comboPerAdd = comboPerAdd,
             bombUnlocked = bombUnlocked, bombDmgMul = bombDmgMul,
             bombRadiusMul = bombRadiusMul, bombInterval = bombInterval, bombFieldSec = bombFieldSec,
             towerOn = (bool[])towerOn.Clone(), towerDmgMul = (float[])towerDmgMul.Clone(),

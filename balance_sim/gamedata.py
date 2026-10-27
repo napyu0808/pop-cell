@@ -66,7 +66,11 @@ LANES = {
     "scount": ("SCount", 5, 0), "spawn": ("Spawn", 5, 0),
     "bombdmg": ("BombDmg", 4, 1), "bombrad": ("BombRad", 6, 1), "bombfreq": ("BombFreq", 3, 1),
     "bombtime": ("BombTime", 3, 1),
+    "ctime": ("ComboTime", 3, 1), "cmul": ("ComboMul", 3, 2),   # 콤보 노드 — 시뮬레이터는 콤보를 안 돌려서 효과 없음
 }
+# 효과를 시뮬레이터가 모델링하지 않는 가지. 가격은 트리 총비용에 들어가지만 진행 시뮬레이션은 사지 않는다
+#   (사면 골드만 빠져서 시간이 부풀려진다 — 실제로는 사도 되고 안 사도 되는 선택 강화다).
+UNMODELED_LANES = {"ctime", "cmul"}
 
 # ---- GameConfig.cs : Stats 기본값 --------------------------------------
 BASE_ATTACK   = 10.0
@@ -217,6 +221,8 @@ def apply_type(t, tier, s):
         s.bombInterval = max(BOMB_INT_MIN, s.bombInterval - BOMB_INT_SUB)
     elif t == "BombTime":
         s.bombFieldSec = min(BOMB_FIELD_MAX, s.bombFieldSec + BOMB_FIELD_ADD)
+    elif t in ("ComboTime", "ComboMul"):
+        pass   # 콤보는 시뮬레이터 바깥(GOLD_OUTSIDE_SIM)
     # ---- 반복 강화 ----
     elif t == "RFlat":
         s.flatBonus += REP_FLAT
@@ -281,6 +287,8 @@ def build():
     lane("time", "gold0")
     rep("rgold", lane("gold", "gold0", 1), "RGold", 5)
     lane("skip", "gold0")
+    lane("ctime", "gold0")
+    lane("cmul", "gold0")
     make("spawn0", "root", "Spawn", tier_of("spawn", 0), "spawn", HEAD_COST)
     lane("scount", "spawn0"); lane("spawn", "spawn0", 1)
     make("bomb", "spawn0", "Bomb", BOMB_UNLOCK_TIER, "bomb")
@@ -419,8 +427,8 @@ def wave_cfg(stage, asc=0):
 # GameManager 가 살아있는 Play 모드에서 UpgradeTree.BuildAll() 로 뽑은 값 (round38).
 EXPECTED_DPS = [126, 276, 582, 1188, 3768, 8319, 19799, 46580]
 EXPECTED_HIT = [70, 116, 183, 298, 693, 1116, 1936, 3602]
-EXPECTED_TOTAL_COST = 651_696_130  # 일반 노드만(반복 제외) — 2시간 재밸런싱
-EXPECTED_NODES = 191   # 루트+커서 95 + 타워 90 + 반복 6
+EXPECTED_TOTAL_COST = 666_267_630  # 일반 노드만(반복 제외) — 2시간 재밸런싱
+EXPECTED_NODES = 197   # 루트+커서 101(콤보 6 포함) + 타워 90 + 반복 6
 
 
 def self_check(verbose=True):
