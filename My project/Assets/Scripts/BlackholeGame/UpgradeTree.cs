@@ -83,7 +83,9 @@ namespace BlackholeGame
         // tier별 노드 비용 — balance_sim 으로 맞춘다.
         //   값은 맨 왼쪽 1~3자리만 0이 아니고 나머지는 0이다(사용자 규칙). 중간에 숫자가 끼면 안 된다.
         //   최고가는 1,000만 미만으로 묶여 있다 — 예전 157억짜리 꼭대기는 후반에 도달 불가능한 벽이었다.
-        static readonly long[] TierCost = { 50, 1500, 9800, 44000, 170000, 700000, 2600000, 9500000 };
+        // 새 지역은 늘 전 지역보다 돈을 더 벌어야 해서(지역 골드 배율을 올림) 티어 3~7 가격도 같이 올렸다 —
+        //   안 올리면 지역이 몇 분 만에 끝난다. 4번째 이후 가격은 지역 소요 시간(~15분)에서 거꾸로 맞춘 값이다.
+        static readonly long[] TierCost = { 50, 1500, 100000, 170000, 500000, 6500000, 7300000, 9500000 };
         public static long Cost(int tier) =>
             tier >= 0 && tier < TierCost.Length ? TierCost[tier]
             : (long)System.Math.Round(TierCost[TierCost.Length - 1] * System.Math.Pow(2.6, tier - TierCost.Length + 1));
@@ -123,6 +125,9 @@ namespace BlackholeGame
         //   잡몹을 치우라고 — 커서 배수(towerDmgMul)는 0.5 로 고정하고 노드를 두지 않는다.
         //   칸당 값은 그 단계가 겨냥하는 지역의 잡몹 체력 기준(1~3지역 37~1,392 / 5~6지역 1.7만~12.8만 / 7지역 202만).
         public static readonly float[] TowerFlatAt = { 100f, 600f, 10000f };
+        // 타워를 세운 순간부터 쥐여 주는 고정 공격력. 커서 타격의 절반(0.5배)만으로는 세워 봐야 2·3지역
+        //   잡몹이 7~20방이라 "세웠다"는 맛이 없었다. 100이면 3지역 잡몹이 대략 세 방에 죽는다.
+        public const float TowerBaseFlat = 100f;
         public const float TowerBossAdd = 0.24f, TowerBossMax = 1.2f;   // 보스 피해 배율 0.5 -> 1.2
         public const float TowerSpeedMul = 0.85f, TowerIntervalMin = 0.10f;   // round51: 풀강 초당 4발 -> 10발
         public const float TowerSpinAdd = 14f, TowerSpinMax = 300f;
