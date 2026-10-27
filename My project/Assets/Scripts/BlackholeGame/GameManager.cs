@@ -211,6 +211,8 @@ namespace BlackholeGame
             public int spawnWave;   // 이 적이 소환된 웨이브 (골드·체력 기준)
             // ---- 보스 전용 패턴(승천 레벨별로 하나씩 켜짐, round35) ----
             public bool elite;         // 변이개체 — 체력 x3, 골드 x5, 빨간 테두리
+            public bool golden;        // 황금 적 — 체력은 그대로, 골드 x10, 황금빛 테두리와 맥박치는 후광
+            public SpriteRenderer glow; // 황금 적의 후광(알파를 매 프레임 흔든다)
             public bool bomb;          // 백신 캡슐 — 터뜨리면 광역 피해
             public bool dead;          // 이번 타격 처리 중 죽음 — 펄스 끝에 목록에서 한꺼번에 뺀다(폭발 연쇄 대비)
             public bool critResist;    // 승천1+: 치명타 "추가" 피해를 절반만 받음
@@ -249,6 +251,12 @@ namespace BlackholeGame
         const float EliteChance   = 0.07f;   // 잡몹이 변이개체로 나올 확률
         const float EliteHpMul    = 3f;      // 체력 배율
         const int   EliteGoldMul  = 5;       // 골드 배율
+        // 황금 적 — 변이개체와는 따로, 황금빛으로 빛나는 적. 잡으면 그 웨이브 처치 골드의 10배다
+        //   (1지역은 처치 골드가 1이라 10달러). 확률은 지역별 표 — 지금은 1지역만 켜 둔다.
+        //   체력은 보통 적과 같다: 놓치지 않고 잡는 게 보상이지, 단단해서 어려운 적이 아니다.
+        static readonly float[] GoldenChanceByStage = { 0.03f, 0f, 0f, 0f, 0f, 0f, 0f, 0f };
+        const int   GoldenGoldMul = 10;
+        static readonly Color GoldenColor = new Color(1f, 0.82f, 0.16f);
         // 폭탄은 "잡몹 소환의 일정 비율"이 아니라 자체 타이머로 뜬다. 비율로 하면 소환 노드를 찍을수록
         // 빈도가 같이 폭증해서(소환수 2→6, 간격 하한 0.22) 8지역에선 폭탄만으로 보스 체력 71% 가 날아간다.
         // round42: 간격·대미지·반경·보스 비율은 전부 Stats(bomb*)로 — 백신 노드가 올린다.
@@ -2188,10 +2196,12 @@ namespace BlackholeGame
             if (spriteMat == null) spriteMat = new Material(FindSpriteShader());
 
             bool isElite = !asBomb && Random.value < EliteChance;
+            bool isGolden = !asBomb && !isElite
+                            && Random.value < GoldenChanceByStage[Mathf.Clamp(currentStage, 0, GoldenChanceByStage.Length - 1)];
             int cellTier = Mathf.Clamp(currentStage, 0, cellSprites.Length - 1);
             Sprite cellSprite = cellSprites[cellTier];
 
-            var go = new GameObject(asBomb ? "Vaccine" : isElite ? "Elite" : "Enemy");
+            var go = new GameObject(asBomb ? "Vaccine" : isElite ? "Elite" : isGolden ? "Golden" : "Enemy");
             var sr = go.AddComponent<SpriteRenderer>();
             sr.sprite = asBomb ? capsuleSprite : cellSprite;
             sr.sharedMaterial = spriteMat;
@@ -2207,12 +2217,13 @@ namespace BlackholeGame
                 sr = sr,
                 r = wave.enemyRadius * sizeMul,
                 visScale = asBomb ? 1f : (cellVisualBoost != null ? cellVisualBoost[cellTier] : 1f),
-                baseColor = asBomb ? new Color(0.94f, 0.96f, 0.99f) : WaveColor(waveNum),
+                baseColor = asBomb ? new Color(0.94f, 0.96f, 0.99f) : isGolden ? GoldenColor : WaveColor(waveNum),
                 wobSpeed = asBomb ? 0.8f : Random.Range(1.4f, 3.4f),
                 rotSpeed = asBomb ? 0f : Random.Range(-150f, 150f) + Mathf.Sign(Random.value - 0.5f) * 40f,  // 0 근처를 피해 확실히 돌게
                 wobPhase = Random.value * 6.2832f,
                 spawnWave = waveNum,
                 elite = isElite,
+                golden = isGolden,
                 bomb = asBomb,
             };
             e.hpMax = e.hp = Mathf.CeilToInt(wave.EnemyHpAt(waveNum) * sizeMul
@@ -2242,6 +2253,26 @@ namespace BlackholeGame
                 osr.sharedMaterial = spriteMat;
                 osr.sortingOrder = 9;
                 osr.color = new Color(0.95f, 0.10f, 0.12f, 1f);
+            }
+
+            // 황금 적 — 몸통을 금빛으로 칠하고, 진한 금테 한 겹 + 그 바깥에 번지는 후광을 깐다.
+            //   후광은 맥박치게(알파를 흔들어) 해서 무리 속에서도 눈이 간다.
+            if (isGolden)
+            {
+                var rimG = new GameObject("GoldenRim");
+                rimG.transform.SetParent(go.transform, false);
+                rimG.transform.localScale = Vector3.one * 1.22f;
+                var rsr = rimG.AddComponent<SpriteRenderer>();
+                rsr.sprite = cellSprite; rsr.sharedMaterial = spriteMat; rsr.sortingOrder = 9;
+                rsr.color = new Color(1f, 0.62f, 0.05f, 1f);
+
+                var glowG = new GameObject("GoldenGlow");
+                glowG.transform.SetParent(go.transform, false);
+                glowG.transform.localScale = Vector3.one * 1.8f;
+                var gsr = glowG.AddComponent<SpriteRenderer>();
+                gsr.sprite = cellSprite; gsr.sharedMaterial = spriteMat; gsr.sortingOrder = 8;
+                gsr.color = new Color(1f, 0.85f, 0.25f, 0.35f);
+                e.glow = gsr;
             }
 
             enemies.Add(e);
@@ -2644,6 +2675,9 @@ namespace BlackholeGame
                 float sy = 1f + 0.055f * Mathf.Sin(t * e.wobSpeed * 1.13f + e.wobPhase + 1.7f);
                 e.tr.localScale = new Vector3(dd * sx, dd * sy, 1f);
 
+                if (e.glow != null)   // 황금 적의 후광 — 맥박
+                    e.glow.color = new Color(1f, 0.85f, 0.25f, 0.30f + 0.22f * Mathf.Sin(t * 5f + e.wobPhase));
+
                 if (e.flash > 0f)
                 {
                     e.flash -= dt;
@@ -2787,9 +2821,16 @@ namespace BlackholeGame
             // round55: 연속 클리어 보너스는 여기서 바로 — 떠오르는 골드 숫자도 보너스가 반영돼야 한다
             int g = Mathf.RoundToInt(wave.GoldAt(e.spawnWave) * (1f + stats.GoldPctNow / 100f) * StreakMul * ComboMul);
             if (e.elite) g *= EliteGoldMul;   // 변이개체 — 반가운 보너스
+            if (e.golden) g *= GoldenGoldMul; // 황금 적 — 더 큰 보너스
             SpawnBurst(e.tr.position, e.baseColor, e.r);
             SpawnSplat(e.tr.position, e.baseColor, e.r);
             if (e.elite) SpawnBurst(e.tr.position, new Color(0.95f, 0.12f, 0.14f), e.r * 1.3f);
+            if (e.golden)
+            {
+                SpawnBurst(e.tr.position, GoldenColor, e.r * 1.8f);
+                SpawnBurst(e.tr.position, Color.white, e.r * 1.1f);
+                if (sound != null) sound.Play(Sfx.Buy, 0.9f, 1.25f);
+            }
             if (wasBoss) { SpawnBurst(e.tr.position, e.baseColor, e.r * 1.6f); SpawnBurst(e.tr.position, Color.white, e.r); }
             if (goldFloats.Count < 30)
                 goldFloats.Add(new GoldFloat { startWorld = e.tr.position, age = 0f, life = 1.0f, amount = g });

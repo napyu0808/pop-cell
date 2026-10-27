@@ -252,7 +252,7 @@ namespace BlackholeGame
         {
             // 1지역만 "튜토리얼 보정" — 초반 골드 수급이 막혀 첫 노드조차 못 사던 문제를 피하려고
             // 체력과 보스를 따로 낮게 잡는다. 1판마다 노드를 사고 몇 판이면 클리어된다.
-            new StageConfig(0, "s.0",  4,  28f,        28f, 1.130f,         4170,  4,  8,     0.05f, new Color(0.42f,0.72f,0.46f)),
+            new StageConfig(0, "s.0",  4,  28f,        18f, 1.130f,         4170,  4,  8,     0.05f, new Color(0.42f,0.72f,0.46f)),
             new StageConfig(1, "s.1",  5,  34f,       117f, 1.136f,        17600,  5,  9,     0.52f, new Color(0.36f,0.62f,0.70f)),
             new StageConfig(2, "s.2",  7,  44f,       329f, 1.142f,        49400,  6, 10,     0.57f, new Color(0.60f,0.54f,0.36f)),
             new StageConfig(3, "s.3",  9,  54f,       523f, 1.148f,        78500,  7, 11,     1.00f, new Color(0.40f,0.46f,0.60f)),
