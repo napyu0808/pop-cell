@@ -231,6 +231,7 @@ namespace BlackholeGame
         Transform[] towerTr = new Transform[Stats.TowerCount];
         SpriteRenderer[] towerBarrelSr = new SpriteRenderer[Stats.TowerCount];
         readonly float[] towerAngle = new float[Stats.TowerCount];
+        float laserAngle;   // 레이저 타워가 함께 쓰는 각도
         readonly float[] towerTimer = new float[Stats.TowerCount];
         Sprite towerBaseSprite, towerBarrelSprite, bulletSprite;
         static readonly Vector2[] TowerPos = { new Vector2(-5.2f, 0f), new Vector2(0f, 0f), new Vector2(5.2f, 0f) };
@@ -1903,6 +1904,13 @@ namespace BlackholeGame
         {
             if (stats == null || !stats.AnyTower) return;
             float hit = stats.GetHitDamage();
+            // 레이저 타워는 각도를 함께 쓴다 — 타워 셋이 한 가로줄에 있어서, 같은 각도로 돌면
+            //   가로가 되는 순간 레이저 셋이 한 줄로 합쳐진다. 회전은 그중 가장 빠른 타워를 따른다.
+            float laserSpin = 0f;
+            for (int i = 0; i < Stats.TowerCount; i++)
+                if (stats.towerOn[i] && stats.towerPattern[i] == Stats.PatLaser && stats.PatternUnlocked(i, Stats.PatLaser))
+                    laserSpin = Mathf.Max(laserSpin, stats.towerSpin[i]);
+            laserAngle = Mathf.Repeat(laserAngle + laserSpin * dt, 360f);
             for (int i = 0; i < Stats.TowerCount; i++)
             {
                 if (!stats.towerOn[i]) continue;
@@ -1920,6 +1928,7 @@ namespace BlackholeGame
                         towerAngle[i] = Mathf.MoveTowardsAngle(towerAngle[i], want, Mathf.Max(90f, stats.towerSpin[i] * 3f) * dt);
                     }
                 }
+                else if (pat == Stats.PatLaser) towerAngle[i] = laserAngle;
                 else towerAngle[i] = Mathf.Repeat(towerAngle[i] + stats.towerSpin[i] * dt, 360f);
 
                 if (towerBarrelSr[i] != null)
@@ -2009,7 +2018,7 @@ namespace BlackholeGame
 
         void BeamHitOne(int i, float dmg, float angDeg)
         {
-            const float Range = 11f, HalfW = 0.42f;
+            const float Range = 30f, HalfW = 0.42f;   // 어느 타워에서 가로로 쏴도 화면 끝에 닿는 길이
             float rad = angDeg * Mathf.Deg2Rad;
             var dir = new Vector2(Mathf.Sin(rad), Mathf.Cos(rad));
             bool stop = false;
