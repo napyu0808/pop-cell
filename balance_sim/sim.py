@@ -81,7 +81,7 @@ class Stats:
         self.bombFieldSec = 10.0
         # round47 자동 타워 — GameConfig.cs Stats 와 동일
         self.towerOn = [False, False, False]
-        self.towerDmgMul = [0.5, 0.5, 0.5]
+        self.towerDmgMul = [0.25, 0.25, 0.25]
         self.towerInterval = [1.1, 1.1, 1.1]
         self.towerSpin = [52.0, 52.0, 52.0]
         self.towerPattern = [0, 0, 0]

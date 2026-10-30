@@ -15,7 +15,7 @@ REPEAT_TIER = 7         # 반복 강화는 마지막 티어
 
 FLAT_BY_TIER = [20, 24, 30, 50, 88, 156, 290, 560]
 # 비용은 맨 왼쪽 1~3자리만 0이 아니고 나머지는 0이다(사용자 규칙). 최고가는 1,000만 미만.
-TIER_COST    = [50, 1500, 100000, 170000, 500000, 6500000, 7300000, 9500000]
+TIER_COST    = [50, 1500, 40000, 170000, 500000, 6500000, 7300000, 9500000]
 # 코어를 켜면 나오는 네 줄기의 첫 노드(UpgradeTree.HeadCost). 첫 런 ~18골드, 두 번째 런을 끝내면 하나.
 HEAD_COST    = 20
 
@@ -39,9 +39,9 @@ BOMB_UNLOCK_TIER = 1
 # ---- 자동 타워(round50 개편) — UpgradeTree.cs 의 Tw* 상수 미러 ----
 #   줄기마다 해금 → [공격력/공속/회전] 3갈래 → 셋 다 뚫으면 변신(화염 → 레이저 → 저격).
 TOWER_UNLOCK_TIER = 0
-# round54: 공격력 갈래는 커서 배수가 아니라 고정 공격력. 커서 배수는 0.5 고정(노드 없음).
-TOWER_FLAT_AT = [100.0, 600.0, 10000.0]
-TOWER_BASE_FLAT = 100.0   # UpgradeTree.TowerBaseFlat — 타워를 세운 순간부터 있는 고정 공격력
+# round54: 공격력 갈래는 커서 배수가 아니라 고정 공격력. 커서 배수는 0.25 고정(노드 없음).
+TOWER_FLAT_AT = [50.0, 300.0, 5000.0]
+TOWER_BASE_FLAT = 50.0    # UpgradeTree.TowerBaseFlat — 타워를 세운 순간부터 있는 고정 공격력
 TOWER_BOSS_ADD, TOWER_BOSS_MAX = 0.24, 1.2
 TOWER_UNLOCK_COST = 500
 TOWER_SPEED_MUL, TOWER_INTERVAL_MIN = 0.85, 0.10
@@ -121,7 +121,7 @@ CU_CYCLE_STEP  = 0.15
 CU_CYCLE_MIN   = 1.1
 CU_LOAD_BASE   = 10.0
 CU_LOAD_MUL    = 1.22
-CU_COST0       = [500.0, 800.0, 2000.0]  # 연구원 / 산출 / 속도
+CU_COST0       = [1000.0, 1600.0, 4000.0]  # 연구원 / 산출 / 속도
 CU_COST_MUL    = [2.4, 1.35, 1.32]
 CU_MAX_LV      = [CU_MINER_MAX, 25, 22]
 
@@ -428,7 +428,7 @@ def wave_cfg(stage, asc=0):
 # GameManager 가 살아있는 Play 모드에서 UpgradeTree.BuildAll() 로 뽑은 값 (round38).
 EXPECTED_DPS = [126, 276, 582, 1188, 3768, 8319, 19799, 46580]
 EXPECTED_HIT = [70, 116, 183, 298, 693, 1116, 1936, 3602]
-EXPECTED_TOTAL_COST = 666_267_630  # 일반 노드만(반복 제외) — 2시간 재밸런싱
+EXPECTED_TOTAL_COST = 665_607_630  # 일반 노드만(반복 제외) — 2시간 재밸런싱
 EXPECTED_NODES = 197   # 루트+커서 101(콤보 6 포함) + 타워 90 + 반복 6
 
 

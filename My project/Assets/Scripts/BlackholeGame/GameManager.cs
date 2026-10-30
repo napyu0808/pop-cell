@@ -95,6 +95,7 @@ namespace BlackholeGame
         int bossSeenMask = 0;     // 보스 웨이브까지 가본 지역 비트마스크 → 지도에서 그림자→실제 보스
         bool hasSave = false;     // 타이틀 '이어하기' 표시용
         string cheatMsg; float cheatMsgUntil;   // 치트 적용 안내(화면 위 잠깐)
+        bool langOpen;     // 타이틀 우측 상단 언어 드롭다운이 펼쳐져 있는지
         bool rebirthAsk;   // 지도에서 '과거로 돌아가기' 확인 창이 떠 있는지
         bool clearFieldNext;   // 승천 클리어로 전장을 비워야 함 — 적 목록 순회가 끝난 뒤 Update 에서 처리
         float newConfirmUntil = -1f;   // 세이브가 있을 때 '새로 시작'은 두 번 눌러야 — 첫 클릭 후 이 시각까지 확인 대기
@@ -144,13 +145,13 @@ namespace BlackholeGame
         const float MinerLoadBase = 10f, MinerLoadMul = 1.22f;
         //   비용 배수(1.35)가 효과 배수보다 커서 레벨이 오를수록 회수 기간이 길어진다 — 일부러 그렇게 뒀다.
         //   배양이 처치를 대신하는 수입원이 되면 안 되므로 꼭대기 몇 칸은 늦게 사는 편이 맞다.
-        //   연구원은 공짜로 한 명 딸려오지 않는다 — 0명에서 시작해 첫 한 명을 500골드에 산다.
+        //   연구원은 공짜로 한 명 딸려오지 않는다 — 0명에서 시작해 첫 한 명을 직접 산다.
         //   연구소를 "이미 돌아가는 설비"가 아니라 플레이어가 직접 여는 것으로 만들기 위해서다.
         //   천장은 그대로 10명이라, 레벨 상한이 9에서 10으로 한 칸 올라간다.
         //   2시간 재밸런싱: 배수가 커서 꼭대기가 터져 있었다 — 연구원 9.8억, 산출 1.5억, 속도 230억.
         //   전 강화를 1,000만 미만으로 묶는 규칙에 맞춰 배수를 내리고 기준가를 새 골드 규모에 맞췄다.
-        //   첫 연구원 500골드는 그대로다.
-        static readonly long[] CultureCost0 = { 500, 800, 2000 };  // 연구원 / 산출 / 속도 기본 가격
+        //   FGT 재조정: 강화가 너무 빨리 끝나 골드가 부풀어서 기본 가격을 전부 2배로 올렸다.
+        static readonly long[] CultureCost0 = { 1000, 1600, 4000 };  // 연구원 / 산출 / 속도 기본 가격
         static readonly float[] CultureCostMul = { 2.4f, 1.35f, 1.32f };
         static readonly int[] CultureMaxLv = { MinerMax, 25, 22 };
         static readonly string[] CultureKey = { "cwk", "cld", "csp" };
@@ -405,6 +406,7 @@ namespace BlackholeGame
             BuildBackground();
             BuildCursor();
 
+            Loc.LoadPref();
             nodes = UpgradeTree.BuildAll();
             metaNodes = UpgradeTree.BuildMeta();
             pristineStats = stats.Clone();
@@ -1479,7 +1481,8 @@ namespace BlackholeGame
         // 변이 단계가 오를수록 메타 노드 상한이 늘어난다("변이에 따른 강화 횟수 증가") — 단계당 +2.
         // 지금 고른 난이도(ascensionLevel)가 아니라 "지금까지 도달한 최고 승천"(maxAscensionUnlocked) 기준
         // — 쉬운 난이도로 파밍한다고 이미 딴 상한이 줄어들면 안 됨.
-        int MetaMaxLvAt(UpgradeTree.MetaNode m) => m.maxLv + maxAscensionUnlocked * 2;
+        // 상한이 1인 노드는 "해금" 한 번이면 끝나는 노드라(자동 공격) 레벨이 늘어나도 효과가 없다 — 늘리지 않는다.
+        int MetaMaxLvAt(UpgradeTree.MetaNode m) => m.maxLv == 1 ? 1 : m.maxLv + maxAscensionUnlocked * 2;
 
         // 환생 — 시간여행. 2지역 클리어 후 자율적으로 몇 번이든 반복 가능. 진행(골드·노드·지역)만 리셋,
         // 메타 강화·승천 레벨은 그대로 유지 — 승천과는 별개의, 반복 파밍용 루프.
@@ -1577,6 +1580,14 @@ namespace BlackholeGame
                     var pp = e.Split(':');
                     if (pp.Length == 2 && int.TryParse(pp[1], out var lv)) metaLv[pp[0]] = lv;
                 }
+                // 예전에 해금형 노드를 2레벨 이상 산 세이브 — 효과 없이 쓴 샤드를 돌려주고 레벨을 맞춘다
+                if (metaNodes != null)
+                    foreach (var m in metaNodes)
+                    {
+                        if (m.maxLv != 1) continue;
+                        for (int k = MetaLv(m.id) - 1; k >= 1; k--) metaCurrency += MetaCostAt(m, k);
+                        if (MetaLv(m.id) > 1) metaLv[m.id] = 1;
+                    }
             }
         }
 
@@ -4239,6 +4250,37 @@ namespace BlackholeGame
             FlatText(sub);
             GUI.Label(new Rect(0, h * 0.13f + 92f * uiScale, w, 34f * uiScale), Loc.T("title.sub"), sub);
 
+            // ---- 우측 상단 언어 드롭다운 — 설정 화면의 언어 버튼과 같은 값을 바꾼다 ----
+            // 닫혀 있을 땐 현재 언어만, 누르면 목록이 펼쳐지고 고르면 바로 적용된다.
+            {
+                float lw = Mathf.Min(150f * uiScale, w * 0.22f), lh = 34f * uiScale;
+                float lx = w - lw - 22f * uiScale, ly = 18f * uiScale;
+                var lst = Btn(Mathf.RoundToInt(14f * uiScale));
+                lst.normal.textColor = InkDark; FlatText(lst);
+                // 펼친 목록이 먼저 클릭을 받도록, 열려 있으면 목록을 "나중에" 그린다(IMGUI 는 먼저 그린 쪽이 우선)
+                if (langOpen)
+                {
+                    for (int li = 0; li < Loc.LangNames.Length; li++)
+                    {
+                        bool sel = (int)Loc.Cur == li;
+                        var ist = Btn(Mathf.RoundToInt(14f * uiScale));
+                        ist.normal.textColor = sel ? new Color(0.12f, 0.42f, 0.22f) : InkDark;
+                        FlatText(ist);
+                        var ir = new Rect(lx, ly + (lh + 4f * uiScale) * (li + 1), lw, lh);
+                        if (UiBtn(ir, (sel ? "▶ " : "   ") + Loc.LangNames[li], ist))
+                        { Loc.SetLang((Lang)li); langOpen = false; }
+                    }
+                }
+                if (UiBtn(new Rect(lx, ly, lw, lh), Loc.LangNames[(int)Loc.Cur] + (langOpen ? "  ▲" : "  ▼"), lst))
+                    langOpen = !langOpen;
+                // 목록 밖을 누르면 닫힌다
+                if (langOpen && Event.current.type == EventType.MouseDown)
+                {
+                    var box = new Rect(lx, ly, lw, lh + (lh + 4f * uiScale) * Loc.LangNames.Length);
+                    if (!box.Contains(Event.current.mousePosition)) langOpen = false;
+                }
+            }
+
             // 승천 난이도 선택 — 한 번이라도 승천을 해봤으면(8지역 클리어) 타이틀에서 미리 고르고 플레이 시작.
             // 그 전엔 통째로 안 보임(버튼 위치는 기본값 h*0.56 그대로). 보일 때는 실제로 그린 높이만큼
             // 버튼 줄을 아래로 밀어서 겹치지 않게 한다(해상도/uiScale 달라져도 안전하도록 계산으로).
@@ -4388,9 +4430,18 @@ namespace BlackholeGame
                           Mathf.RoundToInt(sound.SfxVolume * 100f) + "%", val);
             }
 
-            // 언어 선택은 타이틀 화면 우측 상단 드롭다운으로 옮겼다(round37) — 여기선 뺀다.
+            // 언어 — 고른 쪽 앞에 화살표. 누르는 즉시 바뀌고 다음 실행에도 남는다.
+            float ly = y0 + (rowH + 18f * uiScale) * 2f;
+            GUI.Label(new Rect(x0, ly, labelW, rowH), Loc.T("set.lang"), row);
+            float lbw = (sliderW + valW + 14f) * 0.5f - 5f;
+            for (int li = 0; li < Loc.LangNames.Length; li++)
+            {
+                var lr = new Rect(x0 + labelW + 14f + li * (lbw + 10f), ly + 3f * uiScale, lbw, rowH - 6f * uiScale);
+                if (UiBtn(lr, ((int)Loc.Cur == li ? "▶ " : "") + Loc.LangNames[li], Btn(15)))
+                    Loc.SetLang((Lang)li);
+            }
 
-            if (UiBtn(new Rect(w * 0.5f - 110f, h * 0.60f, 220f, 50f), Loc.T("common.back"), Btn(16)))
+            if (UiBtn(new Rect(w * 0.5f - 110f, Mathf.Max(h * 0.60f, ly + rowH + 24f * uiScale), 220f, 50f), Loc.T("common.back"), Btn(16)))
             {
                 if (audioDirty && sound != null) { sound.Save(); audioDirty = false; }
                 state = settingsReturn;

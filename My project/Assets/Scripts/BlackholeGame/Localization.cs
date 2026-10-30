@@ -3,14 +3,36 @@ using UnityEngine;
 
 namespace BlackholeGame
 {
+    public enum Lang { KO = 0, JA = 1 }
+
     // ============================================================
-    // 문자열 표. 한국어만 둔다(일본어·영어는 일단 뺐다).
+    // 문자열 표. 여기는 한국어, 일본어는 LocalizationJa.cs.
     //   플레인:  Loc.T("key")
     //   서식:    Loc.F("key", args)   // "{0}" 치환
     // ============================================================
-    public static class Loc
+    public static partial class Loc
     {
-        public static string T(string key) => Table.TryGetValue(key, out var v) ? v : key;
+        const string PrefKey = "popcell.lang";
+        public static Lang Cur = Lang.KO;
+        public static readonly string[] LangNames = { "한국어", "日本語" };
+
+        public static void LoadPref()
+        {
+            Cur = (Lang)Mathf.Clamp(PlayerPrefs.GetInt(PrefKey, 0), 0, LangNames.Length - 1);
+        }
+
+        public static void SetLang(Lang l)
+        {
+            Cur = l;
+            PlayerPrefs.SetInt(PrefKey, (int)l);
+            PlayerPrefs.Save();
+        }
+
+        public static string T(string key)
+        {
+            if (Cur == Lang.JA && JaTable.TryGetValue(key, out var ja)) return ja;
+            return Table.TryGetValue(key, out var v) ? v : key;
+        }
 
         public static string F(string key, params object[] args)
         {

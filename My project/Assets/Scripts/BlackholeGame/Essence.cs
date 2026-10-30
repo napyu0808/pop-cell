@@ -21,7 +21,7 @@ namespace BlackholeGame
         public static readonly float[] PerLv = {
             100f,   // 1 실험실     — 고정 공격력
             1f,     // 2 정착지     — 공격 속도 %
-            250f,   // 3 도심       — 타워 고정 공격력
+            125f,   // 3 도심       — 타워 고정 공격력
             2f,     // 4 수로망     — 골드 획득 %
             1f,     // 5 항만       — 모든 피해 %
             1.5f,   // 6 산림       — 커서 범위 %

@@ -43,7 +43,7 @@ namespace BlackholeGame
         public const int PatShot = 0, PatBurst = 1, PatFlame = 2, PatLaser = 3, PatSniper = 4, PatCount = 5;
 
         public bool[] towerOn = new bool[TowerCount];
-        public float[] towerDmgMul = { 0.5f, 0.5f, 0.5f };     // 커서 타격 대비 배율 — round54부터 노드 없이 고정
+        public float[] towerDmgMul = { 0.25f, 0.25f, 0.25f };  // 커서 타격 대비 배율 — round54부터 노드 없이 고정
         public float[] towerFlat = { UpgradeTree.TowerBaseFlat, UpgradeTree.TowerBaseFlat, UpgradeTree.TowerBaseFlat };   // round54: 타워 고정 공격력(시작값은 세우자마자 쓸 만하게)
         public float[] towerBossMul = { 0.5f, 0.5f, 0.5f };    // round54: 타워가 보스에게 줄 때만 곱한다(노드로 1.2 까지)
         public float[] towerInterval = { 1.1f, 1.1f, 1.1f };   // 발사 간격(초) — 단발/연발/저격만 쓴다
