@@ -4220,7 +4220,10 @@ namespace BlackholeGame
             GUI.color = center ? new Color(1f, 1f, 1f, 0.95f)
                       : unlocked ? new Color(0.06f, 0.24f, 0.26f, 0.30f)
                                  : new Color(0.06f, 0.10f, 0.12f, 0.22f);
-            DrawNineSlice(r, UiSkin.CardEdge, 26f, 26f, 26f, 26f, center ? 1.5f : 1f);
+            // 고른 카드의 흰 테두리는 카드 바깥으로 밀어 낸다 — 안쪽에 겹치면 흰 글자가 묻힌다
+            float edgeOut = center ? 9f * s : 0f;
+            DrawNineSlice(new Rect(r.x - edgeOut, r.y - edgeOut, r.width + edgeOut * 2f, r.height + edgeOut * 2f),
+                          UiSkin.CardEdge, 26f, 26f, 26f, 26f, center ? 1.5f : 1f);
             GUI.color = gc;
 
             // 보스 그림자 / 살아있는 보스
@@ -4469,8 +4472,8 @@ namespace BlackholeGame
                 { ascensionLevel++; wave.LoadStage(0); wave.ApplyAscension(ascensionLevel); }
 
                 // 이 난이도를 고르면 실제로 뭐가 바뀌는지 — 수치로 바로 보여준다.
-                float mobMul = Mathf.Pow(WaveConfig.AscMobHpMul, ascensionLevel);
-                float bossMul = Mathf.Pow(WaveConfig.AscBossHpMul, ascensionLevel);
+                float mobMul = WaveConfig.AscHpMul(ascensionLevel);
+                float bossMul = mobMul;
                 float goldMul = Mathf.Pow(WaveConfig.AscGoldMul, ascensionLevel);
                 float descY = arrY + ah + 8f * uiScale;
                 var descS = new GUIStyle(sLabel) { alignment = TextAnchor.MiddleCenter,

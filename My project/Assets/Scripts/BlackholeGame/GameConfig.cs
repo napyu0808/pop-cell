@@ -199,14 +199,15 @@ namespace BlackholeGame
         //   됨 — 보스체력 배율(1.08)을 더 낮추고, 그 대신 GameManager 의 보스 패턴(치명 내성/가속
         //   순간이동/무적 페이즈, 레벨별로 하나씩 추가)으로 "그냥 더 세짐"이 아니라 "더 다루기 까다로워짐"
         //   쪽으로 난이도를 옮긴다. 잡몹도 같이 완만하게.
-        public const float AscMobHpMul  = 1.12f;   // 레벨당 잡몹 체력 배율(기존 1.15)
-        public const float AscBossHpMul = 1.05f;   // 레벨당 보스 체력 배율(기존 1.08 — 벽 완화의 핵심)
-        public const float AscGoldMul   = 0.95f;   // 레벨당 골드 획득 배율
+        //   단계당 25% 더하기다 — 1.25 -> 1.5 -> 1.75. 곱하기면 높은 단계에서 벽이 된다.
+        public const float AscHpPerLv = 0.25f;     // 잡몹·보스 체력 공통
+        public const float AscGoldMul = 0.95f;     // 레벨당 골드 획득 배율
+        public static float AscHpMul(int level) => 1f + AscHpPerLv * level;
         public void ApplyAscension(int level)
         {
             if (level <= 0) return;
-            baseEnemyHp *= Mathf.Pow(AscMobHpMul, level);
-            bossHp = Mathf.Round(bossHp * Mathf.Pow(AscBossHpMul, level));
+            baseEnemyHp *= AscHpMul(level);
+            bossHp = Mathf.Round(bossHp * AscHpMul(level));
             goldRate *= Mathf.Pow(AscGoldMul, level);
         }
     }
@@ -273,7 +274,7 @@ namespace BlackholeGame
             new StageConfig(4, "s.4", 11,  64f,      1090f, 1.153f,       131000,  15, 12,     1.00f, new Color(0.30f,0.58f,0.62f)),
             new StageConfig(5, "s.5", 13,  74f,      3450f, 1.158f,       414000,  20, 13,    3.50f, new Color(0.34f,0.56f,0.34f)),
             new StageConfig(6, "s.6", 15,  88f,     17000f, 1.163f,      1720000, 20, 14,   18.00f, new Color(0.62f,0.66f,0.72f)),
-            new StageConfig(7, "s.7", 18, 108f,     95000f, 1.168f,     12500000, 25, 15,  110.00f, new Color(0.66f,0.30f,0.34f)),
+            new StageConfig(7, "s.7", 18, 108f,     95000f, 1.168f,     20000000, 25, 15,  300.00f, new Color(0.66f,0.30f,0.34f)),
         };
     }
 }

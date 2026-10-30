@@ -96,12 +96,12 @@ TLIM     = [  28,   34,   44,   54,   64,   74,   88,  108]
 # 묶여 있다. 예전 표는 S6->S7 에서 체력이 33배 뛰는데 화력은 3.4배라 넘을 수 없는 벽이었다.
 HP0      = [18, 117, 329, 523, 1090, 3450, 17000, 95000]
 HPG      = [1.130, 1.136, 1.142, 1.148, 1.153, 1.158, 1.163, 1.168]
-BOSSHP   = [3340, 14100, 43500, 100000, 131000, 414000, 1720000, 12500000]
+BOSSHP   = [3340, 14100, 43500, 100000, 131000, 414000, 1720000, 20000000]
 QUOTA0   = [  10,   10,   10,   15,   15,   20,   20,   25]
 SE       = [   8,    9,   10,   11,   12,   13,   14,   15]
 # 골드는 "그 지역에서 사야 할 티어 비용 / 목표 판수" 에서 역산했다. 지역 간 격차가
 # 389,675배에서 1,900배로 줄어, 후반 한 판이 앞 지역 전체를 덮어쓰지 않는다.
-GOLDRATE = [0.05, 0.12, 0.30, 0.50, 1.00, 3.50, 18.00, 110.00]
+GOLDRATE = [0.05, 0.12, 0.30, 0.50, 1.00, 3.50, 18.00, 300.00]
 
 # 시뮬에 없는 골드 수입(round55~57). 측정할 때는 goldrate 를 이만큼 올려서 대신한다.
 #   연속 클리어  최대 +48%  (6%/회, 8회 상한)
@@ -168,7 +168,7 @@ GOLD_CURVE = [
 ]
 
 # 변이(Ascension) 배율 — WaveConfig.AscMobHpMul / AscBossHpMul / AscGoldMul
-ASC_MOB, ASC_BOSS, ASC_GOLD = 1.12, 1.05, 0.95
+ASC_HP_PER_LV, ASC_GOLD = 0.25, 0.95   # 체력은 단계당 +25%(잡몹·보스 공통, 더하기)
 
 # 보스 웨이브에도 잡몹이 나온다(round36). 소환 간격 배율.
 BOSS_WAVE_SPAWN_SLOW = 2.0
@@ -426,9 +426,9 @@ def wave_cfg(stage, asc=0):
     gc = [max(1, round(v * gr)) for v in GOLD_CURVE]
     w = WaveCfg(baseTimeLimit=TLIM[stage],
                 hpGrowth=HPG[stage],
-                baseEnemyHp=HP0[stage] * (ASC_MOB ** asc),
+                baseEnemyHp=HP0[stage] * (1 + ASC_HP_PER_LV * asc),
                 totalWaves=WAVES[stage],
-                bossHp=round(BOSSHP[stage] * (ASC_BOSS ** asc)),
+                bossHp=round(BOSSHP[stage] * (1 + ASC_HP_PER_LV * asc)),
                 baseQuota=QUOTA0[stage],
                 quotaSlope=2,
                 goldCurve=gc)
