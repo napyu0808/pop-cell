@@ -40,7 +40,8 @@ class WaveCfg:
             setattr(self, k, v)
 
     def quota(self, w):
-        return self.baseQuota + (w - 1) * self.quotaSlope
+        # GameConfig.QuotaAt 미러 — 5의 배수로 반올림
+        return max(5, int(round((self.baseQuota + (w - 1) * self.quotaSlope) / 5.0)) * 5)
 
     def hp(self, w):
         return self.baseEnemyHp * (self.hpGrowth ** (w - 1))

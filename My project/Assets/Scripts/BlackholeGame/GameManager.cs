@@ -96,6 +96,7 @@ namespace BlackholeGame
         bool hasSave = false;     // 타이틀 '이어하기' 표시용
         string cheatMsg; float cheatMsgUntil;   // 치트 적용 안내(화면 위 잠깐)
         bool rebirthAsk;   // 지도에서 '과거로 돌아가기' 확인 창이 떠 있는지
+        bool clearFieldNext;   // 승천 클리어로 전장을 비워야 함 — 적 목록 순회가 끝난 뒤 Update 에서 처리
         float newConfirmUntil = -1f;   // 세이브가 있을 때 '새로 시작'은 두 번 눌러야 — 첫 클릭 후 이 시각까지 확인 대기
         int mapIndex = 0;         // 지역 캐러셀에서 고른 칸
         float mapScroll = -1f;    // 캐러셀 부드러운 이동 (음수 = 초기화 전)
@@ -137,10 +138,12 @@ namespace BlackholeGame
         //   산출은 판 실적이 아니라 고정치다(사용자 결정). 단계마다 배수로 올라가서
         //   8지역까지 따라붙는다: 10 x 1.45^25 ≈ 24만.
         //   round57: 1.45^25 로는 다 찍어도 초당 83만 — S8 전투 수입(초당 395만)에 한참 못 미쳤다.
-        //   1.55^30 이면 초당 4,700만이라 끝판에서도 배양이 수입의 한 축이 된다.
-        const float MinerLoadBase = 10f, MinerLoadMul = 1.55f;
-        //   round57: 비용 배수가 효과 배수(1.55)보다 크면 레벨마다 회수 기간이 길어져 아무도 안 산다.
-        //   산출은 1.60 으로 바로 위에 붙여 회수 145초 -> 365초로 아주 천천히만 늘게 했다.
+        //   FGT 재조정: 1.55 는 강화 총액 900만으로 초당 520만을 벌어, 번 돈의 30%만 넣어도 3~6지역
+        //   수입의 79~98%가 배양이고 게임이 31분에 끝났다. 1.22 면 다 찍어도 초당 1.3만 —
+        //   3~6지역에서 수입의 20% 안팎, 후반에는 처치 수입이 주가 된다(시뮬 94분).
+        const float MinerLoadBase = 10f, MinerLoadMul = 1.22f;
+        //   비용 배수(1.35)가 효과 배수보다 커서 레벨이 오를수록 회수 기간이 길어진다 — 일부러 그렇게 뒀다.
+        //   배양이 처치를 대신하는 수입원이 되면 안 되므로 꼭대기 몇 칸은 늦게 사는 편이 맞다.
         //   연구원은 공짜로 한 명 딸려오지 않는다 — 0명에서 시작해 첫 한 명을 500골드에 산다.
         //   연구소를 "이미 돌아가는 설비"가 아니라 플레이어가 직접 여는 것으로 만들기 위해서다.
         //   천장은 그대로 10명이라, 레벨 상한이 9에서 10으로 한 칸 올라간다.
@@ -254,9 +257,9 @@ namespace BlackholeGame
         const float EliteHpMul    = 3f;      // 체력 배율
         const int   EliteGoldMul  = 5;       // 골드 배율
         // 황금 적 — 변이개체와는 따로, 황금빛으로 빛나는 적. 잡으면 그 웨이브 처치 골드의 10배다
-        //   (1지역은 처치 골드가 1이라 10달러). 확률은 지역별 표 — 지금은 1지역만 켜 둔다.
+        //   (1지역은 처치 골드가 1이라 10달러). 모든 지역에서 같은 확률로 나온다.
         //   체력은 보통 적과 같다: 놓치지 않고 잡는 게 보상이지, 단단해서 어려운 적이 아니다.
-        static readonly float[] GoldenChanceByStage = { 0.03f, 0f, 0f, 0f, 0f, 0f, 0f, 0f };
+        const float GoldenChance  = 0.03f;
         const int   GoldenGoldMul = 10;
         static readonly Color GoldenColor = new Color(1f, 0.82f, 0.16f);
         // 폭탄은 "잡몹 소환의 일정 비율"이 아니라 자체 타이머로 뜬다. 비율로 하면 소환 노드를 찍을수록
@@ -2100,16 +2103,25 @@ namespace BlackholeGame
         void PurgeSpawnedObjects()
         {
             ClearBullets();
-            enemies.Clear();
+            ClearEnemies();
             bursts.Clear();
             splats.Clear();
-            boss = null;
             foreach (var sr in FindObjectsByType<SpriteRenderer>())
             {
+                // 변이개체·황금 적·백신 캡슐은 이름이 따로라 예전엔 여기서 빠져 전장에 유령으로 남았다
                 string nm = sr.gameObject.name;
-                if (nm == "Enemy" || nm == "Burst" || nm == "Boss" || nm == "PROBE" || nm == "Splat")
+                if (nm == "Enemy" || nm == "Elite" || nm == "Golden" || nm == "Vaccine"
+                    || nm == "Burst" || nm == "Boss" || nm == "PROBE" || nm == "Splat")
                     Destroy(sr.gameObject);
             }
+        }
+
+        // 전장의 적을 오브젝트까지 전부 치운다. 목록만 비우면 화면에는 그대로 남는다.
+        void ClearEnemies()
+        {
+            foreach (var e in enemies) if (e.go) Destroy(e.go);
+            enemies.Clear();
+            boss = null;
         }
 
         void ApplyWaveParams()
@@ -2198,8 +2210,7 @@ namespace BlackholeGame
             if (spriteMat == null) spriteMat = new Material(FindSpriteShader());
 
             bool isElite = !asBomb && Random.value < EliteChance;
-            bool isGolden = !asBomb && !isElite
-                            && Random.value < GoldenChanceByStage[Mathf.Clamp(currentStage, 0, GoldenChanceByStage.Length - 1)];
+            bool isGolden = !asBomb && !isElite && Random.value < GoldenChance;
             int cellTier = Mathf.Clamp(currentStage, 0, cellSprites.Length - 1);
             Sprite cellSprite = cellSprites[cellTier];
 
@@ -2470,6 +2481,7 @@ namespace BlackholeGame
             float dt = Time.deltaTime;
             if (dt > 0.1f) dt = 0.1f;
 
+            if (clearFieldNext) { clearFieldNext = false; ClearEnemies(); ClearBullets(); }
             SyncEssence();
             UpdateCulture(dt);
             UpdateShake(Time.unscaledDeltaTime);
@@ -2878,11 +2890,19 @@ namespace BlackholeGame
                     ascensionLevel = maxAscensionUnlocked;   // 다음 판 기본값 = 새로 연 상한(화살표로 낮출 수 있음)
 
                     metaLv.Clear();   // 메타 강화 레벨 초기화 — 대신 승천 레벨만큼 새 노드/더 높은 상한이 열림
+                    // 배양·정수도 게임을 처음 시작했을 때처럼 비운다(새 변이 사이클의 출발선).
+                    //   shard·메타 상한·승천 레벨만 사이클을 넘어 남는다.
+                    cultureLv.Clear(); cultureGoldAcc = 0f;
+                    for (int ei = 0; ei < Essence.Count; ei++) { essence[ei] = 0; essLv[ei] = 0; }
+                    winStreak = 0;
                     RebuildBaseStats();
                     bought.Clear();
                     repLv.Clear();
                     gold = 2000 * MetaLv("m_start");   // 방금 초기화했으니 사실상 0
                     stats = baseStats.Clone();
+                    SyncEssence();   // stats 를 새로 만든 뒤에 — 정수 값을 다시 써 넣는다
+                    clearFieldNext = true;   // 보스 옆에 남은 잡몹이 Win 화면 뒤 전장에 그대로 남던 버그 —
+                                             //   이 함수는 적 목록을 도는 중에 불리므로 다음 Update 에서 치운다
                     stagesCleared = 0;
                     currentStage = 0;
                     maxScore = 0;
@@ -3971,7 +3991,7 @@ namespace BlackholeGame
                     if (UiBtn(rbRect, Loc.F("map.rebirth", ShardGainNow()), bst))
                         rebirthAsk = true;   // 진행이 통째로 초기화되니 바로 실행하지 않고 한 번 묻는다
                     GUI.Label(new Rect(0, byy + bh + 3f * s, w, 18f * s),
-                        Loc.F("map.rebirthInfo", ShardGainNow(), metaCurrency, ascensionLevel, ascensionLevel + 1), sub);
+                        Loc.F("map.rebirthInfo", ShardGainNow(), metaCurrency), sub);
                 }
                 else
                 {

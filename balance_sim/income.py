@@ -28,7 +28,7 @@ def run_income(stage):
     quota0 = G.QUOTA0[stage]
     total = 0
     for w in range(1, waves + 1):
-        kills = quota0 + (w - 1) * 2
+        kills = max(5, int(round((quota0 + (w - 1) * 2) / 5.0)) * 5)   # GameConfig.QuotaAt 미러
         total += kills * gold_at(stage, w)
     secs = G.TLIM[stage] * waves      # 웨이브마다 제한시간이 다시 찬다
     return total * GOLD_MULT, secs
