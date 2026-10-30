@@ -39,6 +39,10 @@ namespace BlackholeGame
         public int[] essLv   = new int[0];                   // round57: 정수 강화 레벨(지역별)
         public float lastGoldPerSec;                         // round55 유물 — round56에 배양 산출이 고정치가 되며 안 쓴다(구세이브 호환)
         public int winStreak;                                // round55: 연속 클리어 수(시간 초과로 0)
+        // 이번 사이클 누적 — 8지역 클리어 화면의 소요 시간·처치·획득. 새로고침해도 이어진다
+        public float campaignElapsedSec;
+        public int campaignKills;
+        public long campaignGold;
 
         public bool HasProgress => stagesCleared > 0 || bought.Count > 0 || gold > 0;
     }

@@ -1541,6 +1541,9 @@ namespace BlackholeGame
                 ascensionLevel = ascensionLevel,
                 maxAscensionUnlocked = maxAscensionUnlocked,
                 metaCurrency = metaCurrency,
+                campaignElapsedSec = campaignElapsedSec,
+                campaignKills = campaignKills,
+                campaignGold = campaignGold,
             };
             foreach (var id in bought) d.bought.Add(id);
             foreach (var kv in metaLv) if (kv.Value > 0) d.metaBought.Add(kv.Key + ":" + kv.Value);
@@ -1709,6 +1712,9 @@ namespace BlackholeGame
             currentStage = stale ? 0 : Mathf.Clamp(d.currentStage, 0, StageConfig.Stages.Length - 1);
             retryCount = stale ? 0 : d.retryCount;
             maxScore = stale ? 0 : d.maxScore;
+            campaignElapsedSec = stale ? 0f : d.campaignElapsedSec;
+            campaignKills = stale ? 0 : d.campaignKills;
+            campaignGold = stale ? 0 : d.campaignGold;
             if (stale) bossSeenMask = 0;
             if (!stale)
             {
