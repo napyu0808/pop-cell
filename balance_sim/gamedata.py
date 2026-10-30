@@ -13,21 +13,23 @@ TIERS = 8
 NODE_TIERS = 8          # round45: 일반 노드는 티어 0~7 (지역마다 새 노드)
 REPEAT_TIER = 7         # 반복 강화는 마지막 티어
 
-FLAT_BY_TIER = [20, 24, 30, 50, 88, 156, 290, 560]
+FLAT_BY_TIER = [10, 12, 15, 25, 44, 78, 145, 280]
 # 비용은 맨 왼쪽 1~3자리만 0이 아니고 나머지는 0이다(사용자 규칙). 최고가는 1,000만 미만.
-TIER_COST    = [50, 1500, 40000, 170000, 500000, 6500000, 7300000, 9500000]
+# 가격은 끊기지 않는 곡선이다 - x 는 가지 안 위치까지 포함한 티어(소수), 8 직전에서 최고가에 닿는다.
+COST_LOW, COST_TOP = 25.0, 9500000.0
+COST_SPAN = 7.2
 # 코어를 켜면 나오는 네 줄기의 첫 노드(UpgradeTree.HeadCost). 첫 런 ~18골드, 두 번째 런을 끝내면 하나.
 HEAD_COST    = 20
 
 ROOT_FLAT    = 8.0
-MULT_PP, MULT_CAP        = 21.0, 300.0
-SPEED_MUL, INTERVAL_FLOOR = 0.826, 0.06
-CRITC_PP, CRIT_CAP       = 0.08, 0.80
-CRITX_ADD    = 0.18
-RANGE_ADD    = 0.21
-GOLD_PP      = 18.0
-TIME_ADD, TIME_CAP       = 15.0, 120.0
-SPAWN_MUL, SPAWN_FLOOR   = 0.85, 0.22
+MULT_PP, MULT_CAP        = 10.5, 300.0
+SPEED_MUL, INTERVAL_FLOOR = 0.909, 0.06
+CRITC_PP, CRIT_CAP       = 0.04, 0.80
+CRITX_ADD    = 0.09
+RANGE_ADD    = 0.105
+GOLD_PP      = 9.0
+TIME_ADD, TIME_CAP       = 7.5, 120.0
+SPAWN_MUL, SPAWN_FLOOR   = 0.922, 0.22
 SCOUNT_MAX   = 10
 SKIP_ADD     = 2
 BOMB_DMG_ADD, BOMB_DMG_MAX = 0.5, 5.0
@@ -35,6 +37,7 @@ BOMB_RAD_ADD, BOMB_RAD_MAX = 0.10, 2.0
 BOMB_INT_SUB, BOMB_INT_MIN = 2.0, 10.0
 BOMB_FIELD_ADD, BOMB_FIELD_MAX = 2.0, 20.0
 BOMB_UNLOCK_TIER = 1
+VARIANT_UNLOCK_TIER = 3   # 변이개체 변종(폭탄·번개) 해금 티어
 
 # ---- 자동 타워(round50 개편) — UpgradeTree.cs 의 Tw* 상수 미러 ----
 #   줄기마다 해금 → [공격력/공속/회전] 3갈래 → 셋 다 뚫으면 변신(화염 → 레이저 → 저격).
@@ -55,22 +58,25 @@ PAT_SHOT, PAT_BURST, PAT_FLAME, PAT_LASER, PAT_SNIPER = 0, 1, 2, 3, 4
 # 반복 강화 1회당 (UpgradeTree.Rep*) — 가격은 flat, mult, speed, range, critx, gold 순
 REP_FLAT, REP_MULT, REP_APS, REP_RANGE, REP_CRITX, REP_GOLD = 10.0, 1.0, 0.05, 0.01, 0.02, 1.0
 REP_INTERVAL_FLOOR, REP_RANGE_MAX = 0.035, 5.0
-REP_COST = [9800000, 9800000, 9800000, 9800000, 9800000, 9800000]
+REP_COST = [980000] * 6
 
 # 가지 정의 (타입, 길이, 시작 티어) — UpgradeTree.L* 와 같은 값
 #   길이를 0.6배로 줄여 트리가 332 -> 191 노드가 됐다.
 LANES = {
-    "flat":  ("Flat", 10, 0),  "mult":  ("Mult", 8, 0),   "speed": ("Speed", 8, 0),
-    "critc": ("CritC", 6, 0),  "range": ("Range", 8, 0),  "critx": ("CritX", 9, 0),
-    "time":  ("Time", 5, 0),   "gold":  ("Gold", 9, 0),   "skip":  ("Skip", 3, 0),
-    "scount": ("SCount", 5, 0), "spawn": ("Spawn", 5, 0),
+    "flat": ("Flat", 20, 0),  "mult": ("Mult", 16, 0),   "speed": ("Speed", 16, 0),
+    "critc": ("CritC", 12, 0),  "range": ("Range", 16, 0),  "critx": ("CritX", 18, 0),
+    "time": ("Time", 10, 0),   "gold": ("Gold", 18, 0),   "skip":  ("Skip", 3, 0),
+    "scount": ("SCount", 5, 0), "spawn": ("Spawn", 10, 0),
     "bombdmg": ("BombDmg", 4, 1), "bombrad": ("BombRad", 6, 1), "bombfreq": ("BombFreq", 3, 1),
     "bombtime": ("BombTime", 3, 1),
     "ctime": ("ComboTime", 3, 1), "cmul": ("ComboMul", 3, 2),   # 콤보 노드 — 시뮬레이터는 콤보를 안 돌려서 효과 없음
+    # 변이개체 변종 — 시뮬레이터에 처치 효과가 없어서 콤보처럼 효과 없음
+    "blastdmg": ("BlastDmg", 3, VARIANT_UNLOCK_TIER), "blastrad": ("BlastRad", 2, VARIANT_UNLOCK_TIER),
+    "shockdmg": ("ShockDmg", 3, VARIANT_UNLOCK_TIER), "shockn": ("ShockN", 2, VARIANT_UNLOCK_TIER),
 }
 # 효과를 시뮬레이터가 모델링하지 않는 가지. 가격은 트리 총비용에 들어가지만 진행 시뮬레이션은 사지 않는다
 #   (사면 골드만 빠져서 시간이 부풀려진다 — 실제로는 사도 되고 안 사도 되는 선택 강화다).
-UNMODELED_LANES = {"ctime", "cmul"}
+UNMODELED_LANES = {"ctime", "cmul", "blast", "blastdmg", "blastrad", "shock", "shockdmg", "shockn"}
 
 # ---- GameConfig.cs : Stats 기본값 --------------------------------------
 BASE_ATTACK   = 10.0
@@ -88,14 +94,14 @@ WAVES    = [   4,    5,    7,    9,   11,   13,   15,   18]
 TLIM     = [  28,   34,   44,   54,   64,   74,   88,  108]
 # 체력은 더 이상 독립 사다리가 아니다 — 그 지역에 들어오는 화력과 나가는 화력의 기하평균에
 # 묶여 있다. 예전 표는 S6->S7 에서 체력이 33배 뛰는데 화력은 3.4배라 넘을 수 없는 벽이었다.
-HP0      = [18, 117, 329, 523, 1090, 3450, 14300, 83000]
+HP0      = [18, 117, 329, 523, 1090, 3450, 17000, 95000]
 HPG      = [1.130, 1.136, 1.142, 1.148, 1.153, 1.158, 1.163, 1.168]
-BOSSHP   = [3340, 14100, 39500, 62800, 131000, 414000, 1720000, 8400000]
+BOSSHP   = [3340, 14100, 43500, 100000, 131000, 414000, 1720000, 12500000]
 QUOTA0   = [  10,   10,   10,   15,   15,   20,   20,   25]
 SE       = [   8,    9,   10,   11,   12,   13,   14,   15]
 # 골드는 "그 지역에서 사야 할 티어 비용 / 목표 판수" 에서 역산했다. 지역 간 격차가
 # 389,675배에서 1,900배로 줄어, 후반 한 판이 앞 지역 전체를 덮어쓰지 않는다.
-GOLDRATE = [0.05, 0.18, 1.40, 2.50, 10.00, 41.00, 250.00, 1300.00]
+GOLDRATE = [0.05, 0.12, 0.30, 0.50, 1.00, 3.50, 18.00, 110.00]
 
 # 시뮬에 없는 골드 수입(round55~57). 측정할 때는 goldrate 를 이만큼 올려서 대신한다.
 #   연속 클리어  최대 +48%  (6%/회, 8회 상한)
@@ -119,9 +125,9 @@ CU_MINER_MAX   = 10
 CU_CYCLE_BASE  = 4.0
 CU_CYCLE_STEP  = 0.15
 CU_CYCLE_MIN   = 1.1
-CU_LOAD_BASE   = 10.0
+CU_LOAD_BASE   = 5.0
 CU_LOAD_MUL    = 1.22
-CU_COST0       = [1000.0, 1600.0, 4000.0]  # 연구원 / 산출 / 속도
+CU_COST0       = [500.0, 800.0, 2000.0]  # 연구원 / 산출 / 속도
 CU_COST_MUL    = [2.4, 1.35, 1.32]
 CU_MAX_LV      = [CU_MINER_MAX, 25, 22]
 
@@ -170,9 +176,12 @@ BOSS_WAVE_SPAWN_SLOW = 2.0
 
 # ---- 노드 ----------------------------------------------------------------
 def cost_of(tier):
-    if 0 <= tier < len(TIER_COST):
-        return TIER_COST[tier]
-    return round(TIER_COST[-1] * 2.6 ** (tier - len(TIER_COST) + 1))
+    return cost_at(tier)
+
+
+def cost_at(x):
+    """UpgradeTree.CostAt - 맨 왼쪽 두 자리만 남긴 곡선 값."""
+    return nice_cost(COST_LOW * (COST_TOP / COST_LOW) ** (min(x, COST_SPAN) / COST_SPAN))
 
 
 def flat_at(tier):
@@ -222,8 +231,8 @@ def apply_type(t, tier, s):
         s.bombInterval = max(BOMB_INT_MIN, s.bombInterval - BOMB_INT_SUB)
     elif t == "BombTime":
         s.bombFieldSec = min(BOMB_FIELD_MAX, s.bombFieldSec + BOMB_FIELD_ADD)
-    elif t in ("ComboTime", "ComboMul"):
-        pass   # 콤보는 시뮬레이터 바깥(GOLD_OUTSIDE_SIM)
+    elif t in ("ComboTime", "ComboMul", "Blast", "BlastDmg", "BlastRad", "Shock", "ShockDmg", "ShockN"):
+        pass   # 콤보·변이개체 변종은 시뮬레이터 바깥
     # ---- 반복 강화 ----
     elif t == "RFlat":
         s.flatBonus += REP_FLAT
@@ -267,7 +276,8 @@ def build():
         t = LANES[key][0]
         for k in range(frm, LANES[key][1]):
             nid = "%s%d" % (key, k)
-            make(nid, parent, t, tier_of(key, k), key)
+            t0, ln = LANES[key][2], LANES[key][1]
+            make(nid, parent, t, tier_of(key, k), key, cost_at(t0 + k * (NODE_TIERS - t0) / ln))
             parent = nid
         return parent
 
@@ -294,6 +304,10 @@ def build():
     lane("scount", "spawn0"); lane("spawn", "spawn0", 1)
     make("bomb", "spawn0", "Bomb", BOMB_UNLOCK_TIER, "bomb")
     lane("bombdmg", "bomb"); lane("bombrad", "bomb"); lane("bombfreq", "bomb"); lane("bombtime", "bomb")
+    make("blast", "bomb", "Blast", VARIANT_UNLOCK_TIER, "blast")
+    lane("blastdmg", "blast"); lane("blastrad", "blast")
+    make("shock", "bomb", "Shock", VARIANT_UNLOCK_TIER, "shock")
+    lane("shockdmg", "shock"); lane("shockn", "shock")
     # 자동 타워 — 코어에서 좌/중앙/우 3줄기(별도 탭)
     for i in range(3):
         key = TOWER_KEYS[i]
@@ -426,10 +440,10 @@ def wave_cfg(stage, asc=0):
 
 # ---- 유니티 에디터 실측값과 대조 ---------------------------------------
 # GameManager 가 살아있는 Play 모드에서 UpgradeTree.BuildAll() 로 뽑은 값 (round38).
-EXPECTED_DPS = [126, 276, 582, 1188, 3768, 8319, 19799, 46580]
-EXPECTED_HIT = [70, 116, 183, 298, 693, 1116, 1936, 3602]
-EXPECTED_TOTAL_COST = 665_607_630  # 일반 노드만(반복 제외) — 2시간 재밸런싱
-EXPECTED_NODES = 197   # 루트+커서 101(콤보 6 포함) + 타워 90 + 반복 6
+EXPECTED_DPS = [104, 232, 576, 1203, 3328, 7331, 21522, 50117]
+EXPECTED_HIT = [58, 102, 191, 307, 613, 1028, 2198, 3886]
+EXPECTED_TOTAL_COST = 255_237_606  # 일반 노드만(반복 제외) — 2시간 재밸런싱
+EXPECTED_NODES = 277   # 루트+커서 181(콤보 6·변이개체 변종 12 포함) + 타워 90 + 반복 6
 
 
 def self_check(verbose=True):

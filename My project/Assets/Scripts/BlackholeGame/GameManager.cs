@@ -142,7 +142,7 @@ namespace BlackholeGame
         //   FGT 재조정: 1.55 는 강화 총액 900만으로 초당 520만을 벌어, 번 돈의 30%만 넣어도 3~6지역
         //   수입의 79~98%가 배양이고 게임이 31분에 끝났다. 1.22 면 다 찍어도 초당 1.3만 —
         //   3~6지역에서 수입의 20% 안팎, 후반에는 처치 수입이 주가 된다(시뮬 94분).
-        const float MinerLoadBase = 10f, MinerLoadMul = 1.22f;
+        const float MinerLoadBase = 5f, MinerLoadMul = 1.22f;
         //   비용 배수(1.35)가 효과 배수보다 커서 레벨이 오를수록 회수 기간이 길어진다 — 일부러 그렇게 뒀다.
         //   배양이 처치를 대신하는 수입원이 되면 안 되므로 꼭대기 몇 칸은 늦게 사는 편이 맞다.
         //   연구원은 공짜로 한 명 딸려오지 않는다 — 0명에서 시작해 첫 한 명을 직접 산다.
@@ -150,8 +150,8 @@ namespace BlackholeGame
         //   천장은 그대로 10명이라, 레벨 상한이 9에서 10으로 한 칸 올라간다.
         //   2시간 재밸런싱: 배수가 커서 꼭대기가 터져 있었다 — 연구원 9.8억, 산출 1.5억, 속도 230억.
         //   전 강화를 1,000만 미만으로 묶는 규칙에 맞춰 배수를 내리고 기준가를 새 골드 규모에 맞췄다.
-        //   FGT 재조정: 강화가 너무 빨리 끝나 골드가 부풀어서 기본 가격을 전부 2배로 올렸다.
-        static readonly long[] CultureCost0 = { 1000, 1600, 4000 };  // 연구원 / 산출 / 속도 기본 가격
+        //   노드 가격 곡선을 낮추면서 골드 규모가 줄어, 기본 가격도 그만큼 내렸다.
+        static readonly long[] CultureCost0 = { 500, 800, 2000 };  // 연구원 / 산출 / 속도 기본 가격
         static readonly float[] CultureCostMul = { 2.4f, 1.35f, 1.32f };
         static readonly int[] CultureMaxLv = { MinerMax, 25, 22 };
         static readonly string[] CultureKey = { "cwk", "cld", "csp" };
@@ -166,18 +166,9 @@ namespace BlackholeGame
         long CultureCost(int i)
         {
             double c = CultureCost0[i] * System.Math.Pow(CultureCostMul[i], CultureLv(i));
-            return NiceCost(System.Math.Min(long.MaxValue / 4.0, c));
+            return UpgradeTree.NiceCost(System.Math.Min(long.MaxValue / 4.0, c));
         }
 
-        // 가격은 맨 왼쪽 두 자리만 0이 아니고 나머지는 0이다 — 1,300,000 은 되고 1,260,600 은 안 된다.
-        // 지수식으로 뽑은 값을 그대로 보여주면 자릿수가 지저분해지므로 여기서 한 번 정리한다.
-        static long NiceCost(double c)
-        {
-            if (c <= 0) return 0;
-            int e = (int)System.Math.Floor(System.Math.Log10(c));
-            double scale = System.Math.Pow(10, System.Math.Max(0, e - 1));
-            return (long)(System.Math.Round(c / scale) * scale);
-        }
         int MinerCount => CultureLv(0);
         float MinerCycleSec => Mathf.Max(MinerCycleMin, MinerCycleBase - MinerCycleStep * CultureLv(2));
 
@@ -217,6 +208,7 @@ namespace BlackholeGame
             public int spawnWave;   // 이 적이 소환된 웨이브 (골드·체력 기준)
             // ---- 보스 전용 패턴(승천 레벨별로 하나씩 켜짐, round35) ----
             public bool elite;         // 변이개체 — 체력 x3, 골드 x5, 빨간 테두리
+            public int variant;        // 변이개체 변종 — 0 일반, 1 폭탄형, 2 번개형(처치 효과가 붙는다)
             public bool golden;        // 황금 적 — 체력은 그대로, 골드 x10, 황금빛 테두리와 맥박치는 후광
             public SpriteRenderer glow; // 황금 적의 후광(알파를 매 프레임 흔든다)
             public bool bomb;          // 백신 캡슐 — 터뜨리면 광역 피해
@@ -285,7 +277,8 @@ namespace BlackholeGame
         // 터진 세포가 배양접시에 남기는 자국 — 커서가 훑고 간 자리가 그대로 보인다
         class Splat { public Transform tr; public SpriteRenderer sr; public float life, maxLife; public Color col; }
         readonly List<Splat> splats = new List<Splat>();
-        const int MaxSplats = 260;   // 후반엔 배양접시 바닥이 세포 잔여물로 뒤덮인다
+        const int MaxSplats = 260;   // 후반에 처치가 몰릴 때의 상한
+        const float SplatLife = 15f; // 얼룩이 남는 시간(초) — 마지막 15% 동안 옅어진다
 
         readonly List<Transform> specks = new List<Transform>();
         readonly List<Vector2> speckVel = new List<Vector2>();
@@ -1396,7 +1389,7 @@ namespace BlackholeGame
             var c = new Color(col.r * 1.12f, col.g * 1.12f, col.b * 1.12f, a);
             sr.color = c;
             // 한 판 최대 길이(~85초)보다 길게 — 판 도중엔 안 사라지고 쌓이기만, StartRun에서 한꺼번에 지워짐
-            splats.Add(new Splat { tr = go.transform, sr = sr, life = 200f, maxLife = 200f, col = c });
+            splats.Add(new Splat { tr = go.transform, sr = sr, life = SplatLife, maxLife = SplatLife, col = c });
         }
 
         void UpdateSplats(float dt)
@@ -1406,7 +1399,7 @@ namespace BlackholeGame
                 var s = splats[i];
                 s.life -= dt;
                 if (s.life <= 0f) { if (s.tr) Destroy(s.tr.gameObject); splats.RemoveAt(i); continue; }
-                // 수명의 85%는 그대로 두고 마지막 15%에서만 페이드 (상점에 오래 머물 때의 폴백)
+                // 수명의 85%는 그대로 두고 마지막 15%에서만 페이드
                 float k = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(s.life / (s.maxLife * 0.15f)));
                 var c = s.col; c.a = s.col.a * k;
                 s.sr.color = c;
@@ -1848,6 +1841,7 @@ namespace BlackholeGame
             foreach (var f in towerFx) if (f.tr) Destroy(f.tr.gameObject);
             towerFx.Clear();
             ClearBombFields();
+            ClearVariantFx();
         }
 
         // kind: 0 화염 · 1 레이저 · 2 저격
@@ -2222,6 +2216,13 @@ namespace BlackholeGame
 
             bool isElite = !asBomb && Random.value < EliteChance;
             bool isGolden = !asBomb && !isElite && Random.value < GoldenChance;
+            // 변종은 변이개체 안에서 나눈다 — 적 수와 골드는 그대로, 일반·폭탄·번개가 해금한 종류끼리 같은 비율
+            int variant = 0;
+            if (isElite)
+            {
+                int pick = Random.Range(0, 1 + (stats.blastUnlocked ? 1 : 0) + (stats.shockUnlocked ? 1 : 0));
+                if (pick > 0) variant = pick == 1 && stats.blastUnlocked ? VariantBlast : VariantShock;
+            }
             int cellTier = Mathf.Clamp(currentStage, 0, cellSprites.Length - 1);
             Sprite cellSprite = cellSprites[cellTier];
 
@@ -2247,6 +2248,7 @@ namespace BlackholeGame
                 wobPhase = Random.value * 6.2832f,
                 spawnWave = waveNum,
                 elite = isElite,
+                variant = variant,
                 golden = isGolden,
                 bomb = asBomb,
             };
@@ -2276,7 +2278,20 @@ namespace BlackholeGame
                 osr.sprite = cellSprite;
                 osr.sharedMaterial = spriteMat;
                 osr.sortingOrder = 9;
-                osr.color = new Color(0.95f, 0.10f, 0.12f, 1f);
+                osr.color = variant == VariantBlast ? BlastColor : variant == VariantShock ? ShockColor
+                                                    : new Color(0.95f, 0.10f, 0.12f, 1f);
+                // 변종은 후광이 맥박쳐서(황금 적과 같은 방식) 일반 변이개체와 바로 구분된다
+                if (variant != 0)
+                {
+                    var vg = new GameObject("VariantGlow");
+                    vg.transform.SetParent(go.transform, false);
+                    vg.transform.localScale = Vector3.one * 1.7f;
+                    var vsr = vg.AddComponent<SpriteRenderer>();
+                    vsr.sprite = cellSprite; vsr.sharedMaterial = spriteMat; vsr.sortingOrder = 8;
+                    var vc = osr.color; vc.a = 0.35f;
+                    vsr.color = vc;
+                    e.glow = vsr;
+                }
             }
 
             // 황금 적 — 몸통을 금빛으로 칠하고, 진한 금테 한 겹 + 그 바깥에 번지는 후광을 깐다.
@@ -2340,7 +2355,8 @@ namespace BlackholeGame
             float ang = Random.value * Mathf.PI * 2f;
             boss.vel = new Vector2(Mathf.Cos(ang), Mathf.Sin(ang)) * 0.35f;
             boss.visScale = (bossVisualBoost != null && bi < bossVisualBoost.Length) ? bossVisualBoost[bi] : 1f;
-            boss.tr.position = Vector3.zero;
+            // 첫 위치도 무작위 — 한가운데로 고정이면 커서를 가운데 두고 가만히 있어도 옛 지역 보스가 잡힌다
+            boss.tr.position = RandomBossPos();
             boss.tr.localScale = Vector3.one * (boss.r * 2f * boss.visScale);
             sr.color = boss.baseColor;
             bossTeleportTimer = BossTeleportInterval / BossTeleportSpeedMul(ascensionLevel);
@@ -2364,23 +2380,29 @@ namespace BlackholeGame
         // 변이2+: 순간이동이 더 잦아진다 — 쫓아가는 재미 대신 예측/포지셔닝을 요구.
         static float BossTeleportSpeedMul(int ascLv) => ascLv >= 2 ? 1f + 0.25f * (ascLv - 1) : 1f;
 
+        // 보스가 나타날 임의 좌표. 필드 밖으로 튀어나가지 않게 반지름만큼 안쪽으로 클램프,
+        // 커서와 너무 가까우면 다시 뽑는다.
+        Vector3 RandomBossPos()
+        {
+            var fr = FieldRect;
+            Vector3 p = Vector3.zero;
+            for (int tries = 0; tries < 12; tries++)
+            {
+                p = new Vector3(Random.Range(fr.xMin + boss.r, fr.xMax - boss.r),
+                                Random.Range(fr.yMin + boss.r, fr.yMax - boss.r), 0f);
+                float dx = p.x - cursorWorld.x, dy = p.y - cursorWorld.y;
+                if (dx * dx + dy * dy >= 36f) break;   // 커서에서 최소 6유닛 — 바로 옆으로 오는 허탈함 방지
+            }
+            return p;
+        }
+
         // 보스가 맵 임의 좌표로 순간이동 — 커서 범위가 커진 후반에도 "그냥 눌러앉아 있기"를 막는다.
-        // 필드 밖으로 튀어나가지 않게 반지름만큼 안쪽으로 클램프, 커서와 너무 가까우면 다시 뽑는다.
         void TeleportBoss()
         {
             if (boss == null) return;
             bossTeleportTimer = BossTeleportInterval / BossTeleportSpeedMul(ascensionLevel);
-            var fr = FieldRect;
             Vector3 from = boss.tr.position;
-            Vector3 to = from;
-            for (int tries = 0; tries < 12; tries++)
-            {
-                float x = Random.Range(fr.xMin + boss.r, fr.xMax - boss.r);
-                float y = Random.Range(fr.yMin + boss.r, fr.yMax - boss.r);
-                to = new Vector3(x, y, 0f);
-                float dx = to.x - cursorWorld.x, dy = to.y - cursorWorld.y;
-                if (dx * dx + dy * dy >= 36f) break;   // 커서에서 최소 6유닛 — 바로 옆으로 오는 허탈함 방지
-            }
+            Vector3 to = RandomBossPos();
             SpawnBurst(from, boss.baseColor, boss.r * 1.3f);
             boss.tr.position = to;
             float ang = Random.value * Mathf.PI * 2f;
@@ -2493,6 +2515,8 @@ namespace BlackholeGame
             if (dt > 0.1f) dt = 0.1f;
 
             if (clearFieldNext) { clearFieldNext = false; ClearEnemies(); ClearBullets(); }
+            UpdateVariantHits();
+            UpdateBoltFx(dt);
             SyncEssence();
             UpdateCulture(dt);
             UpdateShake(Time.unscaledDeltaTime);
@@ -2703,8 +2727,12 @@ namespace BlackholeGame
                 float sy = 1f + 0.055f * Mathf.Sin(t * e.wobSpeed * 1.13f + e.wobPhase + 1.7f);
                 e.tr.localScale = new Vector3(dd * sx, dd * sy, 1f);
 
-                if (e.glow != null)   // 황금 적의 후광 — 맥박
-                    e.glow.color = new Color(1f, 0.85f, 0.25f, 0.30f + 0.22f * Mathf.Sin(t * 5f + e.wobPhase));
+                if (e.glow != null)   // 황금 적·변종의 후광 — 맥박
+                {
+                    var gc = e.glow.color;
+                    gc.a = 0.30f + 0.22f * Mathf.Sin(t * 5f + e.wobPhase);
+                    e.glow.color = gc;
+                }
 
                 if (e.flash > 0f)
                 {
@@ -2853,6 +2881,9 @@ namespace BlackholeGame
             SpawnBurst(e.tr.position, e.baseColor, e.r);
             SpawnSplat(e.tr.position, e.baseColor, e.r);
             if (e.elite) SpawnBurst(e.tr.position, new Color(0.95f, 0.12f, 0.14f), e.r * 1.3f);
+            // 이 함수는 적 목록을 도는 중에 불린다 — 여기서 주변을 때리면 목록이 바뀌므로 대기열에 넣고 다음 Update 에서 터뜨린다
+            if (e.variant != 0 && variantDepth < VariantChainMax)
+                variantQueue.Add(new VariantHit { kind = e.variant, pos = e.tr.position, depth = variantDepth + 1 });
             if (e.golden)
             {
                 SpawnBurst(e.tr.position, GoldenColor, e.r * 1.8f);
@@ -2999,6 +3030,137 @@ namespace BlackholeGame
             bombFields.Clear();
         }
 
+        // ---- 변이개체 변종 — 처치 효과 ----
+        //   폭탄형은 주변 원형 범위, 번개형은 가까운 적 N마리. 보스는 절반만 받는다 — 안 그러면 타워를
+        //   낮춘 의미가 없어지고 보스 체력 밸런스가 다시 흔들린다. 연쇄는 처치 한 번당 VariantChainMax 번까지.
+        const int VariantBlast = 1, VariantShock = 2;
+        const int VariantChainMax = 3;
+        const float VariantBossMul = 0.5f;
+        const float ShockRange = 5f;          // 번개가 닿는 거리(월드 단위)
+        const float BoltLife = 0.18f;         // 번개 선이 남는 시간(초)
+        static readonly Color BlastColor = new Color(1f, 0.50f, 0.10f);
+        static readonly Color ShockColor = new Color(1f, 0.95f, 0.30f);
+
+        struct VariantHit { public int kind; public Vector3 pos; public int depth; }
+        class BoltFx { public Transform tr; public SpriteRenderer sr; public float life; }
+        readonly List<VariantHit> variantQueue = new List<VariantHit>();
+        readonly List<BoltFx> boltFx = new List<BoltFx>();
+        int variantDepth;   // 지금 처리 중인 효과의 연쇄 깊이(0 = 일반 처치)
+
+        void ClearVariantFx()
+        {
+            variantQueue.Clear();
+            foreach (var b in boltFx) if (b.tr) Destroy(b.tr.gameObject);
+            boltFx.Clear();
+        }
+
+        void UpdateVariantHits()
+        {
+            if (variantQueue.Count == 0) return;
+            if (state != State.Playing) { variantQueue.Clear(); return; }
+            // 이번 처리에서 죽은 변종은 다음 프레임 차례 — 한 프레임에 전부 터지면 연쇄가 보이지 않는다
+            var batch = variantQueue.ToArray();
+            variantQueue.Clear();
+            foreach (var h in batch)
+            {
+                if (state != State.Playing) break;
+                variantDepth = h.depth;
+                if (h.kind == VariantBlast) BlastAt(h.pos);
+                else ShockFrom(h.pos);
+            }
+            variantDepth = 0;
+            enemies.RemoveAll(x => x.dead);
+        }
+
+        // 효과 피해 한 번 — 처치까지 처리한다. 웨이브가 넘어가면(true) 이번 효과를 끝낸다.
+        bool VariantDamage(Enemy o, float dmg)
+        {
+            bool isBoss = o == boss;
+            if (isBoss && o.shielded) return false;
+            o.hp -= isBoss ? dmg * VariantBossMul * EssBossMul : dmg;
+            o.flash = 0.06f; o.hitPop = 1f;
+            return o.hp <= 0f && KillEnemy(o, false);
+        }
+
+        void BlastAt(Vector3 pos)
+        {
+            float rad = stats.blastRadius;
+            SpawnBurst(pos, Color.white, rad / 3f);
+            SpawnBurst(pos, BlastColor, rad / 2.4f);
+            if (sound != null) sound.Play(Sfx.Boss, 0.55f, 1.45f);
+            Shake(0.16f, 0.20f);
+            float dmg = stats.GetHitDamage() * stats.blastDmgMul;
+            for (int j = enemies.Count - 1; j >= 0; j--)
+            {
+                var o = enemies[j];
+                if (o.dead || o.bomb) continue;
+                float dx = o.tr.position.x - pos.x, dy = o.tr.position.y - pos.y;
+                float rr = rad + o.r;
+                if (dx * dx + dy * dy > rr * rr) continue;
+                if (VariantDamage(o, dmg)) break;
+            }
+        }
+
+        void ShockFrom(Vector3 pos)
+        {
+            var near = new List<Enemy>();
+            foreach (var o in enemies)
+            {
+                if (o.dead || o.bomb) continue;
+                if (((Vector2)(o.tr.position - pos)).sqrMagnitude <= ShockRange * ShockRange) near.Add(o);
+            }
+            near.Sort((a, b) => ((Vector2)(a.tr.position - pos)).sqrMagnitude.CompareTo(((Vector2)(b.tr.position - pos)).sqrMagnitude));
+            if (near.Count == 0) return;
+            if (sound != null) sound.Play(Sfx.Crit, 0.6f, 1.5f);
+            float dmg = stats.GetHitDamage() * stats.shockDmgMul;
+            int n = Mathf.Min(stats.shockTargets, near.Count);
+            for (int i = 0; i < n; i++)
+            {
+                var o = near[i];
+                if (o.dead) continue;
+                SpawnBolt(pos, o.tr.position);
+                if (VariantDamage(o, dmg)) break;
+            }
+        }
+
+        // 번개 한 줄 — 중간점을 옆으로 흔든 두 토막이라 직선 레이저와 다르게 보인다
+        void SpawnBolt(Vector3 a, Vector3 b)
+        {
+            Vector2 d = b - a;
+            Vector2 side = new Vector2(-d.y, d.x).normalized * (d.magnitude * Random.Range(-0.18f, 0.18f));
+            Vector3 mid = (a + b) * 0.5f + (Vector3)side;
+            SpawnBoltLine(a, mid);
+            SpawnBoltLine(mid, b);
+        }
+
+        void SpawnBoltLine(Vector3 a, Vector3 b)
+        {
+            if (boltFx.Count > 40) return;
+            if (discSprite == null) discSprite = BuildDiscSprite();
+            if (spriteMat == null) spriteMat = new Material(FindSpriteShader());
+            var go = new GameObject("BoltFx");
+            var sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = discSprite; sr.sharedMaterial = spriteMat; sr.sortingOrder = 13;
+            sr.color = ShockColor;
+            Vector2 d = b - a;
+            go.transform.position = (a + b) * 0.5f;
+            go.transform.rotation = Quaternion.Euler(0f, 0f, Mathf.Atan2(d.y, d.x) * Mathf.Rad2Deg);
+            go.transform.localScale = new Vector3(d.magnitude + 0.1f, 0.09f, 1f);
+            boltFx.Add(new BoltFx { tr = go.transform, sr = sr, life = BoltLife });
+        }
+
+        void UpdateBoltFx(float dt)
+        {
+            for (int i = boltFx.Count - 1; i >= 0; i--)
+            {
+                var b = boltFx[i];
+                b.life -= dt;
+                if (b.life <= 0f) { if (b.tr) Destroy(b.tr.gameObject); boltFx.RemoveAt(i); continue; }
+                var c = ShockColor; c.a = b.life / BoltLife;
+                if (b.sr != null) b.sr.color = c;
+            }
+        }
+
         void UpdateBombFields(float dt)
         {
             if (bombFields.Count == 0) return;
@@ -3072,7 +3234,6 @@ namespace BlackholeGame
         bool IsBuyable(UpgradeNode n)
         {
             if (IsBought(n.id) && !n.repeat) return false;
-            if (n.tier > stagesCleared) return false;   // 지역 N 클리어 전엔 tier N 잠김
             if (n.IsRoot) return true;
             if (!IsBought(n.parentId)) return false;
             // round50: 타워 변신은 그 아래 세 갈래를 전부 뚫어야 열린다
@@ -5116,7 +5277,7 @@ namespace BlackholeGame
             if (nodes == null) return;
             int total = 0, openCnt = 0;
             foreach (var n in nodes)
-                if (n.repeat) { total += RepLevel(n.id); if (n.tier <= stagesCleared && IsBuyable(n)) openCnt++; }
+                if (n.repeat) { total += RepLevel(n.id); if (IsBuyable(n)) openCnt++; }
             if (openCnt == 0 && total == 0 && !AnyRepeatNode()) return;
 
             float pad = 12f * uiScale, head = 26f * uiScale;
@@ -5223,7 +5384,6 @@ namespace BlackholeGame
             float rowY = y + pad + head;
             foreach (var n in list)
             {
-                bool locked = n.tier > stagesCleared;
                 bool open = IsBuyable(n);   // 부모 가지를 다 뚫어야 열린다
                 float iconSz = Mathf.Min(rowH - 10f * uiScale, 40f * uiScale);
                 var ir = new Rect(x + pad, rowY + (rowH - iconSz) * 0.5f, iconSz, iconSz);
@@ -5231,7 +5391,7 @@ namespace BlackholeGame
                 var gc0 = GUI.color;
                 if (tex != null)
                 {
-                    GUI.color = locked || !open ? new Color(1f, 1f, 1f, 0.28f) : new Color(1f, 0.86f, 0.42f);
+                    GUI.color = !open ? new Color(1f, 1f, 1f, 0.28f) : new Color(1f, 0.86f, 0.42f);
                     GUI.DrawTexture(ir, tex, ScaleMode.ScaleToFit);
                 }
                 GUI.color = gc0;
@@ -5242,13 +5402,12 @@ namespace BlackholeGame
                 float nameW = Mathf.Max(30f, w - pad * 2f - (ir.width + 6f * uiScale) - btnsW - 6f * uiScale);
                 // round51: 한 번 사면 얼마나 오르는지 — 이게 없어서 뭘 올려주는지 알 수 없었다.
                 var es = new GUIStyle(ns) { fontSize = Mathf.Max(8, Mathf.RoundToInt(14f * uiScale * rowK)) };
-                es.normal.textColor = locked || !open ? new Color(0.58f, 0.60f, 0.64f) : new Color(0.55f, 0.88f, 0.70f);
+                es.normal.textColor = !open ? new Color(0.58f, 0.60f, 0.64f) : new Color(0.55f, 0.88f, 0.70f);
                 FlatText(es);
                 var ss = new GUIStyle(ns) { fontSize = Mathf.Max(8, Mathf.RoundToInt(12f * uiScale * rowK)) };
                 ss.normal.textColor = new Color(0.72f, 0.74f, 0.78f); FlatText(ss);
                 string eff = n.desc != null && n.desc.StartsWith("nd.") ? Loc.F("rs." + n.desc.Substring(3), n.descArg) : "";
-                string sub = locked ? Loc.F("tree.lockTier", n.tier)
-                           : !open ? Loc.T("tree.repLocked")
+                string sub = !open ? Loc.T("tree.repLocked")
                            : "Lv " + RepLevel(n.id) + " · $" + Money(n.cost);
 
                 // 비율이 아니라 글자 높이로 쌓아야 행이 줄어도 안 깎인다. 남는 높이는 위아래로 나눈다.
@@ -5261,7 +5420,7 @@ namespace BlackholeGame
                 GUI.Label(new Rect(tx, ty + h1, nameW, h2), eff, es);
                 GUI.Label(new Rect(tx, ty + h1 + h2, nameW, h3), sub, ss);
 
-                if (!locked && open)
+                if (open)
                 {
                     int maxN = (int)System.Math.Min(int.MaxValue, gold / System.Math.Max(1L, n.cost));
                     int[] counts = { 1, 10, maxN };
@@ -5524,7 +5683,6 @@ namespace BlackholeGame
                 bool by = IsBuyable(n);                    // 부모가 뚫려 바로 살 수 있음
                 bool pathAfford = by && gold >= n.cost;    // 지금 이 노드를 살 돈이 있음
 
-                bool locked = n.tier > stagesCleared;
                 // 구매 전 = 사각형, 구매 후 = 초록 원. 살 수 있는지는 사각형의 "속 색" 으로 알려 준다.
                 //   초록은 산 노드 전용이라 쓰지 않는다. 테두리 링은 상태와 상관없이 같은 톤으로 둔다.
                 Color fillCol = bt ? new Color(0.13f, 0.58f, 0.27f, 1f)             // 초록(구매함)
@@ -5561,8 +5719,7 @@ namespace BlackholeGame
                 var tex = (iconTex != null && iconTex.TryGetValue(n.icon, out var it)) ? it : (iconTex != null ? iconTex["dot"] : null);
                 if (tex != null)
                 {
-                    GUI.color = locked ? new Color(1f, 1f, 1f, 0.13f)
-                              : bt ? Color.white
+                    GUI.color = bt ? Color.white
                               : pathAfford ? new Color(0.10f, 0.07f, 0.02f, 1f)   // 황금색 위에서는 어두운 아이콘이 읽힌다
                               : by ? Color.white : new Color(1f, 1f, 1f, 0.4f);
                     float pad = nodeSz * 0.18f;
@@ -5571,7 +5728,7 @@ namespace BlackholeGame
                 GUI.color = c0;
 
                 if (!repOpen && rect.Contains(Event.current.mousePosition)) hovered = n;
-                if (!locked && !bt && transDir == 0 && !repOpen && GUI.Button(rect, GUIContent.none, GUIStyle.none))
+                if (!bt && transDir == 0 && !repOpen && GUI.Button(rect, GUIContent.none, GUIStyle.none))
                     BuyNode(n);
             }
 
@@ -5603,7 +5760,6 @@ namespace BlackholeGame
                         foreach (var need in hovered.alsoNeed) if (!IsBought(need)) needAll = true;
                     string why = needPrev ? Loc.T("tree.needPrev")
                                : needAll ? Loc.T("tree.needAll")
-                               : hovered.tier > stagesCleared ? Loc.F("tree.lockTier", hovered.tier)
                                : gold < hovered.cost ? Loc.F("tree.needGold", Money(hovered.cost - gold))
                                : null;
                     status = why == null ? price : price + "\n" + why;

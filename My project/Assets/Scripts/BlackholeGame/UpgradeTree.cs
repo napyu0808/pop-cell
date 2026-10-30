@@ -61,6 +61,8 @@ namespace BlackholeGame
         public const int   SCountMax = 10;          // 동시 소환 (기본 1 → 최대 10)
         public const float BombDmgMax = 5f, BombRadMax = 2f, BombIntervalMin = 10f, BombFieldMax = 20f;
         public const float RepRangeMax = 5f;        // 반복 강화 범위 상한(월드 단위 반경)
+        public const float BlastDmgMax = 3f, BlastRadMax = 3f, ShockDmgMax = 2f;
+        public const int   ShockTargetsMax = 5;
 
         static float CM(float v) => Mathf.Min(MultCap, v);
         static float CC(float v) => Mathf.Min(CritCap, v);
@@ -70,40 +72,49 @@ namespace BlackholeGame
         static int   CN(int v)   => Mathf.Clamp(v, 1, SCountMax);
 
         // ---- 노드 1개당 수치 (round44: 300→150노드라 대략 2배) ----
-        public const float MultPP = 21f, SpeedMul = 0.826f, CritCPP = 0.08f, CritXAdd = 0.18f,
-                           RangeAdd = 0.21f, GoldPP = 18f, TimeAdd = 15f, SpawnMul = 0.85f,
+        public const float MultPP = 10.5f, SpeedMul = 0.909f, CritCPP = 0.04f, CritXAdd = 0.09f,
+                           RangeAdd = 0.105f, GoldPP = 9f, TimeAdd = 7.5f, SpawnMul = 0.922f,
                            BombDmgAdd = 0.5f, BombRadAdd = 0.10f, BombIntervalSub = 2f, BombFieldAdd = 2f;
         public const int SkipAdd = 2;
         // 콤보 — 기본은 1.6초 안에 다음 처치가 없으면 끊기고, 연속 1회마다 골드 +0.5%(40연속 +20%)다.
         //   유지시간 노드는 그 1.6초를, 배율 노드는 "연속 1회당" 보너스를 키운다. 두 줄 다 3칸이고
         //   다 사면 유지 3.4초, 40연속 +44%.
         public const float ComboTimeAdd = 0.6f, ComboMulAdd = 0.002f;
+        // 변이개체 변종 — 폭탄은 몰린 적에게, 번개는 흩어진 적에게 강하다. 위력 3칸·범위(전이) 2칸.
+        public const float BlastDmgAdd = 0.5f, BlastRadAdd = 0.5f, ShockDmgAdd = 1f / 3f;
 
         // ---- 반복 강화 1회당 수치·가격 (같은 값으로 같은 양) ----
         // 1회 수치는 작게 — 여러 번(수십~수백 레벨) 사게 해서 +1/+10/최대 버튼이 의미 있게
         public const float RepFlat = 10f, RepMult = 1f, RepAps = 0.05f, RepRange = 0.01f, RepCritX = 0.02f, RepGold = 1f;
-        public static readonly long[] RepCost = { 9800000, 9800000, 9800000, 9800000, 9800000, 9800000 };   // flat, mult, speed, range, critx, gold
+        public static readonly long[] RepCost = { 980000, 980000, 980000, 980000, 980000, 980000 };   // flat, mult, speed, range, critx, gold
 
         // tier별 노드 비용 — balance_sim 으로 맞춘다.
         //   값은 맨 왼쪽 1~3자리만 0이 아니고 나머지는 0이다(사용자 규칙). 중간에 숫자가 끼면 안 된다.
         //   최고가는 1,000만 미만으로 묶여 있다 — 예전 157억짜리 꼭대기는 후반에 도달 불가능한 벽이었다.
-        // 새 지역은 늘 전 지역보다 돈을 더 벌어야 해서(지역 골드 배율을 올림) 티어 3~7 가격도 같이 올렸다 —
-        //   안 올리면 지역이 몇 분 만에 끝난다. 4번째 이후 가격은 지역 소요 시간(~15분)에서 거꾸로 맞춘 값이다.
-        //   티어 2 는 10만 -> 4만: 타워를 절반으로 낮추자 3·4지역에서 이 가격을 모으는 데 150판이 걸렸다.
-        //   보스 체력을 낮춰도 시간이 다음 지역으로 옮겨 갈 뿐이라, 막히는 자리인 가격을 낮췄다.
-        static readonly long[] TierCost = { 50, 1500, 40000, 170000, 500000, 6500000, 7300000, 9500000 };
-        public static long Cost(int tier) =>
-            tier >= 0 && tier < TierCost.Length ? TierCost[tier]
-            : (long)System.Math.Round(TierCost[TierCost.Length - 1] * System.Math.Pow(2.6, tier - TierCost.Length + 1));
+        // 가격은 끊기지 않는 곡선이다 — 예전 티어표는 1,500 -> 4만 -> 17만으로 뛰어서, 업그레이드 창을 열어도
+        //   살 게 없는 판이 이어졌다. 이제 가지 안 위치까지 소수 티어(x)로 보고 가격을 매겨서 다음 노드가 늘
+        //   앞 노드의 2배 안팎이다. 대신 노드를 두 배로 늘리고 한 칸 효과를 절반으로 낮췄다.
+        public const double CostLow = 25d, CostTop = 9500000d, CostSpan = 7.2d;
+        public static long CostAt(double x) => NiceCost(CostLow * System.Math.Pow(CostTop / CostLow, System.Math.Min(x, CostSpan) / CostSpan));
+        public static long Cost(int tier) => CostAt(tier);
+
+        // 가격은 맨 왼쪽 두 자리만 0이 아니고 나머지는 0이다 — 1,300,000 은 되고 1,260,600 은 안 된다.
+        public static long NiceCost(double c)
+        {
+            if (c <= 0) return 0;
+            int e = (int)System.Math.Floor(System.Math.Log10(c));
+            double scale = System.Math.Pow(10, System.Math.Max(0, e - 1));
+            return (long)(System.Math.Round(c / scale) * scale);
+        }
 
         // 공격력 노드값은 티어별 표(가지 안 높이 → 티어 → 값)
-        static readonly int[] FlatByTier = { 20, 24, 30, 50, 88, 156, 290, 560 };
+        static readonly int[] FlatByTier = { 10, 12, 15, 25, 44, 78, 145, 280 };
         public static int FlatAt(int tier) =>
             tier >= 0 && tier < FlatByTier.Length ? FlatByTier[tier]
             : Mathf.RoundToInt(FlatByTier[FlatByTier.Length - 1] * Mathf.Pow(1.9f, tier - FlatByTier.Length + 1));
 
         public enum T { Flat, Mult, Speed, CritC, CritX, Range, Gold, Time, Spawn, SCount, Skip, Auto, Bomb, BombDmg, BombRad, BombFreq, BombTime,
-                        ComboTime, ComboMul,
+                        ComboTime, ComboMul, Blast, BlastDmg, BlastRad, Shock, ShockDmg, ShockN,
                         RFlat, RMult, RSpeed, RRange, RCritX, RGold }
 
         // 가지 정의 — (타입, id 접두어, 노드 수, 시작 티어). 노드 수는 머리 노드를 포함한 전체 길이.
@@ -112,14 +123,17 @@ namespace BlackholeGame
         public struct LaneDef { public T type; public string key; public int len; public int tier0; }
         static LaneDef L(T t, string key, int len, int tier0 = 0) => new LaneDef { type = t, key = key, len = len, tier0 = tier0 };
         public static readonly LaneDef
-            LFlat  = L(T.Flat,  "flat",  10),  LMult  = L(T.Mult,  "mult",   8),  LSpeed = L(T.Speed, "speed",  8),
-            LCritC = L(T.CritC, "critc",  6),  LRange = L(T.Range, "range",  8),  LCritX = L(T.CritX, "critx",  9),
-            LTime  = L(T.Time,  "time",   5),  LGold  = L(T.Gold,  "gold",   9),  LSkip  = L(T.Skip,  "skip",  3),
-            LSCount= L(T.SCount,"scount", 5),  LSpawn = L(T.Spawn, "spawn",  5),
+            LFlat  = L(T.Flat,  "flat",  20),  LMult  = L(T.Mult,  "mult",  16),  LSpeed = L(T.Speed, "speed", 16),
+            LCritC = L(T.CritC, "critc", 12),  LRange = L(T.Range, "range", 16),  LCritX = L(T.CritX, "critx", 18),
+            LTime  = L(T.Time,  "time",  10),  LGold  = L(T.Gold,  "gold",  18),  LSkip  = L(T.Skip,  "skip",  3),
+            LSCount= L(T.SCount,"scount", 5),  LSpawn = L(T.Spawn, "spawn", 10),
             LBDmg  = L(T.BombDmg, "bombdmg", 4, 1), LBRad = L(T.BombRad, "bombrad", 6, 1), LBFreq = L(T.BombFreq, "bombfreq", 3, 1),
             LBTime = L(T.BombTime, "bombtime", 3, 1),
-            LCTime = L(T.ComboTime, "ctime", 3, 1), LCMul = L(T.ComboMul, "cmul", 3, 2);   // 왼쪽(경제·유틸) 줄기의 콤보 두 줄
+            LCTime = L(T.ComboTime, "ctime", 3, 1), LCMul = L(T.ComboMul, "cmul", 3, 2),   // 왼쪽(경제·유틸) 줄기의 콤보 두 줄
+            LBlDmg = L(T.BlastDmg, "blastdmg", 3, VariantUnlockTier), LBlRad = L(T.BlastRad, "blastrad", 2, VariantUnlockTier),
+            LShDmg = L(T.ShockDmg, "shockdmg", 3, VariantUnlockTier), LShN = L(T.ShockN, "shockn", 2, VariantUnlockTier);
         public const int BombUnlockTier = 1;   // 백신은 1지역을 깬 뒤 — 기본 조작에 익숙해진 다음 새 요소
+        public const int VariantUnlockTier = 3;   // 변이개체 변종은 3지역을 깬 뒤 — 이르면 초반 노가다가 무너진다
 
         // ---- 자동 타워(round50 개편) ---------------------------------------------------
         //   줄기(좌·중앙·우)마다: 해금 → [공격력 / 공속 / 회전속도] 3갈래 → 셋 다 뚫으면 변신 노드.
@@ -268,6 +282,12 @@ namespace BlackholeGame
                 case T.BombRad:  return ("blastring", "n.bombrad", "nd.bombrad", BombRadAdd, s => s.bombRadiusMul = Mathf.Min(BombRadMax, s.bombRadiusMul + BombRadAdd));
                 case T.BombFreq: return ("pillfast", "n.bombfreq", "nd.bombfreq", BombIntervalSub, s => s.bombInterval = Mathf.Max(BombIntervalMin, s.bombInterval - BombIntervalSub));
                 case T.BombTime: return ("clock", "n.bombtime", "nd.bombtime", BombFieldAdd, s => s.bombFieldSec = Mathf.Min(BombFieldMax, s.bombFieldSec + BombFieldAdd));
+                case T.Blast:    return ("blast", "n.blast", "nd.blast", 0f, s => s.blastUnlocked = true);
+                case T.BlastDmg: return ("blast", "n.blastdmg", "nd.blastdmg", BlastDmgAdd, s => s.blastDmgMul = Mathf.Min(BlastDmgMax, s.blastDmgMul + BlastDmgAdd));
+                case T.BlastRad: return ("blastring", "n.blastrad", "nd.blastrad", BlastRadAdd, s => s.blastRadius = Mathf.Min(BlastRadMax, s.blastRadius + BlastRadAdd));
+                case T.Shock:    return ("bolt", "n.shock", "nd.shock", 0f, s => s.shockUnlocked = true);
+                case T.ShockDmg: return ("bolt", "n.shockdmg", "nd.shockdmg", ShockDmgAdd, s => s.shockDmgMul = Mathf.Min(ShockDmgMax, s.shockDmgMul + ShockDmgAdd));
+                case T.ShockN:   return ("cells", "n.shockn", "nd.shockn", 0f, s => s.shockTargets = Mathf.Min(ShockTargetsMax, s.shockTargets + 1));
                 // ---- 반복 강화 — 가지 노드와 같은 아이콘, 효과는 "같은 양을 계속" ----
                 case T.RFlat:  return ("sword", "n.rflat", "nd.rflat", RepFlat, s => s.flatBonus += RepFlat);
                 case T.RMult:  return ("mult", "n.rmult", "nd.rmult", RepMult, s => s.multBucketPercent += RepMult);   // 상한 없음
@@ -307,7 +327,7 @@ namespace BlackholeGame
             for (int k = from; k < d.len; k++)
             {
                 string id = d.key + k;
-                Make(list, id, parent, d.type, TierOf(d, k));
+                Make(list, id, parent, d.type, TierOf(d, k), CostAt(d.tier0 + k * (double)(NodeTiers - d.tier0) / d.len));
                 parent = id;
             }
             return parent;
@@ -350,6 +370,13 @@ namespace BlackholeGame
             Lane(list, LBRad, "bomb");
             Lane(list, LBFreq, "bomb");
             Lane(list, LBTime, "bomb");
+            // 변이개체 변종 — 백신 위로 두 갈래. 해금 노드 뒤에 위력·범위(전이) 줄이 갈라진다
+            Make(list, "blast", "bomb", T.Blast, VariantUnlockTier);
+            Lane(list, LBlDmg, "blast");
+            Lane(list, LBlRad, "blast");
+            Make(list, "shock", "bomb", T.Shock, VariantUnlockTier);
+            Lane(list, LShDmg, "shock");
+            Lane(list, LShN, "shock");
 
             // 자동 타워 — 별도 탭(tab 1). 코어에서 좌/중앙/우 3줄기.
             for (int i = 0; i < 3; i++) TowerLane(list, i, RootId);

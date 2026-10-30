@@ -36,7 +36,7 @@ def run_level(level, seed=0, max_runs=400):
 
     for stage in range(8):
         w = G.wave_cfg(stage, asc=level)
-        tier_open = stage + 1            # 지역 N 클리어 -> tier N 해금 => 지금은 0..stage 까지
+        tier_open = 99                   # 노드는 지역 클리어와 상관없이 돈만 있으면 산다
         secs, runs, won = 0.0, 0, False
 
         while runs < max_runs:

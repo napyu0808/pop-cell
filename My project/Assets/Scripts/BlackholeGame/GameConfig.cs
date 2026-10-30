@@ -36,6 +36,14 @@ namespace BlackholeGame
         // 보스에게는 최대체력의 1% → 5% — 대미지 강화(2→5배)에 비례해서 같이 오른다
         public float BombBossFrac => 0.01f + Mathf.Clamp01((bombDmgMul - 2f) / 3f) * 0.04f;
 
+        // ---- 변이개체 변종 — 노드를 사면 변이개체 일부가 폭탄형·번개형으로 나온다 ----
+        public bool blastUnlocked = false;
+        public float blastDmgMul = 1.5f;       // 폭발 피해 = 타격 × 이 값. 노드로 최대 3
+        public float blastRadius = 2f;         // 폭발 반경(월드 단위). 노드로 최대 3
+        public bool shockUnlocked = false;
+        public float shockDmgMul = 1f;         // 번개 피해 = 타격 × 이 값. 노드로 최대 2
+        public int shockTargets = 3;           // 번개가 튀는 적 수. 노드로 최대 5
+
         // ---- 자동 타워(round47) — 좌/중앙/우 3개. 조준하지 않고 제자리에서 돌며 쏜다 ----
         //   노드로 하나씩 따로 해금·강화한다. 공격력은 "커서 타격의 몇 배"(0.5 → 1.0).
         public const int TowerCount = 3;
@@ -85,6 +93,8 @@ namespace BlackholeGame
             comboWindowAdd = comboWindowAdd, comboPerAdd = comboPerAdd,
             bombUnlocked = bombUnlocked, bombDmgMul = bombDmgMul,
             bombRadiusMul = bombRadiusMul, bombInterval = bombInterval, bombFieldSec = bombFieldSec,
+            blastUnlocked = blastUnlocked, blastDmgMul = blastDmgMul, blastRadius = blastRadius,
+            shockUnlocked = shockUnlocked, shockDmgMul = shockDmgMul, shockTargets = shockTargets,
             towerOn = (bool[])towerOn.Clone(), towerDmgMul = (float[])towerDmgMul.Clone(),
             towerInterval = (float[])towerInterval.Clone(), towerSpin = (float[])towerSpin.Clone(),
             towerPattern = (int[])towerPattern.Clone(), towerPatMask = (int[])towerPatMask.Clone(),
@@ -257,13 +267,13 @@ namespace BlackholeGame
             // 1지역만 "튜토리얼 보정" — 초반 골드 수급이 막혀 첫 노드조차 못 사던 문제를 피하려고
             // 체력과 보스를 따로 낮게 잡는다. 1판마다 노드를 사고 몇 판이면 클리어된다.
             new StageConfig(0, "s.0",  4,  28f,        18f, 1.130f,         3340,  10,  8,     0.05f, new Color(0.42f,0.72f,0.46f)),
-            new StageConfig(1, "s.1",  5,  34f,       117f, 1.136f,        14100,  10,  9,     0.18f, new Color(0.36f,0.62f,0.70f)),
-            new StageConfig(2, "s.2",  7,  44f,       329f, 1.142f,        39500,  10, 10,     1.40f, new Color(0.60f,0.54f,0.36f)),
-            new StageConfig(3, "s.3",  9,  54f,       523f, 1.148f,        62800,  15, 11,     2.50f, new Color(0.40f,0.46f,0.60f)),
-            new StageConfig(4, "s.4", 11,  64f,      1090f, 1.153f,       131000,  15, 12,     10.00f, new Color(0.30f,0.58f,0.62f)),
-            new StageConfig(5, "s.5", 13,  74f,      3450f, 1.158f,       414000,  20, 13,    41.00f, new Color(0.34f,0.56f,0.34f)),
-            new StageConfig(6, "s.6", 15,  88f,     14300f, 1.163f,      1720000, 20, 14,   250.00f, new Color(0.62f,0.66f,0.72f)),
-            new StageConfig(7, "s.7", 18, 108f,     83000f, 1.168f,     8400000, 25, 15,  1300.00f, new Color(0.66f,0.30f,0.34f)),
+            new StageConfig(1, "s.1",  5,  34f,       117f, 1.136f,        14100,  10,  9,     0.12f, new Color(0.36f,0.62f,0.70f)),
+            new StageConfig(2, "s.2",  7,  44f,       329f, 1.142f,        43500,  10, 10,     0.30f, new Color(0.60f,0.54f,0.36f)),
+            new StageConfig(3, "s.3",  9,  54f,       523f, 1.148f,        100000,  15, 11,     0.50f, new Color(0.40f,0.46f,0.60f)),
+            new StageConfig(4, "s.4", 11,  64f,      1090f, 1.153f,       131000,  15, 12,     1.00f, new Color(0.30f,0.58f,0.62f)),
+            new StageConfig(5, "s.5", 13,  74f,      3450f, 1.158f,       414000,  20, 13,    3.50f, new Color(0.34f,0.56f,0.34f)),
+            new StageConfig(6, "s.6", 15,  88f,     17000f, 1.163f,      1720000, 20, 14,   18.00f, new Color(0.62f,0.66f,0.72f)),
+            new StageConfig(7, "s.7", 18, 108f,     95000f, 1.168f,     12500000, 25, 15,  110.00f, new Color(0.66f,0.30f,0.34f)),
         };
     }
 }
