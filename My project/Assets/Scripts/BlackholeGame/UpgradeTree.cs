@@ -11,18 +11,20 @@ namespace BlackholeGame
     {
         public readonly string id, parentId, label, desc, icon;   // label/desc = Loc 키
         public readonly float descArg;                            // 설명 서식 인자 (0 = 없음)
-        public readonly Vector2 dir;        // 부모로부터의 방향 (스크린 좌표, 위 = -Y)
+        public readonly Vector2 dir;        // 0 이 아니면 줄기 배치에서 빠지고 부모에서 이만큼 떨어진 곳에 놓인다 (위 = -Y)
         public readonly long cost;   // round44: long — 반복 강화 값이 21억을 넘을 수 있다
         public readonly int tier;
         public readonly Action<Stats> apply;
         public readonly bool repeat;        // round44: 반복 강화 — 살 때마다 같은 값(cost)으로 같은 효과(apply)를 한 번 더
         public readonly int tab;            // round47: 0 = 커서(기존 트리), 1 = 자동 타워
         public readonly string[] alsoNeed;  // round50: 부모 말고 추가로 뚫어야 하는 노드(타워 변신)
+        public readonly string revealAfter; // 이 노드를 사기 전에는 선도 노드도 그리지 않는다
 
         public UpgradeNode(string id, string parentId, Vector2 dir, string icon,
                            string label, long cost, int tier, string desc, float descArg, Action<Stats> apply,
-                           bool repeat = false, int tab = 0, string[] alsoNeed = null)
+                           bool repeat = false, int tab = 0, string[] alsoNeed = null, string revealAfter = null)
         {
+            this.revealAfter = revealAfter;
             this.id = id; this.parentId = parentId; this.dir = dir; this.icon = icon;
             this.label = label; this.cost = cost; this.tier = tier; this.desc = desc; this.descArg = descArg; this.apply = apply;
             this.repeat = repeat; this.tab = tab; this.alsoNeed = alsoNeed;
@@ -82,6 +84,9 @@ namespace BlackholeGame
         public const float ComboTimeAdd = 0.6f, ComboMulAdd = 0.002f;
         // 변이개체 변종 — 폭탄은 몰린 적에게, 번개는 흩어진 적에게 강하다. 위력 3칸·범위(전이) 2칸.
         public const float BlastDmgAdd = 0.5f, BlastRadAdd = 0.5f, ShockDmgAdd = 1f / 3f;
+        // 백신 투하 — 해금은 2지역 중간쯤 살 값(그때 한 판 수입의 3배 남짓). 횟수 노드는 3·4지역 가격대다.
+        public const int SkillChargesMax = 3;
+        public static readonly long[] SkillCost = { 350, 2600, 15000 };
 
         // ---- 반복 강화 1회당 수치·가격 (같은 값으로 같은 양) ----
         // 1회 수치는 작게 — 여러 번(수십~수백 레벨) 사게 해서 +1/+10/최대 버튼이 의미 있게
@@ -114,7 +119,7 @@ namespace BlackholeGame
             : Mathf.RoundToInt(FlatByTier[FlatByTier.Length - 1] * Mathf.Pow(1.9f, tier - FlatByTier.Length + 1));
 
         public enum T { Flat, Mult, Speed, CritC, CritX, Range, Gold, Time, Spawn, SCount, Skip, Auto, Bomb, BombDmg, BombRad, BombFreq, BombTime,
-                        ComboTime, ComboMul, Blast, BlastDmg, BlastRad, Shock, ShockDmg, ShockN,
+                        ComboTime, ComboMul, Blast, BlastDmg, BlastRad, Shock, ShockDmg, ShockN, Skill, SkillN,
                         RFlat, RMult, RSpeed, RRange, RCritX, RGold }
 
         // 가지 정의 — (타입, id 접두어, 노드 수, 시작 티어). 노드 수는 머리 노드를 포함한 전체 길이.
@@ -286,6 +291,8 @@ namespace BlackholeGame
                 case T.BlastDmg: return ("blast", "n.blastdmg", "nd.blastdmg", BlastDmgAdd, s => s.blastDmgMul = Mathf.Min(BlastDmgMax, s.blastDmgMul + BlastDmgAdd));
                 case T.BlastRad: return ("blastring", "n.blastrad", "nd.blastrad", BlastRadAdd, s => s.blastRadius = Mathf.Min(BlastRadMax, s.blastRadius + BlastRadAdd));
                 case T.Shock:    return ("bolt", "n.shock", "nd.shock", 0f, s => s.shockUnlocked = true);
+                case T.Skill:    return ("pill", "n.skill", "nd.skill", 0f, s => s.skillUnlocked = true);
+                case T.SkillN:   return ("pill", "n.skilln", "nd.skilln", 1f, s => s.skillCharges = Mathf.Min(SkillChargesMax, s.skillCharges + 1));
                 case T.ShockDmg: return ("bolt", "n.shockdmg", "nd.shockdmg", ShockDmgAdd, s => s.shockDmgMul = Mathf.Min(ShockDmgMax, s.shockDmgMul + ShockDmgAdd));
                 case T.ShockN:   return ("cells", "n.shockn", "nd.shockn", 0f, s => s.shockTargets = Mathf.Min(ShockTargetsMax, s.shockTargets + 1));
                 // ---- 반복 강화 — 가지 노드와 같은 아이콘, 효과는 "같은 양을 계속" ----
@@ -333,6 +340,13 @@ namespace BlackholeGame
             return parent;
         }
 
+        static void Skill(List<UpgradeNode> list, string id, string parent, T t, int tier, long cost, Vector2 offset, string[] alsoNeed)
+        {
+            var e = Effect(t, tier);
+            list.Add(new UpgradeNode(id, parent, offset, e.icon, e.label, cost, tier, e.desc, e.descArg, e.apply,
+                                     false, 0, alsoNeed, "bomb"));
+        }
+
         // 자식 순서 = 화면 왼쪽→오른쪽. 이어지는 가지를 가운데에 둬서 머리 노드 바로 위로 곧게 뻗게.
         public static List<UpgradeNode> BuildAll()
         {
@@ -377,6 +391,12 @@ namespace BlackholeGame
             Make(list, "shock", "bomb", T.Shock, VariantUnlockTier);
             Lane(list, LShDmg, "shock");
             Lane(list, LShN, "shock");
+
+            // 수동 스킬 — 네 줄기를 건드리지 않게 코어 왼쪽 위 대각선에 따로 둔다(왼쪽 아래·오른쪽 아래는 다음 스킬 자리).
+            //   좌클릭은 자동 공격 전까지 수동 타격이라 자동 공격이 있어야 산다. 백신을 사기 전에는 보이지 않는다.
+            Skill(list, "skill1", RootId, T.Skill, 1, SkillCost[0], new Vector2(-56f, -56f), new[] { "auto" });
+            Skill(list, "skilln0", "skill1", T.SkillN, 2, SkillCost[1], new Vector2(-60f, 0f), null);
+            Skill(list, "skilln1", "skilln0", T.SkillN, 3, SkillCost[2], new Vector2(-60f, 0f), null);
 
             // 자동 타워 — 별도 탭(tab 1). 코어에서 좌/중앙/우 3줄기.
             for (int i = 0; i < 3; i++) TowerLane(list, i, RootId);

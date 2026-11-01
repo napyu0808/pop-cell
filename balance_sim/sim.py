@@ -505,7 +505,7 @@ class Run:
                             if done:
                                 break
                         elif pat == PAT_SNIPER:
-                            if self._sniper_shot(ti, hit * 2.0, kill,max(1, min(3, s.towerTargets[ti])), s.towerBossMul[ti]):
+                            if self._sniper_shot(ti, hit * 2.0, kill, max(1, min(3, s.towerTargets[ti])), s.towerBossMul[ti]):
                                 break
                         else:
                             self._fire(ti, self.tw_ang[ti], dmg, s.towerBossMul[ti])

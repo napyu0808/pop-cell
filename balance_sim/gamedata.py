@@ -76,7 +76,7 @@ LANES = {
 }
 # 효과를 시뮬레이터가 모델링하지 않는 가지. 가격은 트리 총비용에 들어가지만 진행 시뮬레이션은 사지 않는다
 #   (사면 골드만 빠져서 시간이 부풀려진다 — 실제로는 사도 되고 안 사도 되는 선택 강화다).
-UNMODELED_LANES = {"ctime", "cmul", "blast", "blastdmg", "blastrad", "shock", "shockdmg", "shockn"}
+UNMODELED_LANES = {"ctime", "cmul", "blast", "blastdmg", "blastrad", "shock", "shockdmg", "shockn", "skill"}
 
 # ---- GameConfig.cs : Stats 기본값 --------------------------------------
 BASE_ATTACK   = 10.0
@@ -231,8 +231,8 @@ def apply_type(t, tier, s):
         s.bombInterval = max(BOMB_INT_MIN, s.bombInterval - BOMB_INT_SUB)
     elif t == "BombTime":
         s.bombFieldSec = min(BOMB_FIELD_MAX, s.bombFieldSec + BOMB_FIELD_ADD)
-    elif t in ("ComboTime", "ComboMul", "Blast", "BlastDmg", "BlastRad", "Shock", "ShockDmg", "ShockN"):
-        pass   # 콤보·변이개체 변종은 시뮬레이터 바깥
+    elif t in ("ComboTime", "ComboMul", "Blast", "BlastDmg", "BlastRad", "Shock", "ShockDmg", "ShockN", "Skill", "SkillN"):
+        pass   # 콤보·변이개체 변종·수동 스킬은 시뮬레이터 바깥
     # ---- 반복 강화 ----
     elif t == "RFlat":
         s.flatBonus += REP_FLAT
@@ -308,6 +308,9 @@ def build():
     lane("blastdmg", "blast"); lane("blastrad", "blast")
     make("shock", "bomb", "Shock", VARIANT_UNLOCK_TIER, "shock")
     lane("shockdmg", "shock"); lane("shockn", "shock")
+    make("skill1", "root", "Skill", 1, "skill", 350)   # 코어 왼쪽 위 대각선 — 플레이어가 누르는 스킬이라 시뮬레이션하지 않는다
+    make("skilln0", "skill1", "SkillN", 2, "skill", 2600)
+    make("skilln1", "skilln0", "SkillN", 3, "skill", 15000)
     # 자동 타워 — 코어에서 좌/중앙/우 3줄기(별도 탭)
     for i in range(3):
         key = TOWER_KEYS[i]
@@ -442,8 +445,8 @@ def wave_cfg(stage, asc=0):
 # GameManager 가 살아있는 Play 모드에서 UpgradeTree.BuildAll() 로 뽑은 값 (round38).
 EXPECTED_DPS = [104, 232, 576, 1203, 3328, 7331, 21522, 50117]
 EXPECTED_HIT = [58, 102, 191, 307, 613, 1028, 2198, 3886]
-EXPECTED_TOTAL_COST = 255_237_606  # 일반 노드만(반복 제외) — 2시간 재밸런싱
-EXPECTED_NODES = 277   # 루트+커서 181(콤보 6·변이개체 변종 12 포함) + 타워 90 + 반복 6
+EXPECTED_TOTAL_COST = 255_255_556  # 일반 노드만(반복 제외) — 2시간 재밸런싱
+EXPECTED_NODES = 280   # 루트+커서 184(콤보 6·변이개체 변종 12·수동 스킬 3 포함) + 타워 90 + 반복 6
 
 
 def self_check(verbose=True):

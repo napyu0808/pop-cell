@@ -44,6 +44,10 @@ namespace BlackholeGame
         public float shockDmgMul = 1f;         // 번개 피해 = 타격 × 이 값. 노드로 최대 2
         public int shockTargets = 3;           // 번개가 튀는 적 수. 노드로 최대 5
 
+        // ---- 백신 투하(수동 스킬) — 노드를 사기 전에는 꺼져 있다 ----
+        public bool skillUnlocked = false;
+        public int skillCharges = 1;           // 판당 사용 횟수. 노드로 최대 3
+
         // ---- 자동 타워(round47) — 좌/중앙/우 3개. 조준하지 않고 제자리에서 돌며 쏜다 ----
         //   노드로 하나씩 따로 해금·강화한다. 공격력은 "커서 타격의 몇 배"(0.5 → 1.0).
         public const int TowerCount = 3;
@@ -95,6 +99,7 @@ namespace BlackholeGame
             bombRadiusMul = bombRadiusMul, bombInterval = bombInterval, bombFieldSec = bombFieldSec,
             blastUnlocked = blastUnlocked, blastDmgMul = blastDmgMul, blastRadius = blastRadius,
             shockUnlocked = shockUnlocked, shockDmgMul = shockDmgMul, shockTargets = shockTargets,
+            skillUnlocked = skillUnlocked, skillCharges = skillCharges,
             towerOn = (bool[])towerOn.Clone(), towerDmgMul = (float[])towerDmgMul.Clone(),
             towerInterval = (float[])towerInterval.Clone(), towerSpin = (float[])towerSpin.Clone(),
             towerPattern = (int[])towerPattern.Clone(), towerPatMask = (int[])towerPatMask.Clone(),

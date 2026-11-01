@@ -2171,6 +2171,8 @@ namespace BlackholeGame
             attackTimer = 0f;
             spawnTimer = 0f;
             bombTimer = 0f;
+            skillLeft = stats.skillCharges;
+            skillCd = 0f;
             cycleKills = 0;
             cycleGold = 0;
             essGainedThisRun = 0;
@@ -2231,12 +2233,14 @@ namespace BlackholeGame
 
             bool isElite = !asBomb && Random.value < EliteChance;
             bool isGolden = !asBomb && !isElite && Random.value < GoldenChance;
-            // 변종은 변이개체 안에서 나눈다 — 적 수와 골드는 그대로, 일반·폭탄·번개가 해금한 종류끼리 같은 비율
+            // 변종은 변이개체 안에서 나눈다 — 적 수와 골드는 그대로. 해금하면 일반 변이개체는 더 안 나오고,
+            //   해금한 종류만 나온다(둘 다면 반반). 한 마리가 두 능력을 갖지는 않는다.
             int variant = 0;
             if (isElite)
             {
-                int pick = Random.Range(0, 1 + (stats.blastUnlocked ? 1 : 0) + (stats.shockUnlocked ? 1 : 0));
-                if (pick > 0) variant = pick == 1 && stats.blastUnlocked ? VariantBlast : VariantShock;
+                if (stats.blastUnlocked && stats.shockUnlocked) variant = Random.value < 0.5f ? VariantBlast : VariantShock;
+                else if (stats.blastUnlocked) variant = VariantBlast;
+                else if (stats.shockUnlocked) variant = VariantShock;
             }
             int cellTier = Mathf.Clamp(currentStage, 0, cellSprites.Length - 1);
             Sprite cellSprite = cellSprites[cellTier];
@@ -2295,7 +2299,7 @@ namespace BlackholeGame
                 osr.sortingOrder = 9;
                 osr.color = variant == VariantBlast ? BlastColor : variant == VariantShock ? ShockColor
                                                     : new Color(0.95f, 0.10f, 0.12f, 1f);
-                // 변종은 후광이 맥박쳐서(황금 적과 같은 방식) 일반 변이개체와 바로 구분된다
+                // 변종은 후광이 맥박쳐서(황금 적과 같은 방식) 적 무리 속에서 바로 눈에 띈다
                 if (variant != 0)
                 {
                     var vg = new GameObject("VariantGlow");
@@ -2783,6 +2787,7 @@ namespace BlackholeGame
                     AttackPulse();
                 }
             }
+            UpdateSkill(dt);
 
             for (int i = floaters.Count - 1; i >= 0; i--)
             {
@@ -3005,10 +3010,34 @@ namespace BlackholeGame
             return false;
         }
 
+        // ---- 백신 투하(수동 스킬) ----
+        //   좌클릭으로 커서 자리에 백신 장판을 깐다. 크기·지속·잡몹 피해는 백신을 그대로 따르고, 보스에게는
+        //   최대체력 비례 대신 공격력 기준으로 준다 — 비례 피해는 보스 체력을 올려도 시간이 안 늘어난다.
+        //   좌클릭은 자동 공격 전까지 수동 타격이라, 자동 공격이 있을 때만 스킬로 쓴다.
+        const float SkillCooldown = 5f;
+        int skillLeft;     // 이번 판에 남은 횟수
+        float skillCd;     // 다음 사용까지 남은 시간
+
+        void UpdateSkill(float dt)
+        {
+            if (!stats.skillUnlocked) return;
+            skillCd -= dt;
+            var ms = Mouse.current;
+            if (ms == null || !stats.autoAttack || !ms.leftButton.wasPressedThisFrame) return;
+            if (skillLeft <= 0 || skillCd > 0f) return;
+            skillLeft--;
+            skillCd = SkillCooldown;
+            float rad = BombBaseRadius * stats.bombRadiusMul;
+            SpawnBurst(cursorWorld, new Color(0.62f, 0.93f, 1f), rad / 4.2f);
+            if (sound != null) sound.Play(Sfx.Boss, 0.5f, 1.5f);
+            SpawnBombField(cursorWorld, rad, Mathf.Max(1f, stats.bombFieldSec), true);
+        }
+
         // ---- 백신 장판 ----
         class BombFieldFx
         {
             public Vector2 pos; public float r; public float life, maxLife, tick;
+            public bool bossByAttack;   // 스킬 장판 — 보스에게 최대체력 비례가 아니라 공격력 기준 피해
             public Transform tr; public SpriteRenderer sr;
         }
         readonly List<BombFieldFx> bombFields = new List<BombFieldFx>();
@@ -3019,7 +3048,7 @@ namespace BlackholeGame
         const float BombBossTickFrac = 0.06f; // 보스는 틱마다 최대체력의 (BombBossFrac x 이 값)
         const int MaxBombFields = 6;
 
-        void SpawnBombField(Vector3 pos, float rad, float sec)
+        void SpawnBombField(Vector3 pos, float rad, float sec, bool bossByAttack = false)
         {
             if (bombFields.Count >= MaxBombFields)
             {
@@ -3036,7 +3065,7 @@ namespace BlackholeGame
             sr.color = new Color(0.50f, 0.92f, 1f, 0.34f);
             go.transform.position = new Vector3(pos.x, pos.y, 0f);
             go.transform.localScale = Vector3.one * (rad * 2f);
-            bombFields.Add(new BombFieldFx { pos = pos, r = rad, life = sec, maxLife = sec, tick = 0f, tr = go.transform, sr = sr });
+            bombFields.Add(new BombFieldFx { pos = pos, r = rad, life = sec, maxLife = sec, tick = 0f, bossByAttack = bossByAttack, tr = go.transform, sr = sr });
         }
 
         void ClearBombFields()
@@ -3207,7 +3236,9 @@ namespace BlackholeGame
                         if (dx * dx + dy * dy > rr * rr) continue;
                         bool isBoss = o == boss;
                         if (isBoss && o.shielded) continue;
-                        float dmg = isBoss ? o.hpMax * stats.BombBossFrac * BombBossTickFrac * EssBossMul : hit;
+                        float dmg = !isBoss ? hit
+                                  : f.bossByAttack ? hit * EssBossMul
+                                  : o.hpMax * stats.BombBossFrac * BombBossTickFrac * EssBossMul;
                         o.hp -= dmg;
                         o.flash = 0.05f; o.hitPop = 1f;
                         if (o.hp <= 0f && KillEnemy(o, false)) stop = true;
@@ -3251,6 +3282,7 @@ namespace BlackholeGame
             if (IsBought(n.id) && !n.repeat) return false;
             if (n.IsRoot) return true;
             if (!IsBought(n.parentId)) return false;
+            if (n.revealAfter != null && !IsBought(n.revealAfter)) return false;
             // round50: 타워 변신은 그 아래 세 갈래를 전부 뚫어야 열린다
             if (n.alsoNeed != null)
                 foreach (var need in n.alsoNeed) if (!IsBought(need)) return false;
@@ -3262,7 +3294,8 @@ namespace BlackholeGame
         // 트리는 "이미 다 뻗어있는 지도"가 아니라 "가운데서 자라나는 것"으로 보여준다(round38).
         //   보이는 것 = 산 노드 + 그 바로 다음 노드(=지금 살 수 있는 경계)뿐. 그 너머는 아예 안 그린다.
         //   그래서 먼 노드를 눌러 앞쪽까지 한 번에 사는 "일괄구매"도 필요 없어져 같이 걷어냈다.
-        bool IsRevealed(UpgradeNode n) => n.IsRoot || IsBought(n.id) || IsBought(n.parentId);
+        bool IsRevealed(UpgradeNode n) => n.IsRoot || IsBought(n.id)
+                                          || (IsBought(n.parentId) && (n.revealAfter == null || IsBought(n.revealAfter)));
 
         // 노드 하나만 구매 — 경계(부모가 뚫린 노드)만 살 수 있으므로 경로 구매가 불필요하다
         int RepLevel(string id) => repLv.TryGetValue(id, out var v) ? v : 0;
@@ -3910,6 +3943,11 @@ namespace BlackholeGame
                 var bs = new GUIStyle(sCenter) { fontSize = Mathf.RoundToInt(14f * uiScale), fontStyle = FontStyle.Bold };
                 GUI.Label(new Rect(bx, by - 2f, bw, bh + 4f), $"{Mathf.CeilToInt(boss.hp):N0} / {boss.hpMax:N0}", bs);
             }
+
+            if (stats.skillUnlocked)
+                GUI.Label(new Rect(0, Screen.height - 40f * s, Screen.width, 28f * s),
+                          skillLeft > 0 && skillCd > 0f ? Loc.F("hud.skillCd", skillLeft, stats.skillCharges, skillCd.ToString("0.0"))
+                                                        : Loc.F("hud.skill", skillLeft, stats.skillCharges), hCen);
         }
 
         // 텍스트 크기에 딱 맞는 rect (가운데 정렬) — 자릿수 늘어도 안 잘림
@@ -4764,6 +4802,21 @@ namespace BlackholeGame
         //   전부 같은 중간 높이에서 꺾이므로 "선반(shelf)" 하나에 나란히 매달린 것처럼 보인다.
         // 부모에서 자식으로 가는 ㄱ자 경로. 줄기가 위아래로 뻗으면 세로로 먼저 꺾고, 좌우로 뻗으면
         //   가로로 먼저 꺾어야 선이 가지를 따라간다 — 반대로 하면 노드 사이를 가로질러 지나간다.
+        const int DiagConnector = 4;   // treeDirOf 값 — 코어에서 대각선으로 곧게 잇는 선
+
+        // GUI.matrix 뒤에 곱해야 트리 패닝을 그대로 받는다(RotateAroundPivot 은 패닝 앞에 끼어든다)
+        static void DrawDiagLine(Vector2 a, Vector2 b, float w, Color col)
+        {
+            Vector2 d = b - a;
+            Matrix4x4 saved = GUI.matrix;
+            Color c0 = GUI.color;
+            GUI.matrix = saved * Matrix4x4.TRS(a, Quaternion.Euler(0f, 0f, Mathf.Atan2(d.y, d.x) * Mathf.Rad2Deg), Vector3.one);
+            GUI.color = col;
+            GUI.DrawTexture(new Rect(0f, -w * 0.5f, d.magnitude, w), Texture2D.whiteTexture);
+            GUI.color = c0;
+            GUI.matrix = saved;
+        }
+
         static void DrawConnector(Vector2 a, Vector2 b, float w, Color col, bool horizontal)
         {
             if (horizontal)
@@ -5490,6 +5543,7 @@ namespace BlackholeGame
                 if (n.IsRoot) { rootNode = n; continue; }
                 if (n.repeat) continue;   // round45: 반복 강화는 트리가 아니라 능력치 패널 아래 고정 패널에
                 if (n.tab != treeTab) continue;   // round47: 지금 보고 있는 탭의 노드만
+                if (n.dir != Vector2.zero) continue;   // 대각선 스킬 — 네 줄기 배치에 끼지 않는다
                 if (!childrenOf.TryGetValue(n.parentId, out var list)) { list = new List<UpgradeNode>(); childrenOf[n.parentId] = list; }
                 list.Add(n);
             }
@@ -5594,6 +5648,13 @@ namespace BlackholeGame
             {
                 if (n.repeat || !(n.IsRoot || n.tab == treeTab)) continue;
                 if (n.IsRoot) { npos[n.id] = pivot; continue; }
+                // 대각선 스킬 — 목록에 부모가 먼저 나오므로 부모 자리에서 바로 이어 놓는다
+                if (n.dir != Vector2.zero)
+                {
+                    npos[n.id] = npos[n.parentId] + n.dir;
+                    dirOf[n.id] = n.parentId == rootNode.id ? DiagConnector : 2;
+                    continue;
+                }
                 float along = depthOf[n.id] * rowSpacing;
                 float across = xOf[n.id] - (baseOf.TryGetValue(n.id, out var bv) ? bv : 0f);
                 switch (dirOf.TryGetValue(n.id, out var dv) ? dv : 3)
@@ -5686,8 +5747,11 @@ namespace BlackholeGame
             for (int pass = 0; pass < 2; pass++)
                 foreach (var n in nodes)
                     if (!n.IsRoot && !n.repeat && n.tab == treeTab && IsRevealed(n) && IsBought(n.id) == (pass == 1))
-                        DrawConnector(npos[n.parentId], npos[n.id], lineW, pass == 1 ? lineOn : lineOff,
-                                      treeDirOf.TryGetValue(n.id, out var nd) && (nd == 0 || nd == 2));
+                    {
+                        bool known = treeDirOf.TryGetValue(n.id, out var nd);
+                        if (known && nd == DiagConnector) DrawDiagLine(npos[n.parentId], npos[n.id], lineW, pass == 1 ? lineOn : lineOff);
+                        else DrawConnector(npos[n.parentId], npos[n.id], lineW, pass == 1 ? lineOn : lineOff, known && (nd == 0 || nd == 2));
+                    }
 
             // 노드 — 아이콘만. 효과는 마우스 오버 툴팁으로.
             UpgradeNode hovered = null;
@@ -5778,7 +5842,7 @@ namespace BlackholeGame
                     if (hovered.alsoNeed != null)
                         foreach (var need in hovered.alsoNeed) if (!IsBought(need)) needAll = true;
                     string why = needPrev ? Loc.T("tree.needPrev")
-                               : needAll ? Loc.T("tree.needAll")
+                               : needAll ? Loc.T(hovered.id == "skill1" ? "tree.needAuto" : "tree.needAll")
                                : gold < hovered.cost ? Loc.F("tree.needGold", Money(hovered.cost - gold))
                                : null;
                     status = why == null ? price : price + "\n" + why;
