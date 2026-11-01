@@ -2895,7 +2895,7 @@ namespace BlackholeGame
             if (e.golden) g *= GoldenGoldMul; // 황금 적 — 더 큰 보너스
             SpawnBurst(e.tr.position, e.baseColor, e.r);
             SpawnSplat(e.tr.position, e.baseColor, e.r);
-            if (e.elite) SpawnBurst(e.tr.position, new Color(0.95f, 0.12f, 0.14f), e.r * 1.3f);
+            if (e.elite) SpawnBurst(e.tr.position, e.variant == VariantShock ? ShockColor : new Color(0.95f, 0.12f, 0.14f), e.r * 1.3f);
             // 이 함수는 적 목록을 도는 중에 불린다 — 여기서 주변을 때리면 목록이 바뀌므로 대기열에 넣고 다음 Update 에서 터뜨린다
             if (e.variant != 0 && variantDepth < VariantChainMax)
                 variantQueue.Add(new VariantHit { kind = e.variant, pos = e.tr.position, depth = variantDepth + 1 });
@@ -3053,8 +3053,8 @@ namespace BlackholeGame
         const float VariantBossMul = 0.5f;
         const float ShockRange = 5f;          // 번개가 닿는 거리(월드 단위)
         const float BoltLife = 0.18f;         // 번개 선이 남는 시간(초)
-        static readonly Color BlastColor = new Color(1f, 0.50f, 0.10f);
-        static readonly Color ShockColor = new Color(1f, 0.95f, 0.30f);
+        static readonly Color BlastColor = new Color(1f, 0.16f, 0.10f);
+        static readonly Color ShockColor = new Color(0.25f, 0.62f, 1f);
 
         struct VariantHit { public int kind; public Vector3 pos; public int depth; }
         class BoltFx { public Transform tr; public SpriteRenderer sr; public float life; }
