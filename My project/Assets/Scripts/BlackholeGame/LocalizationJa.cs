@@ -50,7 +50,7 @@ namespace BlackholeGame
             ["map.rebirthInfo"] = "過去へ戻ると進行リセット · shard +{0} (累計 {1})",
             ["map.rebirthLock"] = "エリア2クリア後に使用可",
             ["map.rebirthAskTitle"] = "過去へ戻りますか？",
-            ["map.rebirthAskBody"] = "これまでの進行（購入ノード・ゴールド・クリアしたエリア）がリセットされます。\n代わりに shard +{0} を獲得します。\nメタ強化・培養・精髄はそのまま残ります。",
+            ["map.rebirthAskBody"] = "これまでの進行（購入ノード・ゴールド・クリアしたエリア）がリセットされます。\n代わりに shard +{0} を獲得します。\nメタ強化・精髄はそのまま残り、培養はレベル1に戻ります。",
             ["map.rebirthYes"] = "戻る",
             ["map.rebirthNo"] = "キャンセル",
             ["meta.title"] = "未来の知識 · 覚醒",

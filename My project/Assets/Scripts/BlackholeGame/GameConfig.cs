@@ -272,14 +272,14 @@ namespace BlackholeGame
         {
             // 1지역만 "튜토리얼 보정" — 초반 골드 수급이 막혀 첫 노드조차 못 사던 문제를 피하려고
             // 체력과 보스를 따로 낮게 잡는다. 1판마다 노드를 사고 몇 판이면 클리어된다.
-            new StageConfig(0, "s.0",  4,  28f,        18f, 1.130f,         3340,  10,  8,     0.05f, new Color(0.42f,0.72f,0.46f)),
-            new StageConfig(1, "s.1",  5,  34f,       117f, 1.136f,        14100,  10,  9,     0.12f, new Color(0.36f,0.62f,0.70f)),
-            new StageConfig(2, "s.2",  7,  44f,       329f, 1.142f,        43500,  10, 10,     0.30f, new Color(0.60f,0.54f,0.36f)),
-            new StageConfig(3, "s.3",  9,  54f,       523f, 1.148f,        100000,  15, 11,     0.50f, new Color(0.40f,0.46f,0.60f)),
-            new StageConfig(4, "s.4", 11,  64f,      1090f, 1.153f,       131000,  15, 12,     1.00f, new Color(0.30f,0.58f,0.62f)),
-            new StageConfig(5, "s.5", 13,  74f,      3450f, 1.158f,       414000,  20, 13,    3.50f, new Color(0.34f,0.56f,0.34f)),
-            new StageConfig(6, "s.6", 15,  88f,     17000f, 1.163f,      1720000, 20, 14,   18.00f, new Color(0.62f,0.66f,0.72f)),
-            new StageConfig(7, "s.7", 18, 108f,     50000f, 1.168f,     10000000, 25, 15,  300.00f, new Color(0.66f,0.30f,0.34f)),
+            new StageConfig(0, "s.0",  6,  28f,        18f, 1.130f,         3340,  10,  8,     0.045f, new Color(0.42f,0.72f,0.46f)),
+            new StageConfig(1, "s.1",  7,  34f,       117f, 1.136f,        14100,  10,  9,     0.11f, new Color(0.36f,0.62f,0.70f)),
+            new StageConfig(2, "s.2",  9,  44f,       329f, 1.142f,        43500,  10, 10,     0.27f, new Color(0.60f,0.54f,0.36f)),
+            new StageConfig(3, "s.3", 11,  54f,       523f, 1.148f,        100000,  15, 11,     0.45f, new Color(0.40f,0.46f,0.60f)),
+            new StageConfig(4, "s.4", 13,  64f,      1090f, 1.153f,       131000,  15, 12,     0.90f, new Color(0.30f,0.58f,0.62f)),
+            new StageConfig(5, "s.5", 15,  74f,      3450f, 1.158f,       414000,  20, 13,    3.20f, new Color(0.34f,0.56f,0.34f)),
+            new StageConfig(6, "s.6", 17,  88f,     17000f, 1.163f,      1720000, 20, 14,   16.00f, new Color(0.62f,0.66f,0.72f)),
+            new StageConfig(7, "s.7", 20, 108f,     50000f, 1.168f,     10000000, 25, 15,  270.00f, new Color(0.66f,0.30f,0.34f)),
         };
     }
 }

@@ -1478,7 +1478,7 @@ namespace BlackholeGame
         // 상한이 1인 노드는 "해금" 한 번이면 끝나는 노드라(자동 공격) 레벨이 늘어나도 효과가 없다 — 늘리지 않는다.
         int MetaMaxLvAt(UpgradeTree.MetaNode m) => m.maxLv == 1 ? 1 : m.maxLv + maxAscensionUnlocked * 2;
 
-        // 환생 — 시간여행. 2지역 클리어 후 자율적으로 몇 번이든 반복 가능. 진행(골드·노드·지역)만 리셋,
+        // 환생 — 시간여행. 2지역 클리어 후 자율적으로 몇 번이든 반복 가능. 진행(골드·노드·지역)을 리셋하고 배양은 1레벨로,
         // 메타 강화·승천 레벨은 그대로 유지 — 승천과는 별개의, 반복 파밍용 루프.
         void Prestige()
         {
@@ -1487,6 +1487,10 @@ namespace BlackholeGame
             gold = 2000 * MetaLv("m_start");
             bought.Clear();
             repLv.Clear();
+            // 쌓인 배양을 들고 돌아가면 돈이 너무 빨리 불어난다 — 연 항목은 1레벨로, 안 연 항목은 0 그대로 둔다
+            for (int i = 0; i < CultureKey.Length; i++)
+                if (CultureLv(i) > 0) cultureLv[CultureKey[i]] = 1;
+            cultureGoldAcc = 0f;
             stagesCleared = 0;
             currentStage = 0;
             retryCount = Mathf.Max(0, retryCount / 2);

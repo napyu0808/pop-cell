@@ -94,7 +94,7 @@ namespace BlackholeGame
             ["map.rebirthInfo"]= "과거로 돌아가면 진행 초기화 · shard +{0} (누적 {1})",
             ["map.rebirthLock"]= "2지역 클리어 후 사용 가능",
             ["map.rebirthAskTitle"] = "과거로 돌아갈까요?",
-            ["map.rebirthAskBody"]  = "지금까지의 진행(산 노드·골드·클리어한 지역)이 초기화됩니다.\n대신 shard +{0} 를 얻습니다.\n메타 강화·배양·정수는 그대로 남습니다.",
+            ["map.rebirthAskBody"]  = "지금까지의 진행(산 노드·골드·클리어한 지역)이 초기화됩니다.\n대신 shard +{0} 를 얻습니다.\n메타 강화·정수는 그대로 남고, 배양은 1레벨로 초기화됩니다.",
             ["map.rebirthYes"]      = "돌아가기",
             ["map.rebirthNo"]       = "취소",
 
