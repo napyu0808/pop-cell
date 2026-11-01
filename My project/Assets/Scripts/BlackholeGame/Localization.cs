@@ -277,7 +277,7 @@ namespace BlackholeGame
             ["nd.towerLaser"]= "레이저 — 총구 방향으로 꿰뚫는 빔. 내 공격 속도를 따른다",
             ["nd.towerBeam"]  = "분사구 +1 — 같은 각도 간격으로 동시에 뻗는다(최대 3)",
             ["nd.towerTarget"]= "저격 표적 +1 — 보스 말고 잡몹도 같이 노린다(최대 3)",
-            ["nd.towerSniper"]="저격 — 가장 단단한 적(보스 우선)을 조준해 강하게 한 발",
+            ["nd.towerSniper"]="저격 — 가장 단단한 적(보스 우선)을 조준해 공격력의 2배로 한 발 (고정 공격력 미적용)",
             ["tree.pattern"] = "공격 패턴",
             ["pat.shot"]     = "단발",
             ["pat.burst"]    = "연발",

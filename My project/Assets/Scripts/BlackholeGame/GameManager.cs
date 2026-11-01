@@ -1954,13 +1954,13 @@ namespace BlackholeGame
                     switch (pat)
                     {
                         case Stats.PatBurst:
-                            SpawnBullet(TowerPos[i], towerAngle[i] - 11f, dmg * 0.6f, stats.towerBossMul[i]);
-                            SpawnBullet(TowerPos[i], towerAngle[i], dmg * 0.6f, stats.towerBossMul[i]);
-                            SpawnBullet(TowerPos[i], towerAngle[i] + 11f, dmg * 0.6f, stats.towerBossMul[i]);
+                            SpawnBullet(TowerPos[i], towerAngle[i] - 11f, dmg, stats.towerBossMul[i]);
+                            SpawnBullet(TowerPos[i], towerAngle[i], dmg, stats.towerBossMul[i]);
+                            SpawnBullet(TowerPos[i], towerAngle[i] + 11f, dmg, stats.towerBossMul[i]);
                             break;
                         case Stats.PatFlame:  ConeHit(i, dmg * 0.42f); break;
                         case Stats.PatLaser:  BeamHit(i, dmg * 1.1f);  break;
-                        case Stats.PatSniper: SniperShot(i, dmg * 8f); break;    // round54: 고정 공격력이 붙어 20배는 과했다
+                        case Stats.PatSniper: SniperShot(i, hit * 2f); break;    // 고정 공격력까지 8배가 되어 메인 공격이 됐다 — 플레이어 공격력 기준으로만 센다
                         default:              SpawnBullet(TowerPos[i], towerAngle[i], dmg, stats.towerBossMul[i]); break;
                     }
                     if (sound != null && i == 0) sound.Play(Sfx.Pulse, 0.18f, 1.5f);
@@ -5620,7 +5620,8 @@ namespace BlackholeGame
 
             bool resetView = treeZoom <= 0f;   // 0 은 "아직 자리를 안 잡았다"는 표시로 쓰인다
             treeZoom = zoom;
-            float margin = nodeSz * 0.5f + 10f;
+            // 끝 노드에서 세 칸 더 끌 수 있게 둔다 — 살 때마다 화면을 옮기지 않고 이어서 사도록.
+            float margin = nodeSz * 0.5f + 10f + rowSpacing * 3f;
             // 트리가 화면보다 좁으면 끌 곳이 없다는 뜻이지만, 완전히 고정하면 "드래그가 먹지 않는다"로
             //   읽힌다. 어느 쪽이든 화면 1/4 만큼은 늘 움직일 여지를 둔다.
             float centerPanX = area.center.x - (minX + maxX) * 0.5f;

@@ -492,7 +492,7 @@ class Run:
                         if pat == PAT_BURST:
                             a0 = self.tw_ang[ti]
                             for a in (a0 - BURST_SPREAD, a0, a0 + BURST_SPREAD):
-                                self._fire(ti, a, dmg * 0.6, s.towerBossMul[ti])
+                                self._fire(ti, a, dmg, s.towerBossMul[ti])
                         elif pat in (PAT_FLAME, PAT_LASER):
                             shape = "cone" if pat == PAT_FLAME else "beam"
                             mul = 0.42 if pat == PAT_FLAME else 1.1
@@ -505,7 +505,7 @@ class Run:
                             if done:
                                 break
                         elif pat == PAT_SNIPER:
-                            if self._sniper_shot(ti, dmg * 8.0, kill, max(1, min(3, s.towerTargets[ti])), s.towerBossMul[ti]):
+                            if self._sniper_shot(ti, hit * 2.0, kill,max(1, min(3, s.towerTargets[ti])), s.towerBossMul[ti]):
                                 break
                         else:
                             self._fire(ti, self.tw_ang[ti], dmg, s.towerBossMul[ti])

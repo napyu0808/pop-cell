@@ -220,7 +220,7 @@ namespace BlackholeGame
             ["nd.towerLaser"] = "レーザー — 銃口の方向を貫くビーム。自分の攻撃速度に従う",
             ["nd.towerBeam"] = "噴射口 +1 — 同じ角度間隔で同時に伸びる（最大3）",
             ["nd.towerTarget"] = "狙撃ターゲット +1 — ボス以外の雑魚も同時に狙う（最大3）",
-            ["nd.towerSniper"] = "狙撃 — 最も硬い敵（ボス優先）を狙って強力な一発",
+            ["nd.towerSniper"] = "狙撃 — 最も硬い敵（ボス優先）を狙い、攻撃力の2倍で一発（固定攻撃力は無効）",
             ["tree.pattern"] = "攻撃パターン",
             ["pat.shot"] = "単発",
             ["pat.burst"] = "連射",
