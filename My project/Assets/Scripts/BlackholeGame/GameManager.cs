@@ -98,6 +98,7 @@ namespace BlackholeGame
         bool langOpen;     // 타이틀 우측 상단 언어 드롭다운이 펼쳐져 있는지
         bool rebirthAsk;   // 지도에서 '과거로 돌아가기' 확인 창이 떠 있는지
         bool clearFieldNext;   // 승천 클리어로 전장을 비워야 함 — 적 목록 순회가 끝난 뒤 Update 에서 처리
+        float ascConfirmUntil = -1f;   // 타이틀의 '변이 N단계로 시작'도 진행을 지우므로 두 번 눌러야 한다
         float newConfirmUntil = -1f;   // 세이브가 있을 때 '새로 시작'은 두 번 눌러야 — 첫 클릭 후 이 시각까지 확인 대기
         int mapIndex = 0;         // 지역 캐러셀에서 고른 칸
         float mapScroll = -1f;    // 캐러셀 부드러운 이동 (음수 = 초기화 전)
@@ -1472,11 +1473,13 @@ namespace BlackholeGame
         // 여러 레벨 한꺼번에 사는 게 너무 쉬웠던 문제(고정 비용) 해결.
         int MetaCostAt(UpgradeTree.MetaNode m, int lv) => Mathf.RoundToInt(m.cost * Mathf.Pow(1.4f, lv));
 
-        // 변이 단계가 오를수록 메타 노드 상한이 늘어난다("변이에 따른 강화 횟수 증가") — 단계당 +2.
+        // 변이 단계가 오를수록 메타 노드 상한이 늘어난다("변이에 따른 강화 횟수 증가") — 단계당 +1.
+        //   기본 상한은 변이 0 한 사이클의 환생 샤드(5·6지역 두어 번, 약 200)로 다 살 수 있게 잡았다.
+        //   그래야 "다 산 상태로 다음 변이에 간다"를 전제로 변이 난이도를 맞출 수 있다.
         // 지금 고른 난이도(ascensionLevel)가 아니라 "지금까지 도달한 최고 승천"(maxAscensionUnlocked) 기준
         // — 쉬운 난이도로 파밍한다고 이미 딴 상한이 줄어들면 안 됨.
         // 상한이 1인 노드는 "해금" 한 번이면 끝나는 노드라(자동 공격) 레벨이 늘어나도 효과가 없다 — 늘리지 않는다.
-        int MetaMaxLvAt(UpgradeTree.MetaNode m) => m.maxLv == 1 ? 1 : m.maxLv + maxAscensionUnlocked * 2;
+        int MetaMaxLvAt(UpgradeTree.MetaNode m) => m.maxLv == 1 ? 1 : m.maxLv + maxAscensionUnlocked;
 
         // 환생 — 시간여행. 2지역 클리어 후 자율적으로 몇 번이든 반복 가능. 진행(골드·노드·지역)을 리셋하고 배양은 1레벨로,
         // 메타 강화·승천 레벨은 그대로 유지 — 승천과는 별개의, 반복 파밍용 루프.
@@ -1502,6 +1505,42 @@ namespace BlackholeGame
             stats = baseStats.Clone();
             wave.LoadStage(0);
             wave.ApplyAscension(ascensionLevel);
+            SaveProgress();
+            state = State.Map;
+        }
+
+        // 새 변이 사이클의 출발선 — 8지역 클리어 후 "다음 변이로"와 타이틀의 변이 단계 버튼이 같이 쓴다.
+        //   메타 강화 레벨·배양·정수·진행을 처음 시작했을 때처럼 비우고, shard·메타 상한·열린 변이 단계만 남긴다.
+        void ResetForNewCycle()
+        {
+            metaLv.Clear();   // 메타 강화 레벨 초기화 — 대신 승천 레벨만큼 새 노드/더 높은 상한이 열림
+            cultureLv.Clear(); cultureGoldAcc = 0f;
+            for (int ei = 0; ei < Essence.Count; ei++) { essence[ei] = 0; essLv[ei] = 0; }
+            winStreak = 0;
+            RebuildBaseStats();
+            bought.Clear();
+            repLv.Clear();
+            gold = 2000 * MetaLv("m_start");   // 방금 초기화했으니 사실상 0
+            stats = baseStats.Clone();
+            SyncEssence();   // stats 를 새로 만든 뒤에 — 정수 값을 다시 써 넣는다
+            stagesCleared = 0;
+            currentStage = 0;
+            maxScore = 0;
+            bossSeenMask = 0;
+            retryCount = 0;
+            campaignKills = 0; campaignGold = 0; campaignElapsedSec = 0f;   // 다음 승천 사이클 시작
+            wave.LoadStage(0);
+            wave.ApplyAscension(ascensionLevel);
+        }
+
+        // 타이틀의 "변이 N단계로 시작" — 화살표로 고른 단계로 새 사이클을 연다. 이어하기는 저장된 단계를 그대로 잇는다.
+        void StartAscensionFromTitle()
+        {
+            int lv = ascensionLevel;
+            ContinueGame();   // 세이브의 shard·메타 상한·열린 단계를 먼저 불러온다(이때 ascensionLevel 이 저장값으로 바뀐다)
+            ascensionLevel = Mathf.Clamp(lv, 0, maxAscensionUnlocked);
+            ResetForNewCycle();
+            mapScroll = -1f;
             SaveProgress();
             state = State.Map;
         }
@@ -1581,13 +1620,14 @@ namespace BlackholeGame
                     var pp = e.Split(':');
                     if (pp.Length == 2 && int.TryParse(pp[1], out var lv)) metaLv[pp[0]] = lv;
                 }
-                // 예전에 해금형 노드를 2레벨 이상 산 세이브 — 효과 없이 쓴 샤드를 돌려주고 레벨을 맞춘다
+                // 상한을 넘게 산 세이브 — 해금형 노드를 2레벨 이상 샀거나, 상한이 낮아지기 전에 샀다.
+                //   넘친 레벨에 쓴 샤드를 돌려주고 상한에 맞춘다.
                 if (metaNodes != null)
                     foreach (var m in metaNodes)
                     {
-                        if (m.maxLv != 1) continue;
-                        for (int k = MetaLv(m.id) - 1; k >= 1; k--) metaCurrency += MetaCostAt(m, k);
-                        if (MetaLv(m.id) > 1) metaLv[m.id] = 1;
+                        int cap = MetaMaxLvAt(m);
+                        for (int k = MetaLv(m.id) - 1; k >= cap; k--) metaCurrency += MetaCostAt(m, k);
+                        if (MetaLv(m.id) > cap) metaLv[m.id] = cap;
                     }
             }
         }
@@ -1963,7 +2003,8 @@ namespace BlackholeGame
                             SpawnBullet(TowerPos[i], towerAngle[i] + 11f, dmg, stats.towerBossMul[i]);
                             break;
                         case Stats.PatFlame:  ConeHit(i, dmg * 0.42f); break;
-                        case Stats.PatLaser:  BeamHit(i, dmg * 1.1f);  break;
+                        // 3방향·커서 공속에 고정 공격력이 그대로 붙으면 8지역 보스가 1분대에 녹는다 — 고정값은 일부만 받는다
+                        case Stats.PatLaser:  BeamHit(i, (hit * stats.towerDmgMul[i] + stats.TowerFlatNow(i) * LaserFlatMul) * 1.1f);  break;
                         case Stats.PatSniper: SniperShot(i, hit * 2f); break;    // 고정 공격력까지 8배가 되어 메인 공격이 됐다 — 플레이어 공격력 기준으로만 센다
                         default:              SpawnBullet(TowerPos[i], towerAngle[i], dmg, stats.towerBossMul[i]); break;
                     }
@@ -2018,6 +2059,8 @@ namespace BlackholeGame
             enemies.RemoveAll(x => x.dead);
             SpawnTowerFx(i, 0, Range, angDeg);
         }
+
+        const float LaserFlatMul = 0.25f;
 
         // 레이저 — 총구 방향 직선(반폭 0.42)을 끝까지 꿰뚫는다.
         void BeamHit(int i, float dmg)
@@ -2955,28 +2998,9 @@ namespace BlackholeGame
                     if (ascensionLevel >= maxAscensionUnlocked) maxAscensionUnlocked = ascensionLevel + 1;
                     ascensionLevel = maxAscensionUnlocked;   // 다음 판 기본값 = 새로 연 상한(화살표로 낮출 수 있음)
 
-                    metaLv.Clear();   // 메타 강화 레벨 초기화 — 대신 승천 레벨만큼 새 노드/더 높은 상한이 열림
-                    // 배양·정수도 게임을 처음 시작했을 때처럼 비운다(새 변이 사이클의 출발선).
-                    //   shard·메타 상한·승천 레벨만 사이클을 넘어 남는다.
-                    cultureLv.Clear(); cultureGoldAcc = 0f;
-                    for (int ei = 0; ei < Essence.Count; ei++) { essence[ei] = 0; essLv[ei] = 0; }
-                    winStreak = 0;
-                    RebuildBaseStats();
-                    bought.Clear();
-                    repLv.Clear();
-                    gold = 2000 * MetaLv("m_start");   // 방금 초기화했으니 사실상 0
-                    stats = baseStats.Clone();
-                    SyncEssence();   // stats 를 새로 만든 뒤에 — 정수 값을 다시 써 넣는다
+                    ResetForNewCycle();
                     clearFieldNext = true;   // 보스 옆에 남은 잡몹이 Win 화면 뒤 전장에 그대로 남던 버그 —
                                              //   이 함수는 적 목록을 도는 중에 불리므로 다음 Update 에서 치운다
-                    stagesCleared = 0;
-                    currentStage = 0;
-                    maxScore = 0;
-                    bossSeenMask = 0;
-                    retryCount = 0;
-                    campaignKills = 0; campaignGold = 0; campaignElapsedSec = 0f;   // 다음 승천 사이클 시작
-                    wave.LoadStage(0);
-                    wave.ApplyAscension(ascensionLevel);
                     SaveProgress();
                     state = State.Win;
                 }
@@ -4566,12 +4590,32 @@ namespace BlackholeGame
             float bw = 260f * 1.2f * uiScale, bh = 54f * 1.2f * uiScale, gap = 12f * uiScale, by = titleButtonsY;
             // 변이 선택 UI 가 보이면 버튼 줄이 그만큼 아래로 밀린다 — 맨 아래 버튼이 화면 밖으로
             // 나가지 않게 스택 전체를 위로 당긴다(창이 낮거나 가로로 길 때 안전).
-            int rows = (hasSave ? 2 : 1) + 2;
+            bool showAscStart = maxAscensionUnlocked > 0;
+            int rows = (hasSave ? 2 : 1) + 2 + (showAscStart ? 1 : 0);
             float stackH = rows * bh + (rows - 1) * gap;
+            // 버튼이 5개면 낮은 창에서 위로 당겨져 변이 안내 문구를 덮는다 — 그럴 땐 당기기 전에 버튼 높이부터 줄인다
+            float avail = h - 16f * uiScale - by;
+            if (stackH > avail)
+            {
+                float k = Mathf.Max(0.6f, avail / stackH);
+                bh *= k; gap *= k;
+                stackH = rows * bh + (rows - 1) * gap;
+            }
             by = Mathf.Min(by, h - stackH - 16f * uiScale);
             var bst = Btn(Mathf.RoundToInt(17f * 1.2f * uiScale));
             bst.normal.textColor = InkDark; FlatText(bst);
             int rowN = 0;
+            if (showAscStart)
+            {
+                // 화살표로 고른 단계가 라벨에 그대로 붙는다. 진행이 초기화되니 '새로 시작'처럼 두 번 눌러야 한다.
+                bool ascArmed = Time.unscaledTime < ascConfirmUntil;
+                if (UiBtn(new Rect(w * 0.5f - bw * 0.5f, by + (bh + gap) * rowN++, bw, bh),
+                          ascArmed ? Loc.T("title.ascendStartConfirm") : Loc.F("title.ascendStart", ascensionLevel), bst))
+                {
+                    if (ascArmed) { ascConfirmUntil = -1f; BeginTransition(StartAscensionFromTitle); }
+                    else ascConfirmUntil = Time.unscaledTime + 3f;
+                }
+            }
             if (hasSave)
             {
                 if (UiBtn(new Rect(w * 0.5f - bw * 0.5f, by + (bh + gap) * rowN++, bw, bh), Loc.T("title.continue"), bst))

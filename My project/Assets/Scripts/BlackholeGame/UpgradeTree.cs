@@ -411,7 +411,7 @@ namespace BlackholeGame
         public class MetaNode
         {
             public readonly string id, label, desc;
-            public readonly int cost, maxLv, unlockAsc;   // unlockAsc = 이 노드가 보이려면 필요한 승천 레벨(0=항상)
+            public readonly int cost, maxLv, unlockAsc;   // maxLv = 변이 0 상한(변이마다 +1) · unlockAsc = 이 노드가 보이려면 필요한 승천 레벨(0=항상)
             public readonly Action<Stats, int> apply;   // (baseStats, 레벨)
             public MetaNode(string id, string label, string desc, int cost, int maxLv, int unlockAsc, Action<Stats, int> apply)
             { this.id = id; this.label = label; this.desc = desc; this.cost = cost; this.maxLv = maxLv; this.unlockAsc = unlockAsc; this.apply = apply; }
@@ -421,24 +421,24 @@ namespace BlackholeGame
         {
             return new List<MetaNode>
             {
-                new MetaNode("m_dmg",   "m.dmg",   "md.dmg", 3, 10, 0,
+                new MetaNode("m_dmg",   "m.dmg",   "md.dmg", 3, 5, 0,
                     (s, lv) => s.multBucketPercent += 8f * lv),
-                new MetaNode("m_spd",   "m.spd",   "md.spd",   4, 8, 0,
+                new MetaNode("m_spd",   "m.spd",   "md.spd",   4, 4, 0,
                     (s, lv) => s.attackInterval = Mathf.Max(0.06f, s.attackInterval * Mathf.Pow(0.94f, lv))),
-                new MetaNode("m_gold",  "m.gold",   "md.gold",     3, 10, 0,
+                new MetaNode("m_gold",  "m.gold",   "md.gold",     3, 5, 0,
                     (s, lv) => s.goldMultPercent += 15f * lv),
-                new MetaNode("m_range", "m.range",   "md.range",    5, 6, 0,
+                new MetaNode("m_range", "m.range",   "md.range",    5, 3, 0,
                     (s, lv) => s.cursorRadius += 0.08f * lv),
-                new MetaNode("m_crit",  "m.crit",   "md.crit",     5, 8, 0,
+                new MetaNode("m_crit",  "m.crit",   "md.crit",     5, 4, 0,
                     (s, lv) => s.critChance = Mathf.Min(CritCap, s.critChance + 0.04f * lv)),
-                new MetaNode("m_start", "m.start", "md.start",  4, 10, 0,
+                new MetaNode("m_start", "m.start", "md.start",  4, 5, 0,
                     (s, lv) => { /* 시작 골드는 GameManager 에서 metaLv 로 처리 */ }),
                 new MetaNode("m_auto",  "m.auto", "md.auto", 6, 1, 0,
                     (s, lv) => { if (lv > 0) s.autoAttack = true; }),
                 // ---- 승천으로만 열리는 노드 — "승천에 따른 강화요소 추가" ----
-                new MetaNode("m_critx", "m.critx", "md.critx", 6, 6, 1,
+                new MetaNode("m_critx", "m.critx", "md.critx", 6, 3, 1,
                     (s, lv) => s.critMult += 0.05f * lv),
-                new MetaNode("m_time",  "m.time",  "md.time",  5, 8, 2,
+                new MetaNode("m_time",  "m.time",  "md.time",  5, 4, 2,
                     (s, lv) => s.bonusTimeSec += 3f * lv),
             };
         }

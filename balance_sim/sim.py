@@ -128,6 +128,7 @@ BOMB_TICK_SEC, BOMB_TICK_MUL, BOMB_BOSS_TICK, MAX_BOMB_FIELDS = 0.5, 0.15, 0.06,
 TOWER_POS = [(-5.2, 0.0), (0.0, 0.0), (5.2, 0.0)]
 TOWER_SPIN, BULLET_SPEED, BULLET_LIFE, BULLET_R = 52.0, 9.0, 2.2, 0.16
 BURST_SPREAD = 11.0      # 연발 부채꼴 각도
+LASER_FLAT_MUL = 0.25    # 레이저가 받는 타워 고정 공격력 비율
 PAT_SHOT, PAT_BURST, PAT_FLAME, PAT_LASER, PAT_SNIPER = 0, 1, 2, 3, 4
 FLAME_RANGE, FLAME_HALF_ANG = 4.2, 26.0
 LASER_RANGE, LASER_HALF_W = 30.0, 0.42
@@ -500,7 +501,8 @@ class Run:
                             done = False
                             for b in range(nb):
                                 off = 0.0 if nb <= 1 else b * (360.0 / nb)
-                                if self._area_hit(ti, dmg * mul, shape, kill, off, s.towerBossMul[ti]):
+                                area_dmg = (hit * s.towerDmgMul[ti] + s.towerFlat[ti] * LASER_FLAT_MUL) * mul if pat == PAT_LASER else dmg * mul
+                                if self._area_hit(ti, area_dmg, shape, kill, off, s.towerBossMul[ti]):
                                     done = True; break
                             if done:
                                 break
