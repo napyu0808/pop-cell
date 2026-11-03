@@ -1503,10 +1503,23 @@ namespace BlackholeGame
             mapScroll = -1f;
             RebuildBaseStats();
             stats = baseStats.Clone();
+            GrantMetaAuto();
             wave.LoadStage(0);
             wave.ApplyAscension(ascensionLevel);
             SaveProgress();
             state = State.Map;
+        }
+
+        // 메타 "자동 공격"을 샀으면 트리의 자동 공격 노드도 뚫린 채로 둔다 — 능력은 켜져 있는데 노드가 사각으로
+        //   남아 있으면 다시 사야 하는 것처럼 보인다. 자동 공격 노드가 코어에 붙어 있어 코어도 같이 켠다.
+        void GrantMetaAuto()
+        {
+            if (MetaLv("m_auto") <= 0) return;
+            foreach (var id in new[] { UpgradeTree.RootId, "auto" })
+            {
+                var n = NodeById(id);
+                if (n != null && bought.Add(id)) n.apply(stats);
+            }
         }
 
         // 새 변이 사이클의 출발선 — 8지역 클리어 후 "다음 변이로"와 타이틀의 변이 단계 버튼이 같이 쓴다.
@@ -1557,6 +1570,7 @@ namespace BlackholeGame
             metaCurrency -= cost;
             metaLv[m.id] = lv + 1;
             RebuildBaseStats();
+            GrantMetaAuto();
             if (sound != null) sound.Play(Sfx.Buy, 0.8f);
             SaveProgress();
         }
@@ -1780,6 +1794,7 @@ namespace BlackholeGame
                     for (int k = 0; k < lv; k++) n.apply(stats);
                 }
             }
+            GrantMetaAuto();
             cultureLv.Clear();
             foreach (var e in d.cultureLv)
             {
